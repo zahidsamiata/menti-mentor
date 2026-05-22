@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config.js';
 import authRoutes from './routes/authRoutes.js';
+import platformRoutes from './routes/platformRoutes.js';
 import tenantRoutes from './routes/tenantRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import jobListingRoutes from './routes/jobListingRoutes.js';
@@ -20,6 +21,9 @@ app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true, env: config.nodeEnv }));
+
+// ─── Platform yöneticisi (tenant sisteminin dışında) ────────────────────────
+app.use('/api/platform', platformRoutes);
 
 // ─── Kimlik doğrulama (tenant gerektirmez) ───────────────────────────────────
 app.use('/api/auth', authRoutes);

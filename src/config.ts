@@ -20,6 +20,9 @@ export const config = {
     expiresIn: process.env.JWT_EXPIRES_IN ?? '24h',
   },
 
+  // Platform geliştirici yönetim paneli — tenant sisteminin dışında
+  platformAdminKey: process.env.PLATFORM_ADMIN_KEY ?? 'platform-dev-key-change-in-production',
+
   llm: {
     provider: process.env.LLM_PROVIDER ?? 'openai',
     openaiApiKey: process.env.OPENAI_API_KEY ?? '',

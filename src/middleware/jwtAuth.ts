@@ -6,6 +6,7 @@ export interface JwtPayload {
   tenantId: string;
   role: 'ADMIN' | 'MENTOR' | 'MENTI';
   fullName: string;
+  isPlatformAdmin?: boolean;
   iat?: number;
   exp?: number;
 }
