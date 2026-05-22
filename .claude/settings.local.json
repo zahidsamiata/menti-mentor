@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Zahid Sami\\\\OneDrive\\\\Masaüstü\\\\proje\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(npx tsc *)",
+      "Bash(npx prisma *)",
+      "PowerShell(Get-Process *)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(Start-Sleep -Seconds 4)",
+      "Bash(Invoke-RestMethod -Uri \"http://localhost:3000/health\" -Method GET)",
+      "Bash(ConvertTo-Json)",
+      "Bash(curl *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(pkill -f \"tsx watch src/server.ts\")",
+      "Skill(update-config)",
+      "Bash(node test-email.mjs)",
+      "Bash(taskkill /F /IM node.exe /T)",
+      "Bash(Start-Process -NoNewWindow -FilePath \"npm\" -ArgumentList \"run\",\"dev\")",
+      "PowerShell(cd \"C:\\\\Users\\\\Zahid Sami\\\\OneDrive\\\\Masaüstü\\\\proje\"; Start-Process -NoNewWindow npm -ArgumentList \"run\",\"dev\" -RedirectStandardOutput \"$env:TEMP\\\\server-out.txt\" -RedirectStandardError \"$env:TEMP\\\\server-err.txt\")",
+      "Read(//tmp/**)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d['items'][0]['id'] if d.get\\('items'\\) else d\\)\")",
+      "Bash(npx create-next-app@latest web --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\" --yes)",
+      "Bash(npx shadcn@latest init --defaults --base-color slate)",
+      "Bash(npx shadcn@latest init --defaults)",
+      "Bash(npx shadcn@latest add badge card table input label select separator skeleton toast)",
+      "Bash(npx shadcn@latest add badge card table input label select separator skeleton sonner dialog alert)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/)",
+      "Bash(node --input-type=module --loader ts-node/esm prisma/seed-questions.ts)",
+      "Bash(npx tsx *)",
+      "Bash(echo \"PID: $!\")"
+    ]
+  }
+}

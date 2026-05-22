@@ -1,0 +1,424 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Çok-tenant izolasyonu: TenantId tüm tenant-scope tablolarda zorunludur.
+
+enum UserRole {
+  ADMIN
+  MENTOR
+  MENTI
+}
+
+enum DiscType {
+  D
+  I
+  S
+  C
+}
+
+enum VisibilityOptInStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum MatchTargetType {
+  USER
+  JOB_LISTING
+}
+
+enum TimeCommitment {
+  AYDA_1
+  AYDA_2_3
+  HAFTADA_1
+  HAFTADA_2_PLUS
+}
+
+enum InteractionStyle {
+  GOREV_BAZLI
+  SOHBET_BAZLI
+}
+
+enum ExpectationCategory {
+  KARIYER_YONLENDIRME
+  TEKNIK_BECERI
+  IS_STAJ_BAGLANTISI
+  GIRISIMCILIK
+  KISISEL_GELISIM
+  SEKTOR_TANIMA
+}
+
+enum MeetingStatus {
+  PENDING
+  APPROVED
+  COMPLETED
+  CANCELLED
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+enum ClubType {
+  AKADEMIK
+  SOSYAL
+  SPOR
+  SANAT
+  TEKNOLOJI
+  DIGER
+}
+
+enum ClubMemberRole {
+  BASKAN
+  YONETIM
+  UYE
+  DANISMAN
+}
+
+enum QuestionType {
+  CORE       // Her yeni kullanıcıya gösterilen temel soru seti
+  DEEPENING  // Profil tamamlandıkça kilitlenen derinleştirici sorular
+}
+
+enum DiscDimension {
+  D         // Dominant — karar verme, liderlik
+  I         // Influential — iletişim, ikna
+  S         // Steady — sabır, güvenilirlik
+  C         // Conscientious — analiz, kalite
+  GENERAL   // Boyut-bağımsız genel profil sorusu
+}
+
+model Tenant {
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  isSharedPoolActive Boolean  @default(false)
+  tenantVocabulary   Json?
+
+  // Kurumsal marka kimliği
+  displayName        String?  // Görüntü adı (ör. "Uluslararası Genç Derneği")
+  logoUrl            String?  // CDN veya relative URL
+  primaryColor       String?  @default("#6366f1") // Tailwind indigo-500
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  users              User[]
+  visibilityOptIns   VisibilityOptIn[]
+  matchRequests      MatchRequest[]
+  jobListings        JobListing[]
+  feedbackLogs       FeedbackLog[]
+  combinationScores  MatchCombinationScore[]
+  meetings           Meeting[]
+  feedbacks          Feedback[]
+  clubs              Club[]
+  clubMemberships    ClubMembership[]
+  questions          Question[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  role      UserRole
+  email     String
+  fullName  String
+  isActive  Boolean  @default(true)
+
+  sectorTags String[] @default([])
+
+  discType        DiscType?
+  temperamentJson Json?
+
+  volunteerHistory Json?
+  pastProjects     Json?
+  education        Json?
+  skills           String[] @default([])
+
+  timeCommitment        TimeCommitment?
+  expectationCategories ExpectationCategory[] @default([])
+  interactionStyle      InteractionStyle?
+  enneagramWing         String?
+  rematchPriority       Boolean @default(false)
+  rematchCount          Int     @default(0)
+
+  bioSummary       String?
+  expertiseDetails String?
+  targetAudience   String?
+  needsOrientation Boolean @default(false)
+
+  // Kesirli DISC vektörü: {D, I, S, C: 0-1 normalised, confidence: 0-1}
+  discVector Json?
+
+  // Serbest biçim metadata deposu — şema kısıtı yoktur.
+  // Önerilen yapı: { personal, professional, tracking, customMetrics, certifications, ... }
+  // Tüm alanlar isteğe bağlıdır; istemci istediği anahtarı ekleyebilir.
+  selfProfile Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  mentorOptIns VisibilityOptIn[] @relation("MentorOptIns")
+  mentiOptIns  VisibilityOptIn[] @relation("MentiOptIns")
+
+  requestsSent MatchRequest[] @relation("RequestsSent")
+
+  feedbackLogs_as_mentor FeedbackLog[] @relation("FeedbackAsMentor")
+  feedbackLogs_as_menti  FeedbackLog[] @relation("FeedbackAsMenti")
+
+  meetingsAsMentor  Meeting[]  @relation("MeetingsAsMentor")
+  meetingsAsMenti   Meeting[]  @relation("MeetingsAsMenti")
+  feedbacksGiven    Feedback[] @relation("FeedbacksGiven")
+  feedbacksReceived Feedback[] @relation("FeedbacksReceived")
+
+  clubMemberships ClubMembership[]
+  responses       UserResponse[]
+
+  @@unique([tenantId, email])
+  // Eşleşme motoru için: isActive=true AND role='MENTI' filtresini hızlandırır
+  @@index([tenantId, role, isActive])
+}
+
+model VisibilityOptIn {
+  id          String  @id @default(cuid())
+  tenantId    String
+
+  mentorId    String
+  mentiId     String
+  status      VisibilityOptInStatus @default(PENDING)
+  iceBreaker  String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  mentor      User @relation("MentorOptIns", fields: [mentorId], references: [id])
+  menti       User @relation("MentiOptIns", fields: [mentiId], references: [id])
+  tenant      Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([mentorId, mentiId])
+  @@index([tenantId])
+  @@index([mentorId])
+  @@index([mentiId])
+}
+
+model MatchRequest {
+  id              String @id @default(cuid())
+  tenantId        String
+  requesterUserId String
+  targetType      MatchTargetType
+  targetId        String
+  createdAt       DateTime @default(now())
+
+  requester       User   @relation("RequestsSent", fields: [requesterUserId], references: [id])
+  tenant          Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([requesterUserId])
+  @@index([targetType, targetId])
+}
+
+model FeedbackLog {
+  id         String  @id @default(cuid())
+  tenantId   String
+  mentorId   String
+  mentiId    String
+
+  phase      Int
+  starRating Int
+  difficulty String?
+  npsScore   Int?
+  goalAchieved String?
+
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  mentor User   @relation("FeedbackAsMentor", fields: [mentorId], references: [id])
+  menti  User   @relation("FeedbackAsMenti",  fields: [mentiId],  references: [id])
+
+  @@unique([mentorId, mentiId, phase])
+  @@index([tenantId])
+  @@index([mentorId])
+  @@index([mentiId])
+}
+
+model MatchCombinationScore {
+  id              String   @id @default(cuid())
+  tenantId        String
+  discCombination String
+  score           Float    @default(0)
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, discCombination])
+  @@index([tenantId])
+}
+
+model Meeting {
+  id          String        @id @default(cuid())
+  tenantId    String
+  mentorId    String
+  mentiId     String
+  scheduledAt DateTime
+  status      MeetingStatus @default(PENDING)
+  hasFeedback Boolean       @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  mentor   User     @relation("MeetingsAsMentor", fields: [mentorId], references: [id])
+  menti    User     @relation("MeetingsAsMenti",  fields: [mentiId],  references: [id])
+  feedback Feedback?
+
+  @@index([tenantId])
+  @@index([mentorId])
+  @@index([mentiId])
+  // Bekleyen geri bildirim sorgusu için
+  @@index([tenantId, status, hasFeedback])
+}
+
+model Feedback {
+  id        String @id @default(cuid())
+  meetingId String @unique
+  tenantId  String
+  mentorId  String
+  mentiId   String
+
+  guidanceScore        Int?
+  resourceSharingScore Int?
+  trustScore           Int?
+  preparednessScore    Int?
+  proactivityScore     Int?
+
+  keyLearnings     String?
+  specificComments String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  meeting Meeting @relation(fields: [meetingId], references: [id])
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  mentor  User    @relation("FeedbacksGiven",    fields: [mentorId], references: [id])
+  menti   User    @relation("FeedbacksReceived", fields: [mentiId],  references: [id])
+
+  @@index([tenantId])
+  @@index([mentorId])
+  @@index([mentiId])
+}
+
+model JobListing {
+  id          String   @id @default(cuid())
+  tenantId    String
+  title       String
+  description String
+  location    String?
+  tags        String[] @default([])
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([isActive])
+}
+
+// Merkezi sistem/hata logu — tenant bağımsız, admin erişimli
+model SystemLog {
+  id        String   @id @default(cuid())
+  level     LogLevel
+  category  String   // EMAIL | ML | AUTH | DB | HTTP | SYSTEM
+  message   String
+  meta      Json?    // hata stack, userId, tenantId vb.
+  createdAt DateTime @default(now())
+
+  @@index([level])
+  @@index([category])
+  @@index([createdAt])
+}
+
+// Üniversite kulübü ekosistemi
+model Club {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  slug        String
+  type        ClubType
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant           @relation(fields: [tenantId], references: [id])
+  memberships ClubMembership[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+}
+
+model ClubMembership {
+  id       String         @id @default(cuid())
+  tenantId String
+  clubId   String
+  userId   String
+  role     ClubMemberRole @default(UYE)
+  joinedAt DateTime       @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  club   Club   @relation(fields: [clubId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([clubId, userId])
+  @@index([tenantId])
+  @@index([userId])
+  @@index([clubId])
+}
+
+// Aşamalı profilleme soru bankası
+// tenantId null → tüm tenant'larda geçerli global soru
+model Question {
+  id            String        @id @default(cuid())
+  tenantId      String?
+  text          String
+  type          QuestionType  @default(CORE)
+  discDimension DiscDimension @default(GENERAL)
+  order         Int           @default(0)
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+
+  tenant    Tenant?        @relation(fields: [tenantId], references: [id])
+  responses UserResponse[]
+
+  @@index([tenantId])
+  @@index([type])
+  @@index([discDimension])
+  @@index([isActive])
+}
+
+// Kullanıcının her soruya verdiği cevap (1–5 Likert)
+model UserResponse {
+  id         String   @id @default(cuid())
+  userId     String
+  questionId String
+  value      Int      // 1=Hiç katılmıyorum … 5=Tamamen katılıyorum
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id])
+  question Question @relation(fields: [questionId], references: [id])
+
+  @@unique([userId, questionId])
+  @@index([userId])
+  @@index([questionId])
+}
