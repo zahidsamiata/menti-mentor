@@ -21,24 +21,55 @@ export type RankedMenti = {
 // 2: Anti-match filtresi kaldırıldı
 // 3: Sadece sektör uyumu (uyarı rozeti)
 
+// Mentor için bu tenant'ta idari olarak bloklanmış menti ID kümesini oluşturur.
+// JSON blob bozuk veya array değilse boş küme döner (defensive).
+function buildBlockedMentiSet(mentorId: string, blockedPairs: unknown): Set<string> {
+  if (!Array.isArray(blockedPairs)) return new Set();
+  const blocked = new Set<string>();
+  for (const pair of blockedPairs as Array<Record<string, unknown>>) {
+    if (typeof pair !== 'object' || pair === null) continue;
+    const from = pair['fromUserId'];
+    const to   = pair['toUserId'];
+    if (from === mentorId && typeof to   === 'string') blocked.add(to);
+    if (to   === mentorId && typeof from === 'string') blocked.add(from);
+  }
+  return blocked;
+}
+
 export async function rankMentisForMentor(args: {
   mentorId: string;
   mentorTenantId: string;
   limit?: number;
+  /** Çağıran tarafından açıkça verilmezse tenant'ın minMatchScoreThreshold değeri taban olur. */
+  minMatchScore?: number;
+  excludeDiscTypes?: Array<'D' | 'I' | 'S' | 'C'>;
 }): Promise<{ items: RankedMenti[]; fallbackLevel: 0 | 1 | 2 | 3 }> {
-  const mentor = await prisma.user.findFirst({
-    where: { id: args.mentorId, tenantId: args.mentorTenantId, role: 'MENTOR', isActive: true },
-    select: {
-      id: true,
-      tenantId: true,
-      sectorTags: true,
-      discType: true,
-      timeCommitment: true,
-      interactionStyle: true,
-      expectationCategories: true,
-    },
-  });
+  // Mentor profili ve tenant yapılandırmasını paralel çek
+  const [mentor, tenantConfig] = await Promise.all([
+    prisma.user.findFirst({
+      where: { id: args.mentorId, tenantId: args.mentorTenantId, role: 'MENTOR', isActive: true },
+      select: {
+        id: true,
+        tenantId: true,
+        sectorTags: true,
+        discType: true,
+        timeCommitment: true,
+        interactionStyle: true,
+        expectationCategories: true,
+      },
+    }),
+    prisma.tenant.findUnique({
+      where:  { id: args.mentorTenantId },
+      select: { minMatchScoreThreshold: true, blockedPairs: true },
+    }),
+  ]);
   if (!mentor) return { items: [], fallbackLevel: 0 };
+
+  // Çağıran açıkça belirtmişse o değer geçer; yoksa tenant admin'in baraj ayarı devreye girer.
+  const effectiveMinScore = args.minMatchScore ?? tenantConfig?.minMatchScoreThreshold;
+
+  // BUG FIX: Admin'in idari blok listesini motora uygula (önceden hiç okunmuyordu).
+  const blockedMentiIds = buildBlockedMentiSet(mentor.id, tenantConfig?.blockedPairs);
 
   // Güvenlik düzeltmesi: Cross-tenant adayları önceden filtrele.
   // Tüm shared-pool tenant ID'lerini tek sorguda çek; döngü içi N+1 sorgusunu önle.
@@ -60,6 +91,7 @@ export async function rankMentisForMentor(args: {
   const candidates = await prisma.user.findMany({
     where: {
       isActive: true,
+      approvalStatus: 'APPROVED',
       role: 'MENTI',
       tenantId: { in: eligibleTenantIds },
     },
@@ -79,28 +111,41 @@ export async function rankMentisForMentor(args: {
   });
 
   const opts = {
-    mentorTimeCommitment: mentor.timeCommitment as string | null | undefined,
+    mentorTimeCommitment:   mentor.timeCommitment as string | null | undefined,
     mentorInteractionStyle: mentor.interactionStyle as string | null | undefined,
-    mentorExpectations: mentor.expectationCategories as string[],
-    mentorTenantId: mentor.tenantId,
+    mentorExpectations:     mentor.expectationCategories as string[],
+    mentorTenantId:         mentor.tenantId,
+    excludeDiscTypes:       args.excludeDiscTypes,
+    blockedMentiIds,        // idari blok listesi — her fallback kademe için uygulanır
   };
 
+  const applyScoreFilter = (items: RankedMenti[]) =>
+    effectiveMinScore !== undefined
+      ? items.filter((m) => m.totalScore >= effectiveMinScore!)
+      : items;
+
+  const limit = args.limit ?? 50;
+
   const scored = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: true, applyAntiMatch: true, sectorOnly: false });
-  if (scored.length > 0) return { items: scored.slice(0, args.limit ?? 50), fallbackLevel: 0 };
+  const filtered0 = applyScoreFilter(scored);
+  if (filtered0.length > 0) return { items: filtered0.slice(0, limit), fallbackLevel: 0 };
 
   const fallback1 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: true, sectorOnly: false });
-  if (fallback1.length > 0) {
-    return { items: fallback1.slice(0, args.limit ?? 50).map((m) => ({ ...m, fallbackLevel: 1 as const })), fallbackLevel: 1 };
+  const filtered1 = applyScoreFilter(fallback1);
+  if (filtered1.length > 0) {
+    return { items: filtered1.slice(0, limit).map((m) => ({ ...m, fallbackLevel: 1 as const })), fallbackLevel: 1 };
   }
 
   const fallback2 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: false, sectorOnly: false });
-  if (fallback2.length > 0) {
-    return { items: fallback2.slice(0, args.limit ?? 50).map((m) => ({ ...m, fallbackLevel: 2 as const })), fallbackLevel: 2 };
+  const filtered2 = applyScoreFilter(fallback2);
+  if (filtered2.length > 0) {
+    return { items: filtered2.slice(0, limit).map((m) => ({ ...m, fallbackLevel: 2 as const })), fallbackLevel: 2 };
   }
 
   const fallback3 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: false, sectorOnly: true });
+  const filtered3 = applyScoreFilter(fallback3);
   return {
-    items: fallback3.slice(0, args.limit ?? 50).map((m) => ({
+    items: filtered3.slice(0, limit).map((m) => ({
       ...m,
       fallbackLevel: 3 as const,
       warnings: ['Mizaç uyumu düşük — ilerlemeden önce beklentileri konuşmanız önerilir.'],
@@ -134,11 +179,21 @@ function scoreAndFilter(
     applyTimeFilter: boolean;
     applyAntiMatch: boolean;
     sectorOnly: boolean;
+    excludeDiscTypes?: Array<'D' | 'I' | 'S' | 'C'>;
+    blockedMentiIds?: Set<string>; // admin tarafından idari olarak bloklanmış menti IDs
   },
 ): RankedMenti[] {
   const filtered: RankedMenti[] = [];
 
   for (const c of candidates) {
+    // İdari blok kontrolü — her fallback kademesinde uygulanır, atlanamaz
+    if (opts.blockedMentiIds?.has(c.id)) continue;
+
+    // Mentor'ın DISC dışlama listesi — mentor panelinden gelen özel filtre
+    if (opts.excludeDiscTypes && opts.excludeDiscTypes.length > 0 && c.discType) {
+      if (opts.excludeDiscTypes.includes(c.discType as 'D' | 'I' | 'S' | 'C')) continue;
+    }
+
     if (opts.applyTimeFilter && opts.mentorTimeCommitment && c.timeCommitment) {
       if (!areTimeCommitmentsCompatible(opts.mentorTimeCommitment, c.timeCommitment)) continue;
     }
