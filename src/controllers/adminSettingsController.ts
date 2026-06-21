@@ -30,12 +30,42 @@ interface BlockedPairRecord {
   blockedBy:  string; // adminUserId
 }
 
+/**
+ * DB'den okunan blockedPairs JSON blob'unu güvenli şekilde parse eder.
+ * - Array değilse boş dizi döner (bozuk blob koruması)
+ * - Her kaydın zorunlu alanlarını doğrular; bozuk kayıtları sessizce filtreler
+ * - Kendi kendini bloke eden ve duplicate kayıtları normalleştirir
+ */
+function sanitizeBlockedPairs(raw: unknown): BlockedPairRecord[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  return raw.filter((item): item is BlockedPairRecord => {
+    if (typeof item !== 'object' || item === null) return false;
+    const r = item as Record<string, unknown>;
+    if (
+      typeof r['fromUserId'] !== 'string' || r['fromUserId'].length === 0 ||
+      typeof r['toUserId']   !== 'string' || r['toUserId'].length   === 0 ||
+      typeof r['blockedAt']  !== 'string' ||
+      typeof r['blockedBy']  !== 'string'
+    ) return false;
+    // Self-block filtrele
+    if (r['fromUserId'] === r['toUserId']) return false;
+    // Yön-bağımsız duplicate filtrele
+    const key = [r['fromUserId'], r['toUserId']].sort().join('::');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // ─── PATCH /api/tenants/:id/settings ─────────────────────────────────────────
+// Sınırlar: maxMeetingsPerWeek 1-5, minMatchScoreThreshold %20-%90.
+// Panel bypass'ı veya negatif değer gönderimlerine karşı Zod katmanında çıpa.
 
 const UpdateSettingsSchema = z
   .object({
-    maxMeetingsPerWeek:     z.number().int().min(1).max(7).optional(),
-    minMatchScoreThreshold: z.number().int().min(0).max(100).optional(),
+    maxMeetingsPerWeek:     z.number().int().min(1).max(5).optional(),
+    minMatchScoreThreshold: z.number().int().min(20).max(90).optional(),
   })
   .strict()
   .refine(
@@ -142,9 +172,8 @@ export async function blockPair(req: Request, res: Response) {
     return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
   }
 
-  // Runtime guard: TypeScript cast'i bozuk JSON blob'a karşı yetmez; Array.isArray zorunlu.
-  const raw     = tenant.blockedPairs;
-  const current: BlockedPairRecord[] = Array.isArray(raw) ? (raw as unknown as BlockedPairRecord[]) : [];
+  // sanitizeBlockedPairs: bozuk blob, self-block ve duplicate kayıtları temizler.
+  const current = sanitizeBlockedPairs(tenant.blockedPairs);
 
   // Yön bağımsız çakışma kontrolü: A→B veya B→A zaten varsa reddet
   const alreadyBlocked = current.some(
@@ -187,6 +216,19 @@ export async function blockPair(req: Request, res: Response) {
 }
 
 // ─── GET /api/super-admin/dashboard ──────────────────────────────────────────
+// PII Güvenlik Notu: Prisma select whitelist zorunludur.
+// blockedPairs (userId içerir), limits, tenantVocabulary, kullanıcı verisi asla dönmez.
+// Yeni alan eklenirken bu listeye explicit eklenmesi gerekir — ham obje asla sızdırılmaz.
+
+type TenantSummaryDto = {
+  id:        string;
+  name:      string;
+  slug:      string;
+  plan:      string;
+  isActive:  boolean;
+  createdAt: Date;
+  _count:    { users: number; meetings: number };
+};
 
 export async function getSuperAdminDashboard(_req: Request, res: Response) {
   const [
@@ -208,24 +250,19 @@ export async function getSuperAdminDashboard(_req: Request, res: Response) {
       _sum: { durationMin: true },
       where: { status: 'COMPLETED' },
     }),
-    // Tenant listesi — özet istatistiklerle
+    // Tenant listesi — yalnızca PII-safe özet alanlar (TenantSummaryDto)
     prisma.tenant.findMany({
       select: {
-        id:      true,
-        name:    true,
-        slug:    true,
-        plan:    true,
+        id:       true,
+        name:     true,
+        slug:     true,
+        plan:     true,
         isActive: true,
         createdAt: true,
-        _count: {
-          select: {
-            users:    true,
-            meetings: true,
-          },
-        },
+        _count: { select: { users: true, meetings: true } },
       },
       orderBy: { createdAt: 'desc' },
-    }),
+    }) as Promise<TenantSummaryDto[]>,
   ]);
 
   const totalMentoringMinutes = completedMeetingAgg._sum.durationMin ?? 0;
