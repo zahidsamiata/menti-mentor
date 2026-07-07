@@ -71,6 +71,24 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
   return res.json({ items: users, total: users.length });
 }
 
+/**
+ * GET /api/users/mentor-count — PENDING dahil tüm kimliği doğrulanmış kullanıcılara açık.
+ * Yalnızca toplam onaylı mentor sayısını döner — PII yok.
+ * Menti bekleme odası "N mentor profili tespit edildi" için kullanılır.
+ * KVKK: mentor isimleri/e-postaları hiç gönderilmez.
+ */
+export async function countApprovedMentors(req: RequestWithTenant, res: Response) {
+  const count = await prisma.user.count({
+    where: {
+      tenantId:       req.tenant.tenantId,
+      role:           'MENTOR',
+      isActive:       true,
+      approvalStatus: 'APPROVED',
+    },
+  });
+  return res.json({ count });
+}
+
 export async function getUser(req: RequestWithTenant, res: Response) {
   const user = await prisma.user.findFirst({
     where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
