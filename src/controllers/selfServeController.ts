@@ -228,11 +228,12 @@ export async function selfServeRegister(req: Request, res: Response) {
   const { tenant, user } = await prisma.$transaction(async (tx) => {
     const tenant = await tx.tenant.create({
       data: {
-        name:            tenantName,
+        name:             tenantName,
         slug,
-        plan:            'FREE',
-        onboardingStep:  'TEMPLATE',
+        plan:             'FREE',
+        onboardingStep:   'TEMPLATE',
         programTemplate,
+        unsubscribeToken: crypto.randomUUID(), // Faz 3: e-posta unsubscribe linki
       },
     });
 
@@ -555,4 +556,38 @@ export async function joinViaInvitation(req: Request, res: Response) {
     programTemplate: tenant.programTemplate,
     plan:            tenant.plan,
   });
+}
+
+// ─── GET /api/tenants/unsubscribe?token=<uuid> ────────────────────────────────
+
+/**
+ * Faz 3 — E-posta aboneliğinden çıkma.
+ * Auth gerektirmez; token yeterlidir (e-postaya gönderilen link).
+ * KVKK: pazarlama/kurtarma e-postalarında unsubscribe linki ZORUNLU.
+ */
+export async function unsubscribeTenant(req: Request, res: Response) {
+  const token = req.query['token'] as string | undefined;
+  if (!token || typeof token !== 'string' || token.length < 10) {
+    return res.status(400).json({ error: 'GECERSIZ_TOKEN', message: 'Geçersiz token.' });
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where:  { unsubscribeToken: token },
+    select: { id: true, unsubscribedAt: true },
+  });
+
+  if (!tenant) {
+    return res.status(404).json({ error: 'TOKEN_BULUNAMADI', message: 'Token bulunamadı veya zaten geçersiz.' });
+  }
+
+  if (tenant.unsubscribedAt) {
+    return res.json({ message: 'Bu kurum zaten e-posta listesinden çıkmıştı.' });
+  }
+
+  await prisma.tenant.update({
+    where: { id: tenant.id },
+    data:  { unsubscribedAt: new Date() },
+  });
+
+  return res.json({ message: 'E-posta aboneliğiniz iptal edildi. Artık kurtarma e-postası almayacaksınız.' });
 }
