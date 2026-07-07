@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
 import { requireAuth, requireRole } from '../middleware/authorize.js';
-import { createUser, listUsers, getUser, updateUser, patchSelfProfile } from '../controllers/userController.js';
+import { createUser, listUsers, getUser, updateUser, patchSelfProfile, countApprovedMentors } from '../controllers/userController.js';
 import { submitTemperamentTest } from '../controllers/temperamentController.js';
 import { getRankedMentisForMentor, setVisibilityOptIn } from '../controllers/matchingController.js';
 import { createMatchRequest, listRequests, getRequest } from '../controllers/requestController.js';
@@ -20,6 +20,10 @@ router.use(requireTenant as unknown as RequestHandler);
 // ─── Kullanıcı yönetimi ───────────────────────────────────────────────────────
 // GET  /users        → kimlik doğrulaması zorunlu
 router.get('/users', requireAuth(), listUsers as unknown as RequestHandler);
+
+// GET  /users/mentor-count → PENDING dahil tüm kimliği doğrulanmış kullanıcılara açık.
+// Yalnızca onaylı mentor SAYISINI döner (PII yok). /users/:id'den önce tanımlanmalı.
+router.get('/users/mentor-count', requireAuth(), countApprovedMentors as unknown as RequestHandler);
 
 // POST /users        → yalnızca ADMIN
 router.post('/users', requireRole('ADMIN'), createUser as unknown as RequestHandler);

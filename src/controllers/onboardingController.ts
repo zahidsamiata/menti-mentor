@@ -215,10 +215,26 @@ function calculateDiscResult(
 
 // ─── POST /api/users/profile/complete ────────────────────────────────────────
 
+const EXPECTATION_CATEGORIES = [
+  'KARIYER_YONLENDIRME',
+  'TEKNIK_BECERI',
+  'IS_STAJ_BAGLANTISI',
+  'GIRISIMCILIK',
+  'KISISEL_GELISIM',
+  'SEKTOR_TANIMA',
+] as const;
+
+const TIME_COMMITMENTS = ['AYDA_1', 'AYDA_2_3', 'HAFTADA_1', 'HAFTADA_2_PLUS'] as const;
+const INTERACTION_STYLES = ['GOREV_BAZLI', 'SOHBET_BAZLI'] as const;
+
 const CompleteProfileSchema = z.object({
-  sector:          SECTOR_TAG_SCHEMA,
-  skills:          z.array(z.string().min(1).max(100)).max(30).default([]),
-  experienceYears: z.number().int().min(0).max(60),
+  sector:                SECTOR_TAG_SCHEMA,
+  skills:                z.array(z.string().min(1).max(100)).max(30).default([]),
+  experienceYears:       z.number().int().min(0).max(60),
+  // Rol-spesifik alanlar (opsiyonel — menti ve mentor akışları bu endpoint'i paylaşır)
+  expectationCategories: z.array(z.enum(EXPECTATION_CATEGORIES)).max(6).optional(),
+  timeCommitment:        z.enum(TIME_COMMITMENTS).optional(),
+  interactionStyle:      z.enum(INTERACTION_STYLES).optional(),
 });
 
 export async function completeProfile(req: RequestWithTenant, res: Response) {
@@ -234,7 +250,7 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const { sector, skills, experienceYears } = parsed.data;
+  const { sector, skills, experienceYears, expectationCategories, timeCommitment, interactionStyle } = parsed.data;
 
   const user = await prisma.user.findUnique({
     where:  { id: req.auth.userId },
@@ -257,14 +273,21 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
       sectorTags:  mergedTags,
       skills,
       selfProfile: updatedSelf,
+      // Rol-spesifik alanlar: yalnızca gönderilmişse güncelle
+      ...(expectationCategories !== undefined && { expectationCategories }),
+      ...(timeCommitment        !== undefined && { timeCommitment        }),
+      ...(interactionStyle      !== undefined && { interactionStyle      }),
     },
     select: {
-      id:          true,
-      fullName:    true,
-      sectorTags:  true,
-      skills:      true,
-      selfProfile: true,
-      updatedAt:   true,
+      id:                    true,
+      fullName:              true,
+      sectorTags:            true,
+      skills:                true,
+      selfProfile:           true,
+      expectationCategories: true,
+      timeCommitment:        true,
+      interactionStyle:      true,
+      updatedAt:             true,
     },
   });
 
