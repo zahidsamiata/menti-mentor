@@ -194,6 +194,9 @@ const SelfServeRegisterSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
   programTemplate: z.enum(['MEZUN', 'KULUP', 'GONULLU', 'OZEL']).default('OZEL'),
+  // KVKK Md.5 — açık rıza zorunlu. Frontend checkbox ile kontrol edilir;
+  // backend de enforce eder (API doğrudan çağrılırsa da consent şart).
+  kvkkConsent:     z.literal(true, { message: 'KVKK onayı zorunludur.' }),
 });
 
 export async function selfServeRegister(req: Request, res: Response) {
@@ -234,6 +237,7 @@ export async function selfServeRegister(req: Request, res: Response) {
         onboardingStep:   'TEMPLATE',
         programTemplate,
         unsubscribeToken: crypto.randomUUID(), // Faz 3: e-posta unsubscribe linki
+        kvkkConsentAt:    new Date(),           // KVKK Md.5: onay anını kaydet
       },
     });
 
