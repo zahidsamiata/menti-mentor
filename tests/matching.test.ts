@@ -2,7 +2,8 @@
  * Matching Entegrasyon Testleri
  *
  * Kapsam: ranked-mentis endpoint, visibility opt-in akışı, cross-tenant kısıtları,
- *         self-match koruması, MENTI rol doğrulaması.
+ *         self-match koruması, MENTI rol doğrulaması,
+ *         level-3 fallback davranışı, computeSectorScore değişkenliği.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -182,3 +183,65 @@ describe('Matching: Candidate Filter', () => {
     body.items.forEach((item) => expect(item.totalScore).toBeGreaterThanOrEqual(90));
   });
 });
+
+// ─── P0 Regresyon: Level 3 Fallback threshold deadlock ───────────────────────
+describe('Matching: Level 3 Fallback — yüksek barajda deadlock olmamalı', () => {
+  let http: TestAgent;
+  let tenant: Tenant;
+  let mentorToken: string;
+  let mentorId: string;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http = agent();
+
+    // minMatchScoreThreshold=80 → yüksek eşik
+    tenant = await createTenant();
+    await testPrisma.tenant.update({
+      where: { id: tenant.id },
+      data:  { minMatchScoreThreshold: 80 },
+    });
+
+    // Mentor: D tipi, geniş sektör havuzu
+    const mentor = await createMentor(tenant.id, {
+      discType:   'D',
+      sectorTags: ['teknoloji', 'finans', 'sağlık'],
+    });
+    const tokens = await loginAs(http, mentor.email, mentor.rawPassword);
+    mentorToken = tokens.accessToken;
+    mentorId    = mentor.id;
+
+    // Menti: S tipi (D→S anti-match), kısmi sektör örtüşmesi (50%)
+    // Level 0/1: anti-match → dışlanır
+    // Level 2: skor = 50*0.6 + 30*0.4 = 42 < 80 → eşik altında elenir
+    // Level 3 (sector-only): skor = 50*0.6 + 50*0.4 = 50 < 80
+    //   eski kod: applyScoreFilter uygular → boş döner (deadlock)
+    //   yeni kod: threshold atlanır → menti döner ✅
+    await createMenti(tenant.id, {
+      discType:   'S',
+      sectorTags: ['teknoloji', 'sanat'],
+    });
+  });
+
+  it('level 3 fallback, tenant barajı yüksek olsa bile en az bir aday döner', async () => {
+    const res = await http
+      .get(`/api/mentors/${mentorId}/candidates`)
+      .set(tenantHeaders(tenant.id, mentorToken))
+      .expect(200);
+
+    const body = res.body as { items: unknown[]; fallbackLevel: number };
+    expect(body.fallbackLevel).toBe(3);
+    expect(body.items.length).toBeGreaterThan(0);
+  });
+
+  it('level 3 aday listesinde uyarı rozeti bulunur', async () => {
+    const res = await http
+      .get(`/api/mentors/${mentorId}/candidates`)
+      .set(tenantHeaders(tenant.id, mentorToken))
+      .expect(200);
+
+    const body = res.body as { items: { warnings: string[] }[] };
+    expect(body.items[0]!.warnings.length).toBeGreaterThan(0);
+  });
+});
+

@@ -71,10 +71,16 @@ export async function rankMentisForMentor(args: {
 
   // Öncelik sırası: çağıranın arg'ı > mentor'un kaydedilmiş filtresi > tenant barajı
   const savedFilter = mentorFilter?.filterEnabled ? mentorFilter : null;
-  const effectiveMinScore =
+
+  // explicitMinScore: Kullanıcının/mentorun doğrudan belirlediği eşik (API param + kaydedilmiş filtre).
+  // Level 3 fallback'te de uygulanır — mentorun bilinçli seçimidir.
+  const explicitMinScore =
     args.minMatchScore ??
-    (savedFilter?.minCompatibilityScore ? savedFilter.minCompatibilityScore : undefined) ??
-    tenantConfig?.minMatchScoreThreshold;
+    (savedFilter?.minCompatibilityScore ? savedFilter.minCompatibilityScore : undefined);
+
+  // effectiveMinScore: Tam eşik (0-2 arası fallback'lerde kullanılır).
+  // Tenant barajı deadlock önlemek için level 3'te atlanır.
+  const effectiveMinScore = explicitMinScore ?? tenantConfig?.minMatchScoreThreshold;
 
   // excludeDiscTypes: arg > kaydedilmiş filtre (filterEnabled aktifse)
   const effectiveExcludeDiscTypes: Array<'D' | 'I' | 'S' | 'C'> =
@@ -133,33 +139,43 @@ export async function rankMentisForMentor(args: {
     blockedMentiIds,        // idari blok listesi — her fallback kademe için uygulanır
   };
 
-  const applyScoreFilter = (items: RankedMenti[]) =>
+  // strictFilter: 0-2 kademelerde tam eşiği uygular (tenant barajı dahil).
+  // looseFilter:  Level 3 acil çıkışında yalnızca kullanıcı/mentor kaynaklı eşiği uygular.
+  //               Tenant konfigürasyon barajı burada kasıtlı olarak atlanır.
+  const strictFilter = (items: RankedMenti[]) =>
     effectiveMinScore !== undefined
       ? items.filter((m) => m.totalScore >= effectiveMinScore!)
+      : items;
+
+  const looseFilter = (items: RankedMenti[]) =>
+    explicitMinScore !== undefined
+      ? items.filter((m) => m.totalScore >= explicitMinScore!)
       : items;
 
   const limit = args.limit ?? 50;
 
   const scored = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: true, applyAntiMatch: true, sectorOnly: false });
-  const filtered0 = applyScoreFilter(scored);
+  const filtered0 = strictFilter(scored);
   if (filtered0.length > 0) return { items: filtered0.slice(0, limit), fallbackLevel: 0 };
 
   const fallback1 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: true, sectorOnly: false });
-  const filtered1 = applyScoreFilter(fallback1);
+  const filtered1 = strictFilter(fallback1);
   if (filtered1.length > 0) {
     return { items: filtered1.slice(0, limit).map((m) => ({ ...m, fallbackLevel: 1 as const })), fallbackLevel: 1 };
   }
 
   const fallback2 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: false, sectorOnly: false });
-  const filtered2 = applyScoreFilter(fallback2);
+  const filtered2 = strictFilter(fallback2);
   if (filtered2.length > 0) {
     return { items: filtered2.slice(0, limit).map((m) => ({ ...m, fallbackLevel: 2 as const })), fallbackLevel: 2 };
   }
 
   const fallback3 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: false, sectorOnly: true });
-  const filtered3 = applyScoreFilter(fallback3);
+  // Level 3 acil çıkış kapısıdır: yalnızca kullanıcı/mentor kaynaklı eşik (explicitMinScore)
+  // uygulanır. Tenant konfigürasyon barajı (tenantConfig.minMatchScoreThreshold) atlanır —
+  // aksi hâlde yüksek eşikli tenant'larda ilk eşleşme hiç oluşmaz (aktivasyon deadlock).
   return {
-    items: filtered3.slice(0, limit).map((m) => ({
+    items: looseFilter(fallback3).slice(0, limit).map((m) => ({
       ...m,
       fallbackLevel: 3 as const,
       warnings: ['Mizaç uyumu düşük — ilerlemeden önce beklentileri konuşmanız önerilir.'],
