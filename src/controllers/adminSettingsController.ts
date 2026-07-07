@@ -66,6 +66,7 @@ const UpdateSettingsSchema = z
   .object({
     maxMeetingsPerWeek:     z.number().int().min(1).max(5).optional(),
     minMatchScoreThreshold: z.number().int().min(20).max(90).optional(),
+    reportingFrequency:     z.enum(['WEEKLY', 'BIWEEKLY', 'MONTHLY']).optional(),
   })
   .strict()
   .refine(

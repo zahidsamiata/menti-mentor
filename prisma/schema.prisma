@@ -149,6 +149,10 @@ model Tenant {
   minMatchScoreThreshold Int   @default(50) // Eşleşme taban barajı (0-100)
   blockedPairs           Json? // Array<{ fromUserId, toUserId, blockedAt, blockedBy }>
 
+  // AlgorithmTuner bildirim sıklığı — admin kendi tercihine göre ayarlar
+  // WEEKLY (varsayılan) | BIWEEKLY | MONTHLY
+  reportingFrequency String @default("WEEKLY")
+
   // Super Admin askıya alma / aktif etme
   isActive Boolean @default(true)
 

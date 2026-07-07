@@ -11,7 +11,8 @@
  */
 
 import cron from 'node-cron';
-import { runGlobalTuning } from './algorithmTuner.js';
+import { prisma } from '../db.js';
+import { tuneScoringWeights } from './algorithmTuner.js';
 import { purgeExpiredData } from './gdprService.js';
 import { logger } from './logger.js';
 
@@ -26,15 +27,45 @@ const CRON_ENABLED =
 
 // ─── Görev: Algoritma Ağırlık Ayarlaması ─────────────────────────────────────
 
+/**
+ * Her tenant'ın reportingFrequency ayarını kontrol ederek sadece
+ * uygun olanlar için tuning çalıştırır.
+ * WEEKLY: her Pazar çalışır
+ * BIWEEKLY: 1. ve 3. Pazar çalışır
+ * MONTHLY: sadece ayın 1. Pazar'ı çalışır
+ */
 async function runWeeklyTuning(): Promise<void> {
   void logger.info('SYSTEM', 'Cron: Algoritma ağırlık ayarlaması başladı');
   try {
-    const results = await runGlobalTuning();
-    const adjusted = results.filter((r) => r.adjusted).length;
-    void logger.info('SYSTEM', `Cron: Ağırlık ayarlaması tamamlandı`, {
-      tenantsProcessed: results.length,
-      tenantsAdjusted: adjusted,
-    });
+    const now = new Date();
+    const weekOfMonth = Math.ceil(now.getDate() / 7); // 1-5
+
+    const tenants = (await prisma.tenant.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    })) as Array<{ id: string; name: string; reportingFrequency?: string }>;
+
+    let processed = 0;
+    let skipped = 0;
+
+    for (const tenant of tenants) {
+      const freq = tenant.reportingFrequency ?? 'WEEKLY';
+      const shouldRun =
+        freq === 'WEEKLY' ||
+        (freq === 'BIWEEKLY' && (weekOfMonth === 1 || weekOfMonth === 3)) ||
+        (freq === 'MONTHLY'  && weekOfMonth === 1);
+
+      if (!shouldRun) { skipped++; continue; }
+
+      try {
+        await tuneScoringWeights(tenant.id);
+        processed++;
+      } catch (err) {
+        void logger.error('ML', `Tenant ${tenant.id} tuning başarısız`, { error: String(err) });
+      }
+    }
+
+    void logger.info('SYSTEM', 'Cron: Ağırlık ayarlaması tamamlandı', { processed, skipped });
   } catch (err) {
     void logger.error('SYSTEM', 'Cron: Ağırlık ayarlaması başarısız', { error: String(err) });
   }
