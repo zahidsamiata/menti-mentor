@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { computeAndStoreProfile, rankMentorsForMenti, type CertData } from '../services/scoring.service.js';
+import { computeSectorScore } from '../services/scoring.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { scoreSjtAnswers, type SjtAnswer } from '../services/sjt-scorer.js';
 import { evaluateCertification } from '../services/certification.service.js';
@@ -110,7 +111,12 @@ export async function rankMentorsHandler(req: RequestWithTenant, res: Response) 
     }]),
   );
 
-  const ranked = rankMentorsForMenti(menti, mentors, () => 50, certDataMap);
+  const ranked = rankMentorsForMenti(
+    menti,
+    mentors,
+    (mentor) => computeSectorScore(menti.goalTags, mentor.skillTags),
+    certDataMap,
+  );
   const results = limit ? ranked.slice(0, limit) : ranked;
 
   return res.json({ mentiId, totalEligible: ranked.length, results });
