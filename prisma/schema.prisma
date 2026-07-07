@@ -171,6 +171,7 @@ model Tenant {
   clubMemberships    ClubMembership[]
   questions          Question[]
   questionHides      QuestionHide[]
+  meetingCheckIns    MeetingCheckIn[]
   pendingTags        PendingTag[]
   memberships        TenantMembership[]
   availabilityBlocks AvailabilityBlock[]
