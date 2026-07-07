@@ -161,6 +161,14 @@ model Tenant {
   // Super Admin askıya alma / aktif etme
   isActive Boolean @default(true)
 
+  // Faz 3 — Taslak kurtarma e-postası (KVKK: unsubscribe zorunlu)
+  // Token: selfServeRegister'da üretilir, e-postada unsubscribe linki olarak gider.
+  // Yalnızca onboardingStep ['TEMPLATE','LOGO','PREVIEW'] tenant'larına gönderilir
+  // (Step4 geçilmiş = e-posta+KVKK onayı alınmış).
+  unsubscribeToken    String?   @unique  // crypto.randomUUID() — e-posta unsubscribe linki
+  reminderEmailSentAt DateTime?          // Duplicate send koruması
+  unsubscribedAt      DateTime?          // NULL = abone, set = listeden çıkmış
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
