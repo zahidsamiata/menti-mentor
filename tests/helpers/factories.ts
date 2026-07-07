@@ -58,17 +58,30 @@ export async function createUser(seed: UserSeed): Promise<User & { rawPassword: 
     ? await bcrypt.hash(seed.password, 10)
     : await getDefaultHash();
 
+  const role = seed.role ?? 'MENTI';
+
   const user = await testPrisma.user.create({
     data: {
       tenantId: seed.tenantId,
       email: `user-${id}@test.local`,
       fullName: `Test User ${id}`,
-      role: seed.role ?? 'MENTI',
+      role,
       approvalStatus: seed.approvalStatus ?? 'APPROVED',
       authProvider: 'LOCAL',
       password: hash,
       discType: seed.discType ?? null,
       sectorTags: seed.sectorTags ?? [],
+      isActive: true,
+    },
+  });
+
+  // requireTenant middleware TenantMembership.isActive kontrolü yapar;
+  // kayıt yoksa 403 döner — tüm test kullanıcıları için üyelik oluştur.
+  await testPrisma.tenantMembership.create({
+    data: {
+      userId:   user.id,
+      tenantId: seed.tenantId,
+      role,
       isActive: true,
     },
   });
