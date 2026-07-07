@@ -85,14 +85,18 @@ export async function buildQuestionList(tenantId: string) {
       OR: [{ tenantId: null }, { tenantId }],
     },
     orderBy: [{ type: 'asc' }, { order: 'asc' }],
-    select: { id: true, text: true, type: true, discDimension: true, order: true },
+    select: { id: true, text: true, type: true, discDimension: true, order: true, category: true },
   });
 
   // Gizlenmiş soruları listeden çıkar
-  const questions = allQuestions.filter((q) => !hiddenSet.has(q.id));
+  const visible = allQuestions.filter((q) => !hiddenSet.has(q.id));
+
+  // DISC skoruna katkı sağlayan sorular vs STK özel soruları (DISC'e katılmaz)
+  const questions    = visible.filter((q) => (q.category as string | null) !== 'STK_CUSTOM');
+  const stkQuestions = visible.filter((q) => (q.category as string | null) === 'STK_CUSTOM');
 
   const meta = calcPoolMeta(questions);
-  return { questions, meta };
+  return { questions, stkQuestions, meta };
 }
 
 /**

@@ -114,8 +114,13 @@ enum ClubMemberRole {
 }
 
 enum QuestionType {
-  CORE // Her yeni kullanıcıya gösterilen temel soru seti
+  CORE      // Her yeni kullanıcıya gösterilen temel soru seti
   DEEPENING // Profil tamamlandıkça kilitlenen derinleştirici sorular
+}
+
+enum QuestionCategory {
+  DISC_ASSESSMENT  // Karakter testi — DISC vektörüne katkı sağlar (kilitli, global)
+  STK_CUSTOM       // STK'nın kendi amaçları için eklediği sorular (DISC'e katılmaz)
 }
 
 enum DiscDimension {
@@ -556,16 +561,17 @@ model ClubMembership {
 // Aşamalı profilleme soru bankası
 // tenantId null → tüm tenant'larda geçerli global soru
 model Question {
-  id            String        @id @default(cuid())
-  tenantId      String?       // null = global çekirdek soru (KILITLI — silinemez/değiştirilemez)
+  id            String           @id @default(cuid())
+  tenantId      String?          // null = global çekirdek soru (KILITLI — silinemez/değiştirilemez)
   text          String
-  type          QuestionType  @default(CORE)
-  discDimension DiscDimension @default(GENERAL)
-  order         Int           @default(0)
-  isActive      Boolean       @default(true)
-  isRequired    Boolean       @default(true)  // opsiyonel/zorunlu işaretleme (tenant sorularında)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  type          QuestionType     @default(CORE)
+  discDimension DiscDimension    @default(GENERAL)
+  category      QuestionCategory @default(DISC_ASSESSMENT) // DISC testi mi, STK özel mi?
+  order         Int              @default(0)
+  isActive      Boolean          @default(true)
+  isRequired    Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   tenant    Tenant?            @relation(fields: [tenantId], references: [id])
   responses UserResponse[]

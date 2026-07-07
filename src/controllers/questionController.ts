@@ -37,6 +37,9 @@ const CreateQuestionSchema = z.object({
   text: z.string().min(10).max(500),
   type: z.enum(['CORE', 'DEEPENING']).default('CORE'),
   discDimension: z.enum(['D', 'I', 'S', 'C', 'GENERAL']).default('GENERAL'),
+  // DISC_ASSESSMENT: karakter testi sorusu (DISC vektörüne katkı)
+  // STK_CUSTOM: STK'nın kendi öğrenmek/izlemek istediği sorular (DISC'e katılmaz)
+  category: z.enum(['DISC_ASSESSMENT', 'STK_CUSTOM']).default('STK_CUSTOM'),
   order: z.number().int().min(0).default(0),
   /** true: yalnızca bu tenant'a özgü soru; false: tüm tenantlara görünür (global) */
   tenantScoped: z.boolean().default(false),
