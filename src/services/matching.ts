@@ -44,8 +44,8 @@ export async function rankMentisForMentor(args: {
   minMatchScore?: number;
   excludeDiscTypes?: Array<'D' | 'I' | 'S' | 'C'>;
 }): Promise<{ items: RankedMenti[]; fallbackLevel: 0 | 1 | 2 | 3 }> {
-  // Mentor profili ve tenant yapılandırmasını paralel çek
-  const [mentor, tenantConfig] = await Promise.all([
+  // Mentor profili, tenant yapılandırması ve mentor'un kişisel filtresi paralel çek
+  const [mentor, tenantConfig, mentorFilter] = await Promise.all([
     prisma.user.findFirst({
       where: { id: args.mentorId, tenantId: args.mentorTenantId, role: 'MENTOR', isActive: true },
       select: {
@@ -62,11 +62,25 @@ export async function rankMentisForMentor(args: {
       where:  { id: args.mentorTenantId },
       select: { minMatchScoreThreshold: true, blockedPairs: true },
     }),
+    prisma.mentorFilter.findUnique({
+      where:  { mentorId: args.mentorId },
+      select: { minCompatibilityScore: true, blockedDiscTypes: true, filterEnabled: true },
+    }),
   ]);
   if (!mentor) return { items: [], fallbackLevel: 0 };
 
-  // Çağıran açıkça belirtmişse o değer geçer; yoksa tenant admin'in baraj ayarı devreye girer.
-  const effectiveMinScore = args.minMatchScore ?? tenantConfig?.minMatchScoreThreshold;
+  // Öncelik sırası: çağıranın arg'ı > mentor'un kaydedilmiş filtresi > tenant barajı
+  const savedFilter = mentorFilter?.filterEnabled ? mentorFilter : null;
+  const effectiveMinScore =
+    args.minMatchScore ??
+    (savedFilter?.minCompatibilityScore ? savedFilter.minCompatibilityScore : undefined) ??
+    tenantConfig?.minMatchScoreThreshold;
+
+  // excludeDiscTypes: arg > kaydedilmiş filtre (filterEnabled aktifse)
+  const effectiveExcludeDiscTypes: Array<'D' | 'I' | 'S' | 'C'> =
+    args.excludeDiscTypes ??
+    (savedFilter?.blockedDiscTypes as Array<'D' | 'I' | 'S' | 'C'> | undefined) ??
+    [];
 
   // BUG FIX: Admin'in idari blok listesini motora uygula (önceden hiç okunmuyordu).
   const blockedMentiIds = buildBlockedMentiSet(mentor.id, tenantConfig?.blockedPairs);
@@ -115,7 +129,7 @@ export async function rankMentisForMentor(args: {
     mentorInteractionStyle: mentor.interactionStyle as string | null | undefined,
     mentorExpectations:     mentor.expectationCategories as string[],
     mentorTenantId:         mentor.tenantId,
-    excludeDiscTypes:       args.excludeDiscTypes,
+    excludeDiscTypes:       effectiveExcludeDiscTypes,
     blockedMentiIds,        // idari blok listesi — her fallback kademe için uygulanır
   };
 

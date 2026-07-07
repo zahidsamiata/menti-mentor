@@ -206,6 +206,9 @@ model User {
   // Onboarding onay durumu — yeni kayıtlar PENDING, admin onayı ile APPROVED olur
   approvalStatus UserApprovalStatus @default(PENDING)
 
+  // DISC testi CORE aşamasını ilk tamamladığı an — admin bildirim tetikleyicisi için
+  discAssessmentCompletedAt DateTime?
+
   // PLG: Mentör görünürlük tercihi — false yapınca menti tarafı bu mentörü göremez
   mentorVisibilityEnabled Boolean @default(true)
   // PLG: DISC testi sonrası üyeye gösterilen "Aha Anı" kartı verisi (arketip, süper güç vb.)
@@ -245,6 +248,7 @@ model User {
   userProfile        UserProfile?
   memberships        TenantMembership[]
   availabilityBlocks AvailabilityBlock[]
+  mentorFilter       MentorFilter?
 
   // email @unique ile global unique; ayrıca tenant bazlı sorgular için index
   @@index([tenantId, role, isActive])
@@ -283,6 +287,19 @@ model VisibilityOptIn {
   @@index([tenantId, status])
   // Mentor dashboard: kendi gelen menti talepleri
   @@index([mentorId, initiatedBy, status])
+}
+
+// Mentor'un kişisel eşleşme filtresi — UI'dan kaydettiği tercihler
+model MentorFilter {
+  id                    String     @id @default(cuid())
+  mentorId              String     @unique
+  minCompatibilityScore Int        @default(0)   // 0 = filtre yok, 1-100 arası eşik
+  blockedDiscTypes      DiscType[] @default([])  // gösterilmeyecek DISC profilleri
+  filterEnabled         Boolean    @default(true) // master toggle — false: filtre tamamen devre dışı
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+
+  mentor User @relation(fields: [mentorId], references: [id])
 }
 
 model MatchRequest {

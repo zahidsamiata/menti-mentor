@@ -28,6 +28,8 @@ import {
   upsertSingleResponse,
   validateQuestionIds,
 } from '../services/questionService.js';
+import { notifyAdminsPendingUser } from '../services/notificationService.js';
+import { sendAdminTestCompletedNotification } from '../services/emailService.js';
 
 // ─── Validasyon şemaları ──────────────────────────────────────────────────────
 
@@ -136,6 +138,11 @@ export async function respondToQuestion(req: RequestWithTenant, res: Response) {
     completionPercent: progress.completionPercent,
   });
 
+  // CORE test ilk kez tamamlandığında bekleme odası bildirimi gönder
+  if (progress.coreAnswered >= progress.coreThreshold) {
+    void triggerWaitingRoomNotificationIfNeeded(userId, req.tenant.tenantId);
+  }
+
   return res.json({ discVector, progress });
 }
 
@@ -188,6 +195,68 @@ export async function submitResponses(req: RequestWithTenant, res: Response) {
     discVector,
     progress,
   });
+}
+
+// ─── Bekleme Odası Bildirim Tetikleyici ──────────────────────────────────────
+
+/**
+ * CORE testi ilk kez tamamlandığında (discAssessmentCompletedAt null → now) admin'lere
+ * e-posta + push bildirim gönderir. İdempotent: ikinci çağrıda hiçbir şey yapmaz.
+ */
+async function triggerWaitingRoomNotificationIfNeeded(
+  userId: string,
+  tenantId: string,
+): Promise<void> {
+  const { prisma } = await import('../db.js');
+
+  // Zaten bildirim gönderilmişse çık (idempotency)
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      discAssessmentCompletedAt: true,
+      approvalStatus: true,
+      fullName: true,
+      role: true,
+    } as Parameters<typeof prisma.user.findUnique>[0]['select'],
+  });
+  if (!user || (user as { discAssessmentCompletedAt: Date | null }).discAssessmentCompletedAt !== null || user.approvalStatus !== 'PENDING') return;
+
+  // Tamamlanma zamanını kaydet (bir daha tetiklenmemesi için)
+  await prisma.user.update({
+    where: { id: userId },
+    data: { discAssessmentCompletedAt: new Date() } as Parameters<typeof prisma.user.update>[0]['data'],
+  });
+
+  // Tenant admin'lerini bul
+  const admins = await prisma.user.findMany({
+    where: { tenantId, role: 'ADMIN', isActive: true },
+    select: { id: true, fullName: true, email: true },
+  });
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { displayName: true, name: true },
+  });
+  const tenantName = tenant?.displayName ?? tenant?.name ?? tenantId;
+
+  for (const admin of admins) {
+    void notifyAdminsPendingUser({
+      tenantId,
+      newUserFullName: user.fullName,
+      newUserRole: user.role,
+    });
+    void sendAdminTestCompletedNotification({
+      toEmail: admin.email,
+      adminName: admin.fullName,
+      userName: user.fullName,
+      userRole: user.role,
+      tenantName,
+    }).catch((err) =>
+      void logger.error('EMAIL', 'Test tamamlama e-postası gönderilemedi', {
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
 }
 
 // ─── GET /api/questions/my-responses ─────────────────────────────────────────

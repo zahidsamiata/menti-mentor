@@ -2,16 +2,18 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { notifyMatchRequestReceived } from '../services/notificationService.js';
 
 const CreateRequestSchema = z.object({
   requesterUserId: z.string().min(5),
   targetType: z.enum(['USER', 'JOB_LISTING']),
   targetId: z.string().min(5),
-  requestMessage: z.string().max(1000).optional(),
+  // Menti kendi tanışma/talep mesajını yazar — AI üretimi yok.
+  requestMessage: z.string().min(1, 'Talep mesajı boş olamaz.').max(1000).optional(),
 });
 
-// Rule 2: Menti -> Mentor request sadece opt-in sonrası mümkün.
-// Rule 4: Polymorphic target (USER veya JOB_LISTING).
+// Menti → Mentor doğrudan talep (VisibilityOptIn onay adımı kaldırıldı).
+// Polymorphic target: USER (mentor) veya JOB_LISTING.
 export async function createMatchRequest(req: RequestWithTenant, res: Response) {
   const parsed = CreateRequestSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -27,7 +29,6 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
   }
 
   if (parsed.data.targetType === 'USER') {
-    // hedef mentor olmalı; menti bunu görebilmek için opt-in almış olmalı
     const target = await prisma.user.findUnique({
       where: { id: parsed.data.targetId },
       select: { id: true, role: true },
@@ -35,20 +36,8 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
     if (!target || target.role !== 'MENTOR') {
       return res.status(400).json({ error: 'TARGET', message: 'Hedef USER mentor olmalıdır.' });
     }
-
-    const optIn = await prisma.visibilityOptIn.findUnique({
-      where: { mentorId_mentiId: { mentorId: target.id, mentiId: requester.id } },
-      select: { status: true },
-    });
-    if (!optIn || optIn.status !== 'APPROVED') {
-      return res.status(403).json({
-        error: 'VISIBILITY_OPTIN_GEREKLI',
-        message: 'Bu mentor için visibility opt-in yok; istek gönderemezsiniz.',
-      });
-    }
   }
 
-  // JOB_LISTING hedefi için şimdilik ek kural yok (ileride job match akışı gelecek)
   const created = await prisma.matchRequest.create({
     data: {
       tenantId: req.tenant.tenantId,
@@ -58,6 +47,11 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
       requestMessage: parsed.data.requestMessage,
     },
   });
+
+  // Mentora anlık bildirim gönder
+  if (parsed.data.targetType === 'USER') {
+    void notifyMatchRequestReceived(parsed.data.targetId, req.tenant.tenantId);
+  }
 
   return res.status(201).json(created);
 }

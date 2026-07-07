@@ -96,6 +96,23 @@ export async function sendPasswordResetEmail(args: {
   );
 }
 
+export async function sendAdminTestCompletedNotification(args: {
+  toEmail: string;
+  adminName: string;
+  userName: string;
+  userRole: string;
+  tenantName: string;
+}): Promise<void> {
+  await send(
+    args.toEmail,
+    `[${args.tenantName}] Kullanıcı DISC Testini Tamamladı — Onay Bekliyor`,
+    `<p>Merhaba ${args.adminName},</p>
+     <p><strong>${args.userName}</strong> (${args.userRole}) DISC karakter analizini tamamladı.</p>
+     <p>Kullanıcı eşleşme havuzuna dahil edilebilmesi için onayınızı bekliyor.</p>
+     <p>Lütfen admin panelinizden inceleyip onaylayın veya reddedin.</p>`,
+  );
+}
+
 export async function sendFeedbackReminderEmail(args: {
   toEmail: string;
   recipientName: string;

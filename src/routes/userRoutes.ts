@@ -8,6 +8,7 @@ import { createMatchRequest, listRequests, getRequest } from '../controllers/req
 import { getUserClubs } from '../controllers/clubController.js';
 import { anonymizeUserHandler, hardDeleteUserHandler, exportUserDataHandler } from '../controllers/gdprController.js';
 import { requestVisibilityFromMentor, getPendingVisibilityRequests, respondToVisibilityRequest } from '../controllers/mentiRequestController.js';
+import { getMentorFilter, upsertMentorFilter } from '../controllers/mentorFilterController.js';
 import { getNextAdaptiveQuestion, submitAdaptiveAnswer, previewAdaptiveResult } from '../controllers/adaptiveTestController.js';
 
 const router = Router();
@@ -86,6 +87,20 @@ router.get(
   '/users/:id/adaptive-test/preview',
   requireAuth(),
   previewAdaptiveResult as unknown as RequestHandler,
+);
+
+// ─── Mentor Kişisel Filtresi ──────────────────────────────────────────────────
+// GET  /mentors/:mentorId/filter → kaydedilmiş filtre tercihlerini döner
+// PUT  /mentors/:mentorId/filter → tercihleri kaydeder/günceller
+router.get(
+  '/mentors/:mentorId/filter',
+  requireRole('ADMIN', 'MENTOR'),
+  getMentorFilter as unknown as RequestHandler,
+);
+router.put(
+  '/mentors/:mentorId/filter',
+  requireRole('ADMIN', 'MENTOR'),
+  upsertMentorFilter as unknown as RequestHandler,
 );
 
 // ─── Hibrit Akış: Menti-driven görünürlük talebi ─────────────────────────────
