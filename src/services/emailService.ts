@@ -161,8 +161,11 @@ export async function sendDraftTenantReminderEmail(args: {
   unsubscribeToken: string;
 }): Promise<void> {
   const frontendUrl    = process.env['FRONTEND_URL'] ?? 'http://localhost:3001';
+  // BACKEND_URL kullan: /api/tenants/unsubscribe bir backend route'u.
+  // Tek-domain deploy'da FRONTEND_URL ile aynı; ayrı-domain deploy'da farklı olabilir.
+  const backendUrl     = process.env['BACKEND_URL'] ?? process.env['FRONTEND_URL'] ?? 'http://localhost:3000';
   const resumeUrl      = `${frontendUrl}/onboarding/stk`;
-  const unsubscribeUrl = `${frontendUrl}/api/tenants/unsubscribe?token=${args.unsubscribeToken}`;
+  const unsubscribeUrl = `${backendUrl}/api/tenants/unsubscribe?token=${args.unsubscribeToken}`;
 
   await send(
     args.toEmail,
