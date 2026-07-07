@@ -230,6 +230,10 @@ model User {
   // Onboarding onay durumu — yeni kayıtlar PENDING, admin onayı ile APPROVED olur
   approvalStatus UserApprovalStatus @default(PENDING)
 
+  // KVKK — açık rıza kaydı (/api/auth/register sırasında alınır)
+  // NULL = OAuth akışı veya migration öncesi kayıt.
+  kvkkConsentAt DateTime?
+
   // DISC testi CORE aşamasını ilk tamamladığı an — admin bildirim tetikleyicisi için
   discAssessmentCompletedAt DateTime?
 
