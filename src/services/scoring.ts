@@ -29,6 +29,7 @@ export function isAntiMatch(mentorDisc?: DiscType | null, mentiDisc?: DiscType |
 }
 
 export function computeSectorScore(mentiTags: string[], mentorTags: string[]): number {
+  // Menti etiketi yoksa uyum ölçülemez → 0 döndür (fallback katmanı bunu yakalar)
   if (!mentiTags.length) return 0;
   const mentiSet = new Set(mentiTags.map((t) => t.toLowerCase()));
   const mentorSet = new Set(mentorTags.map((t) => t.toLowerCase()));

@@ -28,6 +28,12 @@ enum VisibilityOptInStatus {
   REJECTED
 }
 
+// Hangi tarafın opt-in sürecini başlattığını izler (Hibrit Akış denetimi)
+enum OptInInitiator {
+  MENTOR // Mentor-driven: mentor mentiyi sıralı listeden seçerek onayladı
+  MENTI // Menti-driven: menti mentorun profiline görünürlük talebi gönderdi
+}
+
 enum MatchTargetType {
   USER
   JOB_LISTING
@@ -54,8 +60,26 @@ enum ExpectationCategory {
   SEKTOR_TANIMA
 }
 
+enum MeetingFormat {
+  ONLINE
+  IN_PERSON
+  PHONE
+}
+
+enum Weekday {
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+  SUN
+}
+
 enum MeetingStatus {
   PENDING
+  SCHEDULED
+  IN_PROGRESS
   APPROVED
   COMPLETED
   CANCELLED
@@ -65,6 +89,12 @@ enum LogLevel {
   INFO
   WARN
   ERROR
+}
+
+enum UserApprovalStatus {
+  PENDING // Yeni kayıt — admin onayı bekleniyor
+  APPROVED // Onaylandı — eşleşme havuzuna dahil
+  REJECTED // Reddedildi — havuzdan çıkarıldı
 }
 
 enum ClubType {
@@ -84,32 +114,46 @@ enum ClubMemberRole {
 }
 
 enum QuestionType {
-  CORE       // Her yeni kullanıcıya gösterilen temel soru seti
-  DEEPENING  // Profil tamamlandıkça kilitlenen derinleştirici sorular
+  CORE // Her yeni kullanıcıya gösterilen temel soru seti
+  DEEPENING // Profil tamamlandıkça kilitlenen derinleştirici sorular
 }
 
 enum DiscDimension {
-  D         // Dominant — karar verme, liderlik
-  I         // Influential — iletişim, ikna
-  S         // Steady — sabır, güvenilirlik
-  C         // Conscientious — analiz, kalite
-  GENERAL   // Boyut-bağımsız genel profil sorusu
+  D // Dominant — karar verme, liderlik
+  I // Influential — iletişim, ikna
+  S // Steady — sabır, güvenilirlik
+  C // Conscientious — analiz, kalite
+  GENERAL // Boyut-bağımsız genel profil sorusu
 }
 
 model Tenant {
-  id                 String   @id @default(cuid())
+  id                 String  @id @default(cuid())
   name               String
-  slug               String   @unique
-  isSharedPoolActive Boolean  @default(false)
+  slug               String  @unique
+  isSharedPoolActive Boolean @default(false)
   tenantVocabulary   Json?
 
   // Kurumsal marka kimliği
-  displayName        String?  // Görüntü adı (ör. "Uluslararası Genç Derneği")
-  logoUrl            String?  // CDN veya relative URL
-  primaryColor       String?  @default("#6366f1") // Tailwind indigo-500
+  displayName  String? // Görüntü adı (ör. "Uluslararası Genç Derneği")
+  logoUrl      String? // CDN veya relative URL
+  primaryColor String? @default("#6366f1") // Tailwind indigo-500
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  // PLG / Freemium katmanı
+  plan            String  @default("FREE") // FREE | PRO | ENTERPRISE
+  limits          Json? // {"max_reports": 3, "custom_domain": false, ...}
+  onboardingStep  String  @default("PENDING") // PENDING | TEMPLATE | LOGO | PREVIEW | DONE
+  programTemplate String? // "MEZUN" | "KULUP" | "GONULLU" | "OZEL"
+
+  // Program kuralları — dernek yöneticisi kendi kurumunun dinamiklerine göre ayarlar
+  maxMeetingsPerWeek     Int   @default(2) // Bir mentinin haftalık maks. görüşme sayısı
+  minMatchScoreThreshold Int   @default(50) // Eşleşme taban barajı (0-100)
+  blockedPairs           Json? // Array<{ fromUserId, toUserId, blockedAt, blockedBy }>
+
+  // Super Admin askıya alma / aktif etme
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   users              User[]
   visibilityOptIns   VisibilityOptIn[]
@@ -122,15 +166,20 @@ model Tenant {
   clubs              Club[]
   clubMemberships    ClubMembership[]
   questions          Question[]
+  pendingTags        PendingTag[]
+  memberships        TenantMembership[]
+  availabilityBlocks AvailabilityBlock[]
 }
 
 model User {
-  id        String   @id @default(cuid())
-  tenantId  String
-  role      UserRole
-  email     String
-  fullName  String
-  isActive  Boolean  @default(true)
+  id           String   @id @default(cuid())
+  tenantId     String
+  role         UserRole
+  email        String   @unique
+  password     String? // OAuth kullanıcıları için null
+  authProvider String   @default("LOCAL") // LOCAL | GOOGLE | LINKEDIN
+  fullName     String
+  isActive     Boolean  @default(true)
 
   sectorTags String[] @default([])
 
@@ -146,13 +195,21 @@ model User {
   expectationCategories ExpectationCategory[] @default([])
   interactionStyle      InteractionStyle?
   enneagramWing         String?
-  rematchPriority       Boolean @default(false)
-  rematchCount          Int     @default(0)
+  rematchPriority       Boolean               @default(false)
+  rematchCount          Int                   @default(0)
 
   bioSummary       String?
   expertiseDetails String?
   targetAudience   String?
   needsOrientation Boolean @default(false)
+
+  // Onboarding onay durumu — yeni kayıtlar PENDING, admin onayı ile APPROVED olur
+  approvalStatus UserApprovalStatus @default(PENDING)
+
+  // PLG: Mentör görünürlük tercihi — false yapınca menti tarafı bu mentörü göremez
+  mentorVisibilityEnabled Boolean @default(true)
+  // PLG: DISC testi sonrası üyeye gösterilen "Aha Anı" kartı verisi (arketip, süper güç vb.)
+  discResultCard          Json?
 
   // Kesirli DISC vektörü: {D, I, S, C: 0-1 normalised, confidence: 0-1}
   discVector Json?
@@ -165,7 +222,10 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenant              Tenant               @relation(fields: [tenantId], references: [id])
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  pendingTags         PendingTag[]
 
   mentorOptIns VisibilityOptIn[] @relation("MentorOptIns")
   mentiOptIns  VisibilityOptIn[] @relation("MentiOptIns")
@@ -180,69 +240,87 @@ model User {
   feedbacksGiven    Feedback[] @relation("FeedbacksGiven")
   feedbacksReceived Feedback[] @relation("FeedbacksReceived")
 
-  clubMemberships ClubMembership[]
-  responses       UserResponse[]
+  clubMemberships    ClubMembership[]
+  responses          UserResponse[]
+  userProfile        UserProfile?
+  memberships        TenantMembership[]
+  availabilityBlocks AvailabilityBlock[]
 
-  @@unique([tenantId, email])
-  // Eşleşme motoru için: isActive=true AND role='MENTI' filtresini hızlandırır
+  // email @unique ile global unique; ayrıca tenant bazlı sorgular için index
   @@index([tenantId, role, isActive])
+  // Auth: slug ile tenant bulunduktan sonra userId+tenantId sorgusu
+  @@index([tenantId, id])
+  // Analitik: DISC dağılım raporları için
+  @@index([tenantId, discType])
+  // Oryantasyon ihtiyacı olan kullanıcıları hızla bul
+  @@index([tenantId, needsOrientation])
 }
 
 model VisibilityOptIn {
-  id          String  @id @default(cuid())
-  tenantId    String
+  id       String @id @default(cuid())
+  tenantId String
 
-  mentorId    String
-  mentiId     String
-  status      VisibilityOptInStatus @default(PENDING)
-  iceBreaker  String?
+  mentorId       String
+  mentiId        String
+  status         VisibilityOptInStatus @default(PENDING)
+  initiatedBy    OptInInitiator        @default(MENTOR)
+  iceBreaker     String?
+  // Menti-driven akışta menti'nin mentora iletmek istediği kısa mesaj
+  requestMessage String?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  mentor      User @relation("MentorOptIns", fields: [mentorId], references: [id])
-  menti       User @relation("MentiOptIns", fields: [mentiId], references: [id])
-  tenant      Tenant @relation(fields: [tenantId], references: [id])
+  mentor User   @relation("MentorOptIns", fields: [mentorId], references: [id])
+  menti  User   @relation("MentiOptIns", fields: [mentiId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@unique([mentorId, mentiId])
   @@index([tenantId])
   @@index([mentorId])
   @@index([mentiId])
+  // Bekleyen opt-in sayısını hızla çek (dashboard)
+  @@index([tenantId, status])
+  // Mentor dashboard: kendi gelen menti talepleri
+  @@index([mentorId, initiatedBy, status])
 }
 
 model MatchRequest {
-  id              String @id @default(cuid())
+  id              String          @id @default(cuid())
   tenantId        String
   requesterUserId String
   targetType      MatchTargetType
   targetId        String
-  createdAt       DateTime @default(now())
+  requestMessage  String?         @db.VarChar(1000)
+  createdAt       DateTime        @default(now())
 
-  requester       User   @relation("RequestsSent", fields: [requesterUserId], references: [id])
-  tenant          Tenant @relation(fields: [tenantId], references: [id])
+  requester User   @relation("RequestsSent", fields: [requesterUserId], references: [id])
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
   @@index([requesterUserId])
   @@index([targetType, targetId])
+  // Job Board: belirli bir ilanı hedefleyen talepleri hızla bul
+  @@index([tenantId, targetType, targetId])
 }
 
 model FeedbackLog {
-  id         String  @id @default(cuid())
-  tenantId   String
-  mentorId   String
-  mentiId    String
+  id       String @id @default(cuid())
+  tenantId String
+  mentorId String
+  mentiId  String
 
-  phase      Int
-  starRating Int
-  difficulty String?
-  npsScore   Int?
+  phase        Int
+  starRating   Int
+  difficulty   String?
+  npsScore     Int?
   goalAchieved String?
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   mentor User   @relation("FeedbackAsMentor", fields: [mentorId], references: [id])
-  menti  User   @relation("FeedbackAsMenti",  fields: [mentiId],  references: [id])
+  menti  User   @relation("FeedbackAsMenti", fields: [mentiId], references: [id])
 
   @@unique([mentorId, mentiId, phase])
   @@index([tenantId])
@@ -264,26 +342,38 @@ model MatchCombinationScore {
 }
 
 model Meeting {
-  id          String        @id @default(cuid())
-  tenantId    String
-  mentorId    String
-  mentiId     String
-  scheduledAt DateTime
-  status      MeetingStatus @default(PENDING)
-  hasFeedback Boolean       @default(false)
+  id               String        @id @default(cuid())
+  tenantId         String
+  matchId          String?
+  mentorUserId     String
+  mentiUserId      String
+  startsAt         DateTime
+  endsAt           DateTime
+  status           MeetingStatus @default(PENDING)
+  format           MeetingFormat @default(ONLINE)
+  durationMin      Int           @default(60)
+  notes            String?
+  locationUrl      String?
+  locationText     String?
+  phoneNumber      String?
+  hasFeedback      Boolean       @default(false)
+  feedbackPrompted Boolean       @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant   Tenant   @relation(fields: [tenantId], references: [id])
-  mentor   User     @relation("MeetingsAsMentor", fields: [mentorId], references: [id])
-  menti    User     @relation("MeetingsAsMenti",  fields: [mentiId],  references: [id])
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  match    Match?    @relation(fields: [matchId], references: [id])
+  mentor   User      @relation("MeetingsAsMentor", fields: [mentorUserId], references: [id])
+  menti    User      @relation("MeetingsAsMenti", fields: [mentiUserId], references: [id])
   feedback Feedback?
 
   @@index([tenantId])
-  @@index([mentorId])
-  @@index([mentiId])
-  // Bekleyen geri bildirim sorgusu için
+  @@index([mentorUserId])
+  @@index([mentiUserId])
+  @@index([matchId])
+  @@index([tenantId, status])
+  @@index([tenantId, startsAt])
   @@index([tenantId, status, hasFeedback])
 }
 
@@ -308,8 +398,8 @@ model Feedback {
 
   meeting Meeting @relation(fields: [meetingId], references: [id])
   tenant  Tenant  @relation(fields: [tenantId], references: [id])
-  mentor  User    @relation("FeedbacksGiven",    fields: [mentorId], references: [id])
-  menti   User    @relation("FeedbacksReceived", fields: [mentiId],  references: [id])
+  mentor  User    @relation("FeedbacksGiven", fields: [mentorId], references: [id])
+  menti   User    @relation("FeedbacksReceived", fields: [mentiId], references: [id])
 
   @@index([tenantId])
   @@index([mentorId])
@@ -327,24 +417,28 @@ model JobListing {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  tenant      Tenant @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
   @@index([isActive])
+  // Tag tabanlı ilan araması için tenant + aktif filtresi
+  @@index([tenantId, isActive])
 }
 
 // Merkezi sistem/hata logu — tenant bağımsız, admin erişimli
 model SystemLog {
   id        String   @id @default(cuid())
   level     LogLevel
-  category  String   // EMAIL | ML | AUTH | DB | HTTP | SYSTEM
+  category  String // EMAIL | ML | AUTH | DB | HTTP | SYSTEM
   message   String
-  meta      Json?    // hata stack, userId, tenantId vb.
+  meta      Json? // hata stack, userId, tenantId vb.
   createdAt DateTime @default(now())
 
   @@index([level])
   @@index([category])
   @@index([createdAt])
+  // Admin log dashboard'u: seviye + kategori + zaman filtresi
+  @@index([level, category, createdAt])
 }
 
 // Üniversite kulübü ekosistemi
@@ -406,12 +500,83 @@ model Question {
   @@index([isActive])
 }
 
+// Uzun süreli oturum yönetimi: 7 günlük refresh token
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/**
+ * Kullanıcıların kayıt sırasında veya profil güncellemesinde önerdiği
+ * henüz onaylanmamış etiketler. Admin paneli bu kuyruğu yönetir.
+ * Onaylanınca (APPROVED) etiket tenant'ın globalTags havuzuna eklenir.
+ * Birleştirilince (MERGED) kullanıcının sectorTags'i güncellenir.
+ * Reddedilince (REJECTED) sessizce düşürülür — kullanıcıya bildirim yoktur.
+ */
+enum PendingTagStatus {
+  PENDING
+  APPROVED
+  MERGED
+  REJECTED
+}
+
+enum CertificationStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  CERTIFIED
+  FAILED
+  COOLDOWN
+}
+
+model PendingTag {
+  id          String           @id @default(cuid())
+  tenantId    String
+  value       String // Kullanıcının girdiği ham etiket metni
+  submittedBy String // userId
+  status      PendingTagStatus @default(PENDING)
+  /**
+   * Birleştirme hedefi: mevcut havuzdaki etiket değeri
+   */
+  mergedInto  String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [submittedBy], references: [id])
+
+  @@unique([tenantId, value])
+  @@index([tenantId, status])
+  @@index([submittedBy])
+}
+
+// Tek kullanımlık şifre sıfırlama token'ı (SHA-256 hash olarak saklanır)
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 // Kullanıcının her soruya verdiği cevap (1–5 Likert)
 model UserResponse {
   id         String   @id @default(cuid())
   userId     String
   questionId String
-  value      Int      // 1=Hiç katılmıyorum … 5=Tamamen katılıyorum
+  value      Int // 1=Hiç katılmıyorum … 5=Tamamen katılıyorum
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -421,4 +586,256 @@ model UserResponse {
   @@unique([userId, questionId])
   @@index([userId])
   @@index([questionId])
+}
+
+// ─── SJT (Situational Judgement Test) Soru Havuzu ────────────────────────────
+
+enum QuestionTier {
+  CORE
+  FOLLOWUP
+}
+
+enum AnswerFormat {
+  SINGLE
+  MOST_LEAST
+}
+
+// Senaryo bazlı soru bankası — OCEAN kalibrasyonu için.
+// tenantId nullable: global sorular NULL, tenant-özel sorular tenantId içerir.
+model SjtQuestion {
+  id           String       @id @default(cuid())
+  code         String       @unique
+  tier         QuestionTier
+  answerFormat AnswerFormat @default(SINGLE)
+  forRole      UserRole
+  scenario     String
+  triggersOn   String? // OCEAN boyutu: o | c | e | a | n
+  isActive     Boolean      @default(true)
+  options      SjtOption[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([tier, forRole, isActive])
+}
+
+// Soru seçenekleri — her seçeneğin OCEAN ağırlık haritası ve arketip sinyali.
+model SjtOption {
+  id               String      @id @default(cuid())
+  questionId       String
+  question         SjtQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  key              String
+  label            String
+  weights          Json // Partial<Record<"o"|"c"|"e"|"a"|"n", number>>
+  signalsArchetype String?
+
+  @@unique([questionId, key])
+  @@index([questionId])
+}
+
+// ─── OCEAN / Arketip Profil Katmanı ─────────────────────────────────────────
+
+enum MatchStatus {
+  ACTIVE
+  COMPLETED
+  EARLY_EXIT
+  DISSOLVED
+}
+
+enum Checkpoint {
+  DAY_3
+  DAY_14
+  DAY_30
+}
+
+enum ProfileSource {
+  DISC_DERIVED
+  SJT_ENRICHED
+  HYBRID
+}
+
+// DISC → OCEAN dönüşümü sonucu üretilen kullanıcı profili.
+// Her User için en fazla bir UserProfile kaydı bulunur.
+model UserProfile {
+  id            String        @id @default(cuid())
+  userId        String        @unique
+  discD         Float         @default(0)
+  discI         Float         @default(0)
+  discS         Float         @default(0)
+  discC         Float         @default(0)
+  oceanO        Float?
+  oceanC        Float?
+  oceanE        Float?
+  oceanA        Float?
+  oceanN        Float?
+  archetype     String?
+  archetypeRole UserRole      @default(MENTI)
+  profileSource ProfileSource @default(DISC_DERIVED)
+
+  // ── Sektör Skoru (%60) için ek alanlar ──────────────────────────────────
+  industryCode String? // IndustryNode.code — taksonomi ağaç konumu
+  yearsExp     Int? // Mentor deneyim yılı (çan eğrisi bileşeni D)
+  skillTags    String[] @default([]) // Beceri etiketleri (bileşen B)
+  goalTags     String[] @default([]) // Hedef etiketleri (bileşen C, menti tarafında)
+  schools      String[] @default([]) // Okul adları (bağlam bonusu E)
+  companies    String[] @default([]) // Şirket adları (bağlam bonusu E)
+  communities  String[] @default([]) // Topluluk / dernek adları (bağlam bonusu E)
+
+  // ── Mentor Sertifikasyon Akademisi ───────────────────────────────────────
+  isCertified         Boolean             @default(false)
+  certificationStatus CertificationStatus @default(NOT_STARTED)
+  certScore           Float?
+  certifiedAt         DateTime?
+  certAttempts        Int                 @default(0)
+  cooldownUntil       DateTime?
+  qualityMultiplier   Float               @default(1.0)
+
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mentorMatches Match[] @relation("MentorProfile")
+  mentiMatches  Match[] @relation("MentiProfile")
+
+  @@index([userId])
+  @@index([archetype])
+}
+
+// Onaylanmış mentor-menti eşleşmesi — OCEAN arketip uyumu temelinde oluşturulur.
+model Match {
+  id              String      @id @default(cuid())
+  mentorId        String
+  mentiId         String
+  predictedScore  Float
+  sectorScore     Float
+  characterScore  Float
+  mentorArchetype String
+  mentiArchetype  String
+  status          MatchStatus @default(ACTIVE)
+  tenantId        String
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  mentor    UserProfile     @relation("MentorProfile", fields: [mentorId], references: [id], onDelete: Cascade)
+  menti     UserProfile     @relation("MentiProfile", fields: [mentiId], references: [id], onDelete: Cascade)
+  feedbacks MatchFeedback[]
+  meetings  Meeting[]
+
+  @@unique([mentorId, mentiId])
+  @@index([mentorId])
+  @@index([mentiId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([mentorArchetype, mentiArchetype])
+}
+
+// ─── Sektör Taksonomi Ağacı ───────────────────────────────────────────────────
+// Hiyerarşik sektör kodu ağacı — LCA tabanlı yakınlık skorlaması için.
+// Ağaç kökleri parentId=null olan derinlik-1 düğümleridir.
+model IndustryNode {
+  id       String  @id @default(cuid())
+  code     String  @unique // ör: "TEK.YZ.BE"
+  label    String // ör: "Backend Geliştirme"
+  depth    Int // 1=sektör, 2=alt-sektör, 3=yaprak
+  parentId String?
+
+  parent   IndustryNode?  @relation("TreeNodes", fields: [parentId], references: [id])
+  children IndustryNode[] @relation("TreeNodes")
+
+  @@index([parentId])
+  @@index([depth])
+}
+
+// ─── Mentor Müsaitlik Blokları ────────────────────────────────────────────────
+// Haftalık tekrar eden müsaitlik dilimleri (HH:MM string, tz-naive).
+model AvailabilityBlock {
+  id        String  @id @default(cuid())
+  userId    String
+  tenantId  String
+  weekday   Weekday
+  startTime String // "HH:MM" — örn. "14:00"
+  endTime   String // "HH:MM" — örn. "16:00"
+  timezone  String  @default("Europe/Istanbul")
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([userId, tenantId, isActive])
+  @@index([tenantId, weekday, isActive])
+}
+
+// ─── Multi-Tenant Üyelik Pivot Tablosu ───────────────────────────────────────
+// Bir kullanıcının birden fazla tenant'ta farklı rollerde yer almasını sağlar.
+// Sertifikasyon verileri UserProfile'dan bağımsız olarak üyelik bazında tutulur.
+model TenantMembership {
+  id       String @id @default(cuid())
+  userId   String
+  tenantId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  role                UserRole // ADMIN | MENTOR | MENTI
+  isCertified         Boolean             @default(false)
+  certificationStatus CertificationStatus @default(NOT_STARTED)
+  certScore           Float?
+  certifiedAt         DateTime?
+  certAttempts        Int                 @default(0)
+  cooldownUntil       DateTime?
+  qualityMultiplier   Float               @default(1.0)
+  isActive            Boolean             @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tenantId])
+  @@index([tenantId, role, isActive])
+  @@index([userId, isActive])
+}
+
+// ─── Mentor Sertifikasyon Akademisi Soru Bankası ─────────────────────────────
+model CertificationQuestion {
+  id        String                @id @default(cuid())
+  code      String                @unique
+  dimension String
+  scenario  String
+  isRedLine Boolean               @default(false)
+  isActive  Boolean               @default(true)
+  options   CertificationOption[]
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  @@index([isActive])
+}
+
+model CertificationOption {
+  id              String                @id @default(cuid())
+  questionId      String
+  question        CertificationQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  key             String
+  label           String
+  competencyScore Int
+
+  @@unique([questionId, key])
+  @@index([questionId])
+}
+
+// 3–14–30 gün kontrol noktalarında toplanan geri bildirimler.
+model MatchFeedback {
+  id            String     @id @default(cuid())
+  matchId       String
+  checkpoint    Checkpoint
+  fromUserId    String
+  role          UserRole
+  progressScore Int?
+  rapportScore  Int?
+  earlyExit     Boolean    @default(false)
+  comment       String?
+  createdAt     DateTime   @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, checkpoint, fromUserId])
+  @@index([matchId])
+  @@index([checkpoint])
 }

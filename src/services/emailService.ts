@@ -50,6 +50,52 @@ export async function sendMeetingApprovalEmail(args: {
   );
 }
 
+export async function sendAdminNewUserNotification(args: {
+  toEmail: string;
+  adminName: string;
+  newUserFullName: string;
+  newUserRole: string;
+  tenantName: string;
+}): Promise<void> {
+  await send(
+    args.toEmail,
+    `[${args.tenantName}] Onay Bekleyen Yeni Kayıt`,
+    `<p>Merhaba ${args.adminName},</p>
+     <p><strong>${args.newUserFullName}</strong> adlı yeni bir <strong>${args.newUserRole}</strong> kaydı sisteme girdi.</p>
+     <p>Kullanıcı eşleşme havuzuna dahil edilebilmesi için onayınızı bekliyor.</p>
+     <p>Lütfen admin panelinizden inceleyip onaylayın veya reddedin.</p>`,
+  );
+}
+
+export async function sendUserApprovalNotification(args: {
+  toEmail: string;
+  userName: string;
+  approved: boolean;
+}): Promise<void> {
+  const subject = args.approved ? 'Kaydınız Onaylandı' : 'Kaydınız Hakkında Bilgilendirme';
+  const body = args.approved
+    ? `<p>Merhaba ${args.userName},</p><p>Kaydınız onaylandı. Artık mentorluk eşleşme havuzuna dahilsiniz. Sisteme giriş yapabilirsiniz.</p>`
+    : `<p>Merhaba ${args.userName},</p><p>Kaydınız incelendi ancak şu an topluluk kriterlerimizle tam örtüşmediğini gördük. Gösterdiğiniz ilgi için teşekkür ederiz.</p>`;
+  await send(args.toEmail, subject, body);
+}
+
+export async function sendPasswordResetEmail(args: {
+  toEmail: string;
+  userName: string;
+  rawToken: string;
+}): Promise<void> {
+  const resetUrl = `${process.env.FRONTEND_URL ?? 'http://localhost:3001'}/reset-password?token=${args.rawToken}`;
+  await send(
+    args.toEmail,
+    'Şifre Sıfırlama Talebi',
+    `<p>Merhaba ${args.userName},</p>
+     <p>Şifrenizi sıfırlamak için aşağıdaki bağlantıya tıklayın:</p>
+     <p><a href="${resetUrl}">${resetUrl}</a></p>
+     <p>Bu bağlantı <strong>60 dakika</strong> geçerlidir.</p>
+     <p>Bu talebi siz yapmadıysanız bu e-postayı güvenle yoksayabilirsiniz.</p>`,
+  );
+}
+
 export async function sendFeedbackReminderEmail(args: {
   toEmail: string;
   recipientName: string;

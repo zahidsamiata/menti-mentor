@@ -226,8 +226,8 @@ export default function AdminDashboard() {
         </div>
       </BentoCard>
 
-      {/* ── Kulüpler ─────────────────────────────────────────────────────── */}
-      <BentoCard className="col-span-12 md:col-span-7 p-4" label="KULÜPLERİM">
+      {/* ── Topluluklar ───────────────────────────────────────────────────── */}
+      <BentoCard className="col-span-12 md:col-span-7 p-4" label="TOPLULUKLAR & STK'LAR">
         <div className="mt-5 grid grid-cols-2 gap-2">
           {activeClubs.slice(0, 6).map((club) => (
             <div
@@ -249,7 +249,7 @@ export default function AdminDashboard() {
         </div>
         {activeClubs.length > 0 && (
           <a href="/dashboard/admin/clubs" className="block mt-3 text-[10px] text-indigo-500 hover:underline">
-            Tüm kulüpleri yönet →
+            Tüm toplulukları yönet →
           </a>
         )}
       </BentoCard>
@@ -259,7 +259,7 @@ export default function AdminDashboard() {
         <div className="flex flex-wrap gap-2">
           {[
             { href: '/dashboard/admin/users', label: '👥 Kullanıcıları Yönet' },
-            { href: '/dashboard/admin/clubs', label: '🏆 Kulüpleri Yönet' },
+            { href: '/dashboard/admin/clubs', label: '🏛️ Topluluk Yönetimi' },
             { href: '/dashboard/admin/logs', label: '📋 Sistem Logları' },
             { href: '/dashboard/analytics', label: '📊 Analitikler' },
           ].map(({ href, label }) => (

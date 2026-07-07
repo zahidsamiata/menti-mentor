@@ -1,9 +1,21 @@
+/**
+ * Soru havuzu route'ları.
+ *
+ * Route sırası önemlidir:
+ *   /respond (POST, sabit)    — toplu endpoint; /:questionId/respond'dan önce tanımlanmalı
+ *   /my-responses (GET, sabit) — /:questionId parametresi ile çakışmaması için önce gelir
+ *   /:questionId/respond (POST, parametrik) — frontend tarafından kullanılan tek soru endpoint'i
+ *
+ * Bu sıralama Express'in route'ları üstten aşağıya eşleştirmesi nedeniyle zorunludur.
+ */
+
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
 import { requireRole } from '../middleware/authorize.js';
 import {
   listQuestions,
   createQuestion,
+  respondToQuestion,
   submitResponses,
   getMyResponses,
 } from '../controllers/questionController.js';
@@ -11,16 +23,33 @@ import {
 const router = Router();
 router.use(requireTenant as unknown as RequestHandler);
 
-// GET  /          → tenant içindeki herkes (CORE ve DEEPENING soruları)
+// ── Sabit path'ler (parametrik route'lardan önce) ─────────────────────────────
+
+/** GET /api/questions — soru listesi + pool meta verisi (herkes) */
 router.get('/', listQuestions as unknown as RequestHandler);
 
-// POST /          → yalnızca ADMIN (soru ekle)
+/** POST /api/questions — yeni soru ekle (yalnızca ADMIN) */
 router.post('/', requireRole('ADMIN'), createQuestion as unknown as RequestHandler);
 
-// POST /respond   → giriş yapmış herkes (yanıt gönder + discVector güncelle)
+/**
+ * POST /api/questions/respond — toplu yanıt (proje içi / data migration)
+ *
+ * Uyarı: Bu route /:questionId/respond'dan ÖNCE tanımlı olmalı.
+ * Aksi takdirde "respond" kelimesi questionId olarak parse edilir.
+ */
 router.post('/respond', submitResponses as unknown as RequestHandler);
 
-// GET  /my-responses → giriş yapmış herkes (tamamlanma oranı)
+/** GET /api/questions/my-responses — kullanıcının adaptif ilerleme durumu */
 router.get('/my-responses', getMyResponses as unknown as RequestHandler);
+
+// ── Parametrik path'ler ───────────────────────────────────────────────────────
+
+/**
+ * POST /api/questions/:questionId/respond — tek soru yanıtı (frontend kullanır)
+ *
+ * Her cevap anında kaydedilir; discVector güncellenir; adaptif ilerleme döner.
+ * Frontend bu endpoint'i CORE→DEEPENING faz geçişini yönetmek için kullanır.
+ */
+router.post('/:questionId/respond', respondToQuestion as unknown as RequestHandler);
 
 export default router;

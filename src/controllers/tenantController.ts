@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
+import { invalidateTenant } from '../services/tenantCache.js';
 
 const CreateTenantSchema = z.object({
   name: z.string().min(2),
@@ -103,6 +104,8 @@ export async function updateTenant(req: Request, res: Response) {
     where: { id: existing.id },
     data: parsed.data,
   });
+
+  invalidateTenant(existing.id);
 
   return res.json(updated);
 }

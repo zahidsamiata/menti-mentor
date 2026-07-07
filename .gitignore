@@ -1,22 +1,18 @@
-# Dependencies
+# ── Backend .gitignore ────────────────────────────────────────────────────────
+
+# Bağımlılıklar
 node_modules/
-web/node_modules/
 
-# Build outputs
+# Derleme çıktıları
 dist/
-.next/
-web/.next/
-out/
-web/out/
 
-# Environment files
+# ── Ortam değişkeni dosyaları (asla commit edilmemeli) ───────────────────────
 .env
-.env.local
-.env.*.local
-web/.env
-web/.env.local
+.env.*
+!.env.example       # Şablon — gerçek değer yok, commit edilebilir
+!.env.*.example
 
-# Logs
+# Loglar
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -27,9 +23,9 @@ yarn-error.log*
 *.seed
 *.pid.lock
 
-# Coverage
+# Test çıktıları
 coverage/
-.nyc_output
+.nyc_output/
 
 # Editor
 .vscode/
@@ -41,6 +37,6 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Prisma
+# Prisma — geliştirme SQLite (production PostgreSQL'i etkilemez)
 prisma/migrations/dev.db
 *.db

@@ -1,43 +1,218 @@
 import { z } from 'zod';
+import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { signToken } from '../middleware/jwtAuth.js';
 import type { RequestWithTenant } from '../types.js';
+import { sendAdminNewUserNotification, sendPasswordResetEmail } from '../services/emailService.js';
+import { notifyAdminsPendingUser } from '../services/notificationService.js';
+import { GoogleOAuthProvider, OAuthProviderError } from '../services/oauth/googleProvider.js';
+import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
+import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthStateService.js';
+import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
+import { config } from '../config.js';
+import type { OAuthProviderName } from '../services/oauth/oauthTypes.js';
 
-const LoginSchema = z.object({
-  slug: z.string().min(1, 'Kuruluş kodu zorunlu'),
-  userId: z.string().min(1, 'Kullanıcı ID zorunlu'),
+// ─── Validation şemaları ──────────────────────────────────────────────────────
+
+const RegisterSchema = z.object({
+  email: z.string().email('Geçerli bir e-posta adresi girin'),
+  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  fullName: z.string().min(2, 'Ad soyad zorunlu').max(120),
+  role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol MENTOR veya MENTI olmalı' }),
+  tenantSlug: z.string().min(1, 'Kuruluş kodu zorunlu'),
 });
 
-// POST /api/auth/login
-// Body: { slug, userId }
-// Kriptografik JWT imzalı token döndürür.
+const LoginSchema = z.object({
+  email: z.string().email('Geçerli bir e-posta adresi girin'),
+  password: z.string().min(1, 'Şifre zorunlu'),
+});
+
+const RefreshSchema = z.object({
+  refreshToken: z.string().min(1, 'Refresh token zorunlu'),
+});
+
+const LogoutSchema = z.object({
+  refreshToken: z.string().min(1, 'Refresh token zorunlu'),
+});
+
+const ForgotPasswordSchema = z.object({
+  email: z.string().email('Geçerli bir e-posta adresi girin'),
+});
+
+const ResetPasswordSchema = z.object({
+  token: z.string().min(1, 'Token zorunlu'),
+  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+});
+
+// ─── Yardımcılar ─────────────────────────────────────────────────────────────
+
+const REFRESH_TOKEN_EXPIRY_DAYS = 7;
+const RESET_TOKEN_EXPIRY_MINUTES = 60;
+const BCRYPT_ROUNDS = 12;
+
+/**
+ * Token güvenlik modeli:
+ *  - refreshToken  : 512-bit entropi (64 byte → 128 hex char) — DB'de plaintext
+ *  - resetToken    : 256-bit entropi (32 byte → 64 hex char) — DB'de SHA-256 hash
+ *
+ * resetToken neden hash'leniyor?
+ *  DB sızıntısında saldırgan hash'ten raw token'ı üretemez.
+ *  refreshToken hash'lenmiyor çünkü ömrü 7 gün ve rotasyon var;
+ *  resetToken ise e-posta ile iletilir, daha uzun süre oturabilir.
+ */
+function generateRefreshToken(): string {
+  return crypto.randomBytes(64).toString('hex');
+}
+
+function refreshTokenExpiresAt(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
+  return d;
+}
+
+function resetTokenExpiresAt(): Date {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + RESET_TOKEN_EXPIRY_MINUTES);
+  return d;
+}
+
+function hashToken(raw: string): string {
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+// ─── POST /api/auth/register ──────────────────────────────────────────────────
+export async function register(req: Request, res: Response) {
+  const parsed = RegisterSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const { email, password, fullName, role, tenantSlug } = parsed.data;
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { slug: tenantSlug },
+    select: { id: true, name: true, displayName: true },
+  });
+  if (!tenant) {
+    return res.status(400).json({ error: 'TENANT_BULUNAMADI', message: 'Kuruluş bulunamadı.' });
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    return res.status(409).json({ error: 'EMAIL_MEVCUT', message: 'Bu e-posta adresi zaten kayıtlı.' });
+  }
+
+  const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+  const user = await prisma.user.create({
+    data: {
+      tenantId: tenant.id,
+      email,
+      password: hashedPassword,
+      authProvider: 'LOCAL',
+      fullName,
+      role,
+      approvalStatus: 'PENDING',
+    },
+    select: {
+      id: true,
+      email: true,
+      fullName: true,
+      role: true,
+      tenantId: true,
+      approvalStatus: true,
+    },
+  });
+
+  // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
+  const tenantAdmins = await prisma.user.findMany({
+    where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
+    select: { email: true, fullName: true },
+  });
+
+  for (const admin of tenantAdmins) {
+    void sendAdminNewUserNotification({
+      toEmail: admin.email,
+      adminName: admin.fullName,
+      newUserFullName: fullName,
+      newUserRole: role,
+      tenantName: tenant.displayName ?? tenant.name,
+    });
+  }
+
+  void notifyAdminsPendingUser({
+    tenantId: tenant.id,
+    newUserFullName: fullName,
+    newUserRole: role,
+  });
+
+  return res.status(201).json({
+    message: 'Kayıt başarılı. Admin onayı bekleniyor.',
+    user,
+  });
+}
+
+// ─── POST /api/auth/login ─────────────────────────────────────────────────────
 export async function login(req: Request, res: Response) {
   const parsed = LoginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const { slug, userId } = parsed.data;
+  const { email, password } = parsed.data;
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { slug },
-    select: { id: true, name: true, slug: true, displayName: true, logoUrl: true, primaryColor: true },
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      role: true,
+      fullName: true,
+      tenantId: true,
+      email: true,
+      password: true,
+      authProvider: true,
+      approvalStatus: true,
+      isActive: true,
+    },
   });
-  if (!tenant) {
-    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Kuruluş bulunamadı.' });
+
+  // Hesap bulunamadı veya pasif — zamanlama saldırısını önlemek için generic hata — zamanlamalı saldırıyı önlemek için generic hata
+  if (!user || !user.isActive) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
   }
 
-  const user = await prisma.user.findFirst({
-    where: { id: userId, tenantId: tenant.id, isActive: true },
-    select: { id: true, role: true, fullName: true, tenantId: true, email: true },
-  });
-  if (!user) {
-    return res.status(401).json({
-      error: 'KIMLIK_DOGRULANMADI',
-      message: 'Kullanıcı bulunamadı veya hesap aktif değil.',
+  if (user.approvalStatus === 'PENDING') {
+    return res.status(403).json({
+      error: 'HESAP_ONAY_BEKLENIYOR',
+      message: 'Hesabınız henüz yönetici tarafından onaylanmamıştır. Onay sonrası giriş yapabilirsiniz.',
     });
   }
+
+  if (user.approvalStatus === 'REJECTED') {
+    return res.status(403).json({
+      error: 'HESAP_REDDEDILDI',
+      message: 'Hesabınız yönetici tarafından reddedilmiştir. Daha fazla bilgi için kurum yöneticinizle iletişime geçin.',
+    });
+  }
+
+  if (user.authProvider !== 'LOCAL' || !user.password) {
+    return res.status(401).json({
+      error: 'OAUTH_HESAP',
+      message: 'Bu hesap sosyal giriş ile oluşturulmuştur. Lütfen ilgili sağlayıcıyı kullanın.',
+    });
+  }
+
+  const passwordMatch = await bcrypt.compare(password, user.password);
+  if (!passwordMatch) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: user.tenantId },
+    select: { id: true, name: true, slug: true, displayName: true, logoUrl: true, primaryColor: true },
+  });
 
   const accessToken = signToken({
     sub: user.id,
@@ -46,27 +221,310 @@ export async function login(req: Request, res: Response) {
     fullName: user.fullName,
   });
 
+  const refreshTokenValue = generateRefreshToken();
+  await prisma.refreshToken.create({
+    data: {
+      token: refreshTokenValue,
+      userId: user.id,
+      expiresAt: refreshTokenExpiresAt(),
+    },
+  });
+
   return res.json({
     accessToken,
-    expiresIn: '24h',
+    refreshToken: refreshTokenValue,
+    expiresIn: 3600,
     user: {
       id: user.id,
       tenantId: user.tenantId,
       role: user.role,
       fullName: user.fullName,
       email: user.email,
+      approvalStatus: user.approvalStatus,
     },
-    tenant: {
-      id: tenant.id,
-      name: tenant.displayName ?? tenant.name,
-      slug: tenant.slug,
-      logoUrl: tenant.logoUrl,
-      primaryColor: tenant.primaryColor,
-    },
+    tenant: tenant
+      ? {
+          id: tenant.id,
+          name: tenant.displayName ?? tenant.name,
+          slug: tenant.slug,
+          logoUrl: tenant.logoUrl,
+          primaryColor: tenant.primaryColor,
+        }
+      : null,
   });
 }
 
-// GET /api/auth/me — geçerli token sahibinin bilgilerini döndürür
+// ─── POST /api/auth/refresh ───────────────────────────────────────────────────
+export async function refresh(req: Request, res: Response) {
+  const parsed = RefreshSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const { refreshToken } = parsed.data;
+
+  const stored = await prisma.refreshToken.findUnique({
+    where: { token: refreshToken },
+    include: {
+      user: {
+        select: {
+          id: true,
+          role: true,
+          fullName: true,
+          tenantId: true,
+          isActive: true,
+        },
+      },
+    },
+  });
+
+  if (!stored || stored.expiresAt < new Date()) {
+    if (stored) {
+      await prisma.refreshToken.delete({ where: { token: refreshToken } });
+    }
+    return res.status(401).json({
+      error: 'REFRESH_TOKEN_GECERSIZ',
+      message: 'Oturum süresi doldu. Lütfen tekrar giriş yapın.',
+    });
+  }
+
+  if (!stored.user.isActive) {
+    return res.status(401).json({ error: 'HESAP_PASIF', message: 'Hesabınız aktif değil.' });
+  }
+
+  // Token rotasyonu: eski token silinir, yeni token verilir (replay attack önlemi)
+  await prisma.refreshToken.delete({ where: { token: refreshToken } });
+
+  const newRefreshTokenValue = generateRefreshToken();
+  await prisma.refreshToken.create({
+    data: {
+      token: newRefreshTokenValue,
+      userId: stored.user.id,
+      expiresAt: refreshTokenExpiresAt(),
+    },
+  });
+
+  const accessToken = signToken({
+    sub: stored.user.id,
+    tenantId: stored.user.tenantId,
+    role: stored.user.role,
+    fullName: stored.user.fullName,
+  });
+
+  return res.json({
+    accessToken,
+    refreshToken: newRefreshTokenValue,
+    expiresIn: 3600,
+  });
+}
+
+// ─── POST /api/auth/logout ────────────────────────────────────────────────────
+export async function logout(req: Request, res: Response) {
+  const parsed = LogoutSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  // Silme işlemi başarısız olsa bile 204 dön (token zaten geçersiz sayılır)
+  await prisma.refreshToken.deleteMany({ where: { token: parsed.data.refreshToken } });
+  return res.status(204).send();
+}
+
+// ─── POST /api/auth/forgot-password ──────────────────────────────────────────
+export async function forgotPassword(req: Request, res: Response) {
+  const parsed = ForgotPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const GENERIC_SUCCESS_MESSAGE = 'E-posta adresiniz kayıtlıysa şifre sıfırlama bağlantısı gönderildi.';
+
+  const user = await prisma.user.findUnique({
+    where: { email: parsed.data.email },
+    select: { id: true, fullName: true, email: true, authProvider: true, isActive: true },
+  });
+
+  // Token DB'ye yazılmadan response gönderilmez — kullanıcı tespiti yine de engellenir
+  // (aynı mesaj döner, ancak artık tüm DB işlemleri tamamlandıktan sonra).
+  if (user && user.isActive && user.authProvider === 'LOCAL') {
+    await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    await prisma.passwordResetToken.create({
+      data: {
+        tokenHash: hashToken(rawToken),
+        userId: user.id,
+        expiresAt: resetTokenExpiresAt(),
+      },
+    });
+
+    void sendPasswordResetEmail({
+      toEmail: user.email,
+      userName: user.fullName,
+      rawToken,
+    });
+  }
+
+  return res.json({ message: GENERIC_SUCCESS_MESSAGE });
+}
+
+// ─── POST /api/auth/reset-password ───────────────────────────────────────────
+export async function resetPassword(req: Request, res: Response) {
+  const parsed = ResetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const { token, password } = parsed.data;
+  const tokenHash = hashToken(token);
+
+  const stored = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    include: { user: { select: { id: true, isActive: true } } },
+  });
+
+  if (!stored || stored.expiresAt < new Date() || !stored.user.isActive) {
+    // Süresi dolmuş token'ı temizle
+    if (stored) await prisma.passwordResetToken.delete({ where: { tokenHash } });
+    return res.status(400).json({
+      error: 'TOKEN_GECERSIZ',
+      message: 'Şifre sıfırlama bağlantısı geçersiz veya süresi dolmuş.',
+    });
+  }
+
+  const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+  // Şifreyi güncelle + token'ı sil + tüm refresh token'ları iptal et (tek transaction)
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: stored.userId },
+      data: { password: hashedPassword },
+    }),
+    prisma.passwordResetToken.delete({ where: { tokenHash } }),
+    prisma.refreshToken.deleteMany({ where: { userId: stored.userId } }),
+  ]);
+
+  return res.json({ message: 'Şifreniz başarıyla güncellendi. Lütfen tekrar giriş yapın.' });
+}
+
+// ─── OAuth: provider başlatma + callback ─────────────────────────────────────
+
+/**
+ * Provider instance'larını tek noktada tanımla.
+ * Yeni bir provider eklemek için sadece bu kayıt defterine ekleme yapmak yeterli —
+ * redirect ve callback handler'ları otomatik olarak devreye girer.
+ */
+const OAUTH_PROVIDERS = {
+  google: new GoogleOAuthProvider(),
+  linkedin: new LinkedInOAuthProvider(),
+} as const;
+
+type OAuthProviderKey = keyof typeof OAUTH_PROVIDERS;
+
+const OAuthInitSchema = z.object({
+  tenantSlug: z.string().min(1, 'tenantSlug zorunlu'),
+  role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol MENTOR veya MENTI olmalı' }),
+});
+
+/**
+ * GET /api/auth/:provider — OAuth akışını başlatır.
+ * Kullanıcıyı provider'ın yetkilendirme sayfasına yönlendirir.
+ *
+ * Query params: tenantSlug, role
+ * Örnek: GET /api/auth/google?tenantSlug=tech-hub&role=MENTOR
+ */
+export async function oauthRedirect(req: Request, res: Response) {
+  const providerKey = req.params['provider'] as OAuthProviderKey;
+  const provider = OAUTH_PROVIDERS[providerKey];
+
+  if (!provider) {
+    return res.status(404).json({ error: 'PROVIDER_BULUNAMADI', message: 'Desteklenmeyen OAuth provider.' });
+  }
+
+  // Provider yapılandırılmamışsa (boş clientId) geliştirici hatası — erken çık
+  const providerConfig = config.oauth[providerKey];
+  if (!providerConfig.clientId) {
+    return res.status(503).json({
+      error: 'PROVIDER_YAPILANDIRILMAMIS',
+      message: `${providerKey.toUpperCase()} OAuth henüz yapılandırılmamış.`,
+    });
+  }
+
+  const parsed = OAuthInitSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const state = createOAuthState(parsed.data.tenantSlug, parsed.data.role);
+  const authUrl = provider.buildAuthUrl(state);
+
+  return res.redirect(authUrl);
+}
+
+/**
+ * GET /api/auth/:provider/callback — Provider'dan dönen authorization code'u işler.
+ *
+ * Başarı: frontend'e accessToken + refreshToken + isNewUser query parametreleriyle yönlendir.
+ * Hata: frontend'e error kodu ile yönlendir.
+ *
+ * Neden redirect? OAuth callback browser tablosunda gerçekleşir; SPA'ya mesaj
+ * iletmenin standart yolu URL parametresidir. Frontend'in bu değerleri
+ * LocalStorage'a taşıması ve URL'i temizlemesi gerekir.
+ */
+export async function oauthCallback(req: Request, res: Response) {
+  const providerKey = req.params['provider'] as OAuthProviderKey;
+  const provider = OAUTH_PROVIDERS[providerKey];
+
+  if (!provider) {
+    return redirectWithError(res, 'PROVIDER_BULUNAMADI');
+  }
+
+  const { code, state, error } = req.query as Record<string, string | undefined>;
+
+  // Kullanıcı izin vermeden geri dönüşü (ör. "İzin verme" butonu)
+  if (error) {
+    return redirectWithError(res, 'KULLANICI_REDDETTI');
+  }
+
+  if (!code || !state) {
+    return redirectWithError(res, 'GECERSIZ_CALLBACK');
+  }
+
+  // CSRF koruması: state JWT'yi doğrula
+  const statePayload = verifyOAuthState(state);
+  if (!statePayload) {
+    return redirectWithError(res, 'GECERSIZ_STATE');
+  }
+
+  try {
+    const profile = await provider.exchangeCodeForProfile(code);
+    const result = await handleOAuthCallback(profile, statePayload);
+
+    const params = new URLSearchParams({
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      isNewUser: String(result.isNewUser),
+    });
+    return res.redirect(`${config.oauth.frontendCallbackUrl}?${params.toString()}`);
+  } catch (err) {
+    if (err instanceof OAuthConflictError) {
+      return redirectWithError(res, err.code);
+    }
+    if (err instanceof OAuthProviderError) {
+      return redirectWithError(res, 'PROVIDER_HATASI');
+    }
+    // Beklenmeyen hata — genel hata kodu
+    return redirectWithError(res, 'SUNUCU_HATASI');
+  }
+}
+
+/** Hata durumunda frontend callback URL'ine error kodu ile yönlendir. */
+function redirectWithError(res: Response, errorCode: string): void {
+  const params = new URLSearchParams({ error: errorCode });
+  res.redirect(`${config.oauth.frontendCallbackUrl}?${params.toString()}`);
+}
+
+// ─── GET /api/auth/me ─────────────────────────────────────────────────────────
 export async function getMe(req: RequestWithTenant, res: Response) {
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Oturum açılmamış.' });
@@ -75,9 +533,18 @@ export async function getMe(req: RequestWithTenant, res: Response) {
   const user = await prisma.user.findFirst({
     where: { id: req.auth.userId, tenantId: req.tenant.tenantId, isActive: true },
     select: {
-      id: true, role: true, fullName: true, email: true,
-      discType: true, sectorTags: true, skills: true,
-      bioSummary: true, needsOrientation: true, discVector: true,
+      id: true,
+      role: true,
+      fullName: true,
+      email: true,
+      discType: true,
+      sectorTags: true,
+      skills: true,
+      bioSummary: true,
+      needsOrientation: true,
+      discVector: true,
+      approvalStatus: true,
+      authProvider: true,
     },
   });
 

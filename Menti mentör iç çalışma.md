@@ -59,6 +59,52 @@ Sistemin uçtan uca doğru ve güvenli çalışabilmesi için belirlenen temel i
 * **Algoritma Ağırlıklandırması:** Eşleştirme motoru, sektörel hedeflerin ve uzmanlıkların uyuşmasına öncelik verirken, mizaç uyumunu da destekleyici ve filtreleyici bir kriter olarak kullanmalıdır.  
 * **Çatışma Önleme (Anti-Match) Kuralı:** Algoritma, mizaç testi sonuçlarına göre "zıt karakter" (örn. aşırı dominant ve kırılgan) olarak sınıflandırılan profillerin eşleşmesini kesin kurallarla engellemelidir.  
 * **Eşleşme Döngüsü:** Sistem, Mentiye uygun mentor adaylarını listelemeli ve nihai eşleşme için her iki tarafın onayı (çift taraflı kabul) alınmalıdır.
+* **Hibrit Akış (Karar: 2026-05-25):** Platform iki paralel eşleştirme akışını destekler. Her iki akış da `VisibilityOptIn` tablosunu ortak kapı olarak kullanır ve APPROVED durumu elde edilmeden `MatchRequest` oluşturulamaz.
+
+---
+
+### **1a. Hibrit Eşleşme Akışı — Resmi İş Kuralları**
+
+#### Akış A: Mentor-Driven (Mevcut)
+Mentor, algoritmik sıralamayı görür ve tercih ettiği mentiyi sisteme onaylar.
+
+```
+Mentor → GET /mentors/:id/candidates         (sıralı menti listesi)
+       → POST /mentors/:id/visibility-optin  (status: APPROVED, initiatedBy: MENTOR)
+       → VisibilityOptIn [APPROVED] oluşur
+       → Ice-breaker otomatik üretilir
+       → Menti artık MatchRequest gönderebilir
+```
+
+**Kurallar:**
+- Mentor, APPROVED veya REJECTED kararını tek adımda verir (PENDING aşaması yoktur).
+- Mentor, kendi kendini opt-in edemez (self-match koruması).
+- Ice-breaker yalnızca APPROVED durumunda üretilir.
+
+#### Akış B: Menti-Driven (Yeni)
+Menti, belirli bir mentorun profilini keşfedip görünürlük talebi gönderir; mentor onaylar.
+
+```
+Menti  → POST /mentis/:id/request-visibility          (status: PENDING, initiatedBy: MENTI)
+        → VisibilityOptIn [PENDING] oluşur
+Mentor → GET  /mentors/:id/pending-visibility-requests (talep kuyruğu)
+       → PATCH /mentors/:id/visibility-optin/:optInId/respond  { decision: "APPROVED" | "REJECTED" }
+       → APPROVED → ice-breaker üretilir
+       → Menti artık MatchRequest gönderebilir
+```
+
+**Kurallar:**
+- Menti kendi `mentiId`'si ile istek atabilir (admin de yapabilir).
+- Aynı mentor-menti çifti için PENDING durumda birden fazla talep oluşturulamaz.
+- Zaten APPROVED olan bir çift için yeni talep reddedilir (HTTP 409).
+- REJECTED durumdan yeniden talepte bulunulabilir (upsert ile PENDING'e döner).
+- Menti, isteğe bağlı `requestMessage` (max 500 karakter) ekleyebilir.
+
+#### Ortak Kural — VisibilityOptIn Kapısı
+Her iki akış için de geçerlidir:
+- `MatchRequest` oluşturulabilmesi için `VisibilityOptIn.status = APPROVED` zorunludur.
+- Cross-tenant eşleştirme yalnızca her iki tenant'ın `isSharedPoolActive = true` olması durumunda izin verilir.
+- `VisibilityOptIn.initiatedBy` alanı denetim (audit) kaydı olarak tutulur; iş akışını değiştirmez.
 
 ---
 

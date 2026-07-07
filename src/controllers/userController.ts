@@ -2,6 +2,33 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { sendAdminNewUserNotification } from '../services/emailService.js';
+import { notifyAdminsPendingUser } from '../services/notificationService.js';
+
+// ─── Security: Tag Poisoning Prevention ───────────────────────────────────────
+// Etiketlerdeki XSS, injection ve kimlik gizleme girişimlerini önler.
+// CLAUDE.md'de belgelenen "sectorTags poison prevention" invariantını uygular.
+const SECTOR_TAG_SCHEMA = z
+  .string()
+  .min(1)
+  .max(50)
+  .regex(
+    /^[a-zA-Z0-9ğüşıöçĞÜŞİÖÇ\s\-&\/\.]+$/,
+    'Etiket yalnızca harf, rakam, boşluk ve - & / . karakterlerini içerebilir.',
+  )
+  .transform((t) => t.trim().toLowerCase());
+
+const SECTOR_TAGS_SCHEMA = z
+  .array(SECTOR_TAG_SCHEMA)
+  .max(20, 'Maksimum 20 sektör etiketi seçilebilir.')
+  .optional()
+  .transform((tags) => (tags ? [...new Set(tags)] : undefined)); // deduplicate
+
+// selfProfile için derinlik/boyut koruması
+const SELF_PROFILE_SCHEMA = z
+  .record(z.string().max(100), z.unknown())
+  .refine((obj) => Object.keys(obj).length <= 50, 'selfProfile en fazla 50 anahtar içerebilir.')
+  .optional();
 
 const ListUsersQuerySchema = z.object({
   role: z.enum(['ADMIN', 'MENTOR', 'MENTI']).optional(),
@@ -68,14 +95,14 @@ const EXPECTATION_CATEGORY_VALUES = [
 ] as const;
 
 const UpdateUserSchema = z.object({
-  fullName: z.string().min(2).optional(),
-  sectorTags: z.array(z.string()).max(5, 'Maksimum 5 sektör etiketi seçilebilir.').optional(),
+  fullName: z.string().min(2).max(200).optional(),
+  sectorTags: SECTOR_TAGS_SCHEMA,
   discType: z.enum(['D', 'I', 'S', 'C']).nullable().optional(),
   temperamentJson: z.any().optional(),
   volunteerHistory: z.any().optional(),
   pastProjects: z.any().optional(),
   education: z.any().optional(),
-  skills: z.array(z.string()).optional(),
+  skills: z.array(z.string().max(100)).max(30).optional(),
   isActive: z.boolean().optional(),
   timeCommitment: z.enum(TIME_COMMITMENT_VALUES).nullable().optional(),
   interactionStyle: z.enum(INTERACTION_STYLE_VALUES).nullable().optional(),
@@ -113,9 +140,9 @@ export async function updateUser(req: RequestWithTenant, res: Response) {
 
 const CreateUserSchema = z.object({
   role: z.enum(['ADMIN', 'MENTOR', 'MENTI']),
-  email: z.string().email(),
-  fullName: z.string().min(2),
-  sectorTags: z.array(z.string()).max(5, 'Maksimum 5 sektör etiketi seçilebilir.').optional(),
+  email: z.string().email().max(254),
+  fullName: z.string().min(2).max(200),
+  sectorTags: SECTOR_TAGS_SCHEMA,
   discType: z.enum(['D', 'I', 'S', 'C']).optional(),
   temperamentJson: z.any().optional(),
   timeCommitment: z.enum(TIME_COMMITMENT_VALUES).optional(),
@@ -128,7 +155,7 @@ const CreateUserSchema = z.object({
   volunteerHistory: z.any().optional(),
   pastProjects: z.any().optional(),
   education: z.any().optional(),
-  skills: z.array(z.string()).optional(),
+  skills: z.array(z.string().max(100)).max(30).optional(),
   // Zengin profil alanları
   bioSummary: z.string().max(2000).optional(),
   expertiseDetails: z.string().max(2000).optional(),
@@ -149,6 +176,15 @@ export async function patchSelfProfile(req: RequestWithTenant, res: Response) {
 
   if (typeof req.body !== 'object' || Array.isArray(req.body)) {
     return res.status(400).json({ error: 'VALIDATION', message: 'Body bir JSON objesi olmalıdır.' });
+  }
+
+  // Security: selfProfile bomba koruması — maksimum 50 anahtar, 100 char key
+  const bodyKeys = Object.keys(req.body as object);
+  if (bodyKeys.length > 50) {
+    return res.status(400).json({ error: 'VALIDATION', message: 'selfProfile en fazla 50 anahtar içerebilir.' });
+  }
+  if (bodyKeys.some((k) => k.length > 100)) {
+    return res.status(400).json({ error: 'VALIDATION', message: 'selfProfile anahtarları en fazla 100 karakter olabilir.' });
   }
 
   const existing = (user.selfProfile as Record<string, unknown>) ?? {};
@@ -190,6 +226,35 @@ export async function createUser(req: RequestWithTenant, res: Response) {
       targetAudience: parsed.data.targetAudience,
     },
   });
+
+  // MENTOR/MENTI kayıtları PENDING başlar — tenant adminlerine bildirim gönder
+  if (user.role === 'MENTOR' || user.role === 'MENTI') {
+    const [admins, tenantRecord] = await Promise.all([
+      prisma.user.findMany({
+        where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
+        select: { email: true, fullName: true },
+      }),
+      prisma.tenant.findUnique({
+        where: { id: req.tenant.tenantId },
+        select: { name: true },
+      }),
+    ]);
+    const tenantName = tenantRecord?.name ?? req.tenant.tenantId;
+    for (const admin of admins) {
+      void sendAdminNewUserNotification({
+        toEmail: admin.email,
+        adminName: admin.fullName,
+        newUserFullName: user.fullName,
+        newUserRole: user.role,
+        tenantName,
+      });
+    }
+    void notifyAdminsPendingUser({
+      tenantId: req.tenant.tenantId,
+      newUserFullName: user.fullName,
+      newUserRole: user.role,
+    });
+  }
 
   return res.status(201).json(user);
 }

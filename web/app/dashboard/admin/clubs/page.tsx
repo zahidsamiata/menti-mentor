@@ -146,10 +146,10 @@ export default function AdminClubsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Kulüpler</h1>
-          <p className="text-slate-500 text-sm">{data?.total ?? 0} kulüp</p>
+          <h1 className="text-2xl font-bold">Topluluklar & STK&apos;lar</h1>
+          <p className="text-slate-500 text-sm">{data?.total ?? 0} topluluk</p>
         </div>
-        <Button onClick={() => setShowCreate(true)}>+ Yeni Kulüp</Button>
+        <Button onClick={() => setShowCreate(true)}>+ Yeni Topluluk</Button>
       </div>
 
       {/* Kulüp oluşturma formu */}
@@ -163,7 +163,7 @@ export default function AdminClubsPage() {
               </div>
               <div className="space-y-1">
                 <Label>Slug</Label>
-                <Input value={newSlug} onChange={(e) => setNewSlug(e.target.value)} required placeholder="yazilim-kulubu" />
+                <Input value={newSlug} onChange={(e) => setNewSlug(e.target.value)} required placeholder="yazilim-toplulugu" />
               </div>
               <div className="space-y-1">
                 <Label>Tür</Label>

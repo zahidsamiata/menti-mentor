@@ -29,12 +29,17 @@ export async function createJobListing(req: RequestWithTenant, res: Response) {
   return res.status(201).json(listing);
 }
 
+const PAGE_SIZE_DEFAULT = 20;
+const PAGE_SIZE_MAX = 100;
+
 const ListJobListingsQuerySchema = z.object({
   isActive: z
     .string()
     .optional()
     .transform((v) => (v === undefined ? undefined : v !== 'false')),
   tag: z.string().optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  limit: z.coerce.number().int().min(1).max(PAGE_SIZE_MAX).optional().default(PAGE_SIZE_DEFAULT),
 });
 
 export async function listJobListings(req: RequestWithTenant, res: Response) {
@@ -43,16 +48,32 @@ export async function listJobListings(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const items = await prisma.jobListing.findMany({
-    where: {
-      tenantId: req.tenant.tenantId,
-      ...(parsed.data.isActive !== undefined && { isActive: parsed.data.isActive }),
-      ...(parsed.data.tag !== undefined && { tags: { has: parsed.data.tag } }),
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  const { isActive, tag, page, limit } = parsed.data;
+  const skip = (page - 1) * limit;
 
-  return res.json({ items, total: items.length });
+  const where = {
+    tenantId: req.tenant.tenantId,
+    ...(isActive !== undefined && { isActive }),
+    ...(tag !== undefined && { tags: { has: tag } }),
+  };
+
+  const [items, total] = await Promise.all([
+    prisma.jobListing.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    }),
+    prisma.jobListing.count({ where }),
+  ]);
+
+  return res.json({
+    items,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+  });
 }
 
 export async function getJobListing(req: RequestWithTenant, res: Response) {

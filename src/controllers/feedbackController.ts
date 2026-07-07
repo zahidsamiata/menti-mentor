@@ -35,7 +35,7 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
 
   const meeting = await prisma.meeting.findFirst({
     where: { id: meetingId, tenantId: req.tenant.tenantId },
-    select: { id: true, status: true, mentorId: true, mentiId: true, hasFeedback: true },
+    select: { id: true, status: true, mentorUserId: true, mentiUserId: true, hasFeedback: true },
   });
   if (!meeting) return res.status(404).json({ error: 'NOT_FOUND', message: 'Toplantı bulunamadı.' });
   if (meeting.status !== 'COMPLETED') {
@@ -53,8 +53,8 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
       data: {
         meetingId,
         tenantId: req.tenant.tenantId,
-        mentorId: meeting.mentorId,
-        mentiId: meeting.mentiId,
+        mentorId: meeting.mentorUserId,
+        mentiId:  meeting.mentiUserId,
         guidanceScore: data.guidanceScore,
         resourceSharingScore: data.resourceSharingScore,
         trustScore: data.trustScore,
@@ -64,8 +64,9 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
         specificComments: data.specificComments,
       },
     }),
-    prisma.meeting.update({
-      where: { id: meetingId },
+    // updateMany: tenantId filtresi ile çift güvenlik (update tekil PK'dan daha güvenli)
+    prisma.meeting.updateMany({
+      where: { id: meetingId, tenantId: req.tenant.tenantId },
       data: { hasFeedback: true },
     }),
   ]);
@@ -73,11 +74,11 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
   // Oryantasyon kilidi: hazırlık puanı <= 2 ise kilitle
   if (data.preparednessScore !== undefined && data.preparednessScore <= 2) {
     await prisma.user.update({
-      where: { id: meeting.mentiId },
+      where: { id: meeting.mentiUserId },
       data: { needsOrientation: true },
     });
     void logger.warn('SYSTEM', `Menti oryantasyon kilidi uygulandı`, {
-      mentiId: meeting.mentiId,
+      mentiId: meeting.mentiUserId,
       preparednessScore: data.preparednessScore,
     });
   }
@@ -140,13 +141,13 @@ export async function sendPendingFeedbackReminders(req: RequestWithTenant, res: 
       toEmail: m.mentor.email,
       recipientName: m.mentor.fullName,
       meetingId: m.id,
-      scheduledAt: m.scheduledAt,
+      scheduledAt: m.startsAt,
     }).catch(() => null);
     await sendFeedbackReminderEmail({
       toEmail: m.menti.email,
       recipientName: m.menti.fullName,
       meetingId: m.id,
-      scheduledAt: m.scheduledAt,
+      scheduledAt: m.startsAt,
     }).catch(() => null);
     sent++;
   }

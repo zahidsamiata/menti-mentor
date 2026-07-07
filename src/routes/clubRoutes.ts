@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
+import { requireAuth, requireRole } from '../middleware/authorize.js';
 import {
   createClub,
   listClubs,
@@ -11,19 +12,35 @@ import {
 } from '../controllers/clubController.js';
 
 const router = Router();
+router.use(requireTenant as unknown as RequestHandler);
 
-// Tüm kulüp endpoint'lerine tenant izolasyonu uygulanır.
-router.use(requireTenant as RequestHandler);
+// ─── Kulüp CRUD ──────────────────────────────────────────────────────────────
 
-// Kulüp CRUD
-router.post('/', createClub as unknown as RequestHandler);
-router.get('/', listClubs as unknown as RequestHandler);
-router.get('/:id', getClub as unknown as RequestHandler);
-router.patch('/:id', updateClub as unknown as RequestHandler);
+// GET  /           → kimlik doğrulaması zorunlu
+router.get('/', requireAuth(), listClubs as unknown as RequestHandler);
 
-// Üyelik işlemleri
-router.post('/:id/members', addClubMember as unknown as RequestHandler);
-router.delete('/:id/members/:userId', removeClubMember as unknown as RequestHandler);
-router.get('/:id/members', listClubMembers as unknown as RequestHandler);
+// POST /           → yalnızca ADMIN kulüp oluşturabilir
+router.post('/', requireRole('ADMIN'), createClub as unknown as RequestHandler);
+
+// GET  /:id        → kimlik doğrulaması zorunlu
+router.get('/:id', requireAuth(), getClub as unknown as RequestHandler);
+
+// PATCH /:id       → yalnızca ADMIN kulüp güncelleyebilir
+router.patch('/:id', requireRole('ADMIN'), updateClub as unknown as RequestHandler);
+
+// ─── Üyelik İşlemleri ────────────────────────────────────────────────────────
+
+// GET  /:id/members        → kimlik doğrulaması zorunlu
+router.get('/:id/members', requireAuth(), listClubMembers as unknown as RequestHandler);
+
+// POST /:id/members        → ADMIN üye ekleyebilir
+router.post('/:id/members', requireRole('ADMIN'), addClubMember as unknown as RequestHandler);
+
+// DELETE /:id/members/:userId → ADMIN üye çıkarabilir
+router.delete(
+  '/:id/members/:userId',
+  requireRole('ADMIN'),
+  removeClubMember as unknown as RequestHandler,
+);
 
 export default router;

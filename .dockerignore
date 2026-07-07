@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.env.test
+.env.local
+*.log
+coverage
+.git
+.gitignore
+tests
+vitest.config.ts
+README.md
+prisma/migrations/*/migration.sql

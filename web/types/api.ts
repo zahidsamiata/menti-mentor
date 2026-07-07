@@ -118,3 +118,21 @@ export interface ApiList<T> {
   items: T[];
   total: number;
 }
+
+export interface PaginatedList<T> extends ApiList<T> {
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface JobListing {
+  id: string;
+  tenantId: string;
+  title: string;
+  description: string;
+  location: string | null;
+  tags: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}

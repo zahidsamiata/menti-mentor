@@ -14,7 +14,7 @@ export type AuthContext = {
 
 export type RequestWithTenant = Request & {
   tenant: TenantContext;
-  // X-User-Id header'ı yoksa veya kullanıcı geçersizse null kalır.
+  // Authorization: Bearer <JWT> yoksa veya token geçersizse null kalır.
   auth: AuthContext;
 };
 

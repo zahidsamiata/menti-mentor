@@ -43,7 +43,7 @@ Every request must carry `X-Tenant-Id`. The `tenant.ts` middleware validates it 
 | `src/services/scoring.ts` | Sector (60%) + DISC (40%) score computation |
 | `src/services/matching.ts` | `rankMentisForMentor` — sorts candidates by score |
 | `src/services/tenantSharing.ts` | Cross-tenant pool logic (`isSharedPoolActive` flag) |
-| `src/services/iceBreaker.ts` | OpenAI call for 2-sentence intro + fallback |
+| `src/services/iceBreaker.ts` | OpenAI call (decommissioned — no longer wired to any controller) |
 | `src/controllers/` | HTTP handlers for tenants, users, matching, requests |
 
 ### Data Model (Prisma)
@@ -59,9 +59,49 @@ Five models: `Tenant`, `User`, `VisibilityOptIn`, `MatchRequest`, `JobListing`.
 
 1. **Tenant isolation** — tenants share the candidate pool only when both have `isSharedPoolActive = true`.
 2. **Opt-in gate** — a mentor must approve a menti's `VisibilityOptIn` before profile details are revealed.
-3. **LLM trigger** — `iceBreaker.ts` is called only after a visibility opt-in is approved; it generates exactly 2 sentences and has an offline fallback.
+3. **LLM removed** — `iceBreaker.ts` is decommissioned. Mentis write their own `requestMessage` on `VisibilityOptIn` (Akış B) and on `MatchRequest`. No OpenAI dependency at runtime.
 4. **Scoring** — purely mathematical (no LLM): sector tag overlap (60%) + DISC matrix (40%).
 
 ### ES Modules
 
 The project uses `"type": "module"` (ESM). All imports must use explicit `.js` extensions even for TypeScript source files (e.g., `import { foo } from './foo.js'`).
+
+---
+
+## Analytics & Compliance Standards
+
+### PII vs Analytical Data Segregation
+
+All data in this system is classified into two categories. Code must never mix them:
+
+| Category | Fields | Rules |
+|---|---|---|
+| **PII (Personal Identifiable Information)** | `fullName`, `email`, `bioSummary`, `expertiseDetails`, `targetAudience`, `volunteerHistory`, `pastProjects`, `education`, `selfProfile`, `discVector`, `discType`, `temperamentJson`, `iceBreaker`, `requestMessage` | Never expose in aggregate analytics. Covered by KVKK Art.7 / GDPR Art.17. Subject to anonymization and hard-delete. |
+| **Analytical (Non-PII)** | `sectorTags`, `role`, `tenantId`, `createdAt`, `npsScore`, `starRating`, `isActive`, `rematchCount`, `expectationCategories`, `timeCommitment` | Safe for aggregate reporting. May appear in KPI dashboards. Must NOT be linked to specific user identity in any exported report. |
+
+### Compliance Rules for Claude Code
+
+1. **Never add a new field** to any user-facing select/export without classifying it as PII or Analytical first.
+2. **Analytics endpoints** (`/api/analytics/*`, `/api/admin/kpi`) must return only aggregate counts, averages, and distributions — never row-level PII.
+3. **gdprService.ts** is the single source of truth for KVKK/GDPR operations. All anonymization/deletion logic must go through it, never inline.
+4. **LLM calls** (`iceBreaker.ts`, `matchReason.ts`) must never receive raw email addresses, full names beyond what is needed for the prompt, or any field not explicitly listed in the service's argument type.
+5. **Logs** (`logger.ts`, `requestLogger.ts`) must not contain PII. Log `userId` and `tenantId` only — never `email`, `fullName`, or `discVector`.
+6. **Rate limiting**: `llmRateLimiter` middleware exists but is no longer applied (LLM removed). Keep it for future integrations but do not add it to any route.
+7. **sectorTags** input must always be sanitized: trim, lowercase, max 50 chars per tag, alphanumeric + limited special chars only.
+
+### Data Retention Policy (KVKK Art.7)
+
+| Table | Retention | Enforcement |
+|---|---|---|
+| `SystemLog` | 90 days | `purgeExpiredData()` cron — weekly |
+| `FeedbackLog` | 3 years | Manual admin review |
+| `UserResponse` | Until user anonymized/deleted | `anonymizeUser()` / `hardDeleteUser()` |
+| `VisibilityOptIn` | Until hard-delete | Cascades with user |
+
+### Security Invariants
+
+- **Tenant isolation**: Every DB query on tenant-scoped tables MUST include `tenantId` in the `where` clause.
+- **Self-match**: No user may opt-in to themselves. Enforced at controller level (not just DB).
+- **Cross-tenant**: Only allowed when both tenants have `isSharedPoolActive = true`. Checked via `canCrossTenantMatch()`.
+- **JWT**: Tokens are scoped to a single tenant. Cross-tenant tokens are logged as WARN and rejected.
+- **sectorTags poison prevention**: Tags validated by `SECTOR_TAG_SCHEMA` in `userController.ts` before persistence.

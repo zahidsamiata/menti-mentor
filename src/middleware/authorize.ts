@@ -12,7 +12,7 @@ function sendForbidden(res: Response) {
 function sendUnauthorized(res: Response) {
   res.status(401).json({
     error: 'KIMLIK_DOGRULANMADI',
-    message: 'Bu işlem için kimlik doğrulaması gerekli. X-User-Id header\'ını gönderin.',
+    message: 'Bu işlem için kimlik doğrulaması gerekli. Authorization: Bearer <token> header\'ını gönderin.',
   });
 }
 

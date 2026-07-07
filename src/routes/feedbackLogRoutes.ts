@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
-import { requireRole } from '../middleware/authorize.js';
+import { requireAuth, requireRole } from '../middleware/authorize.js';
 import {
   createFeedbackLog,
   listFeedbackLogs,
@@ -16,8 +16,8 @@ router.use(requireTenant as unknown as RequestHandler);
 // POST /                   → ADMIN veya MENTOR
 router.post('/', requireRole('ADMIN', 'MENTOR'), createFeedbackLog as unknown as RequestHandler);
 
-// GET  /                   → tenant içindeki herkes
-router.get('/', listFeedbackLogs as unknown as RequestHandler);
+// GET  /                   → kimlik doğrulaması zorunlu
+router.get('/', requireAuth(), listFeedbackLogs as unknown as RequestHandler);
 
 // GET  /combination-scores → yalnızca ADMIN (ML skor analizi)
 router.get(
@@ -26,7 +26,7 @@ router.get(
   getCombinationScores as unknown as RequestHandler,
 );
 
-// GET  /:id                → tenant içindeki herkes
-router.get('/:id', getFeedbackLog as unknown as RequestHandler);
+// GET  /:id                → kimlik doğrulaması zorunlu
+router.get('/:id', requireAuth(), getFeedbackLog as unknown as RequestHandler);
 
 export default router;

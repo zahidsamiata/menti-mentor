@@ -7,6 +7,7 @@ const CreateRequestSchema = z.object({
   requesterUserId: z.string().min(5),
   targetType: z.enum(['USER', 'JOB_LISTING']),
   targetId: z.string().min(5),
+  requestMessage: z.string().max(1000).optional(),
 });
 
 // Rule 2: Menti -> Mentor request sadece opt-in sonrası mümkün.
@@ -54,6 +55,7 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
       requesterUserId: requester.id,
       targetType: parsed.data.targetType,
       targetId: parsed.data.targetId,
+      requestMessage: parsed.data.requestMessage,
     },
   });
 
