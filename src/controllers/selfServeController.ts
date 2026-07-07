@@ -155,6 +155,32 @@ function buildMockPersonas(adminDim: string) {
   });
 }
 
+// ─── GET /api/self-serve/check-slug?slug=xxx ─────────────────────────────────
+// Herkese açık — kimlik doğrulama gerektirmez.
+// Onboarding wizard'da anlık slug müsaitlik kontrolü için kullanılır.
+
+const SlugQuerySchema = z.object({
+  slug: z
+    .string()
+    .min(2)
+    .max(50)
+    .regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
+});
+
+export async function checkSlugAvailability(req: Request, res: Response) {
+  const parsed = SlugQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ available: false, error: 'GECERSIZ_SLUG', message: parsed.error.flatten().fieldErrors['slug']?.[0] ?? 'Geçersiz slug.' });
+  }
+
+  const exists = await prisma.tenant.findUnique({
+    where:  { slug: parsed.data.slug },
+    select: { id: true },
+  });
+
+  return res.json({ available: !exists, slug: parsed.data.slug });
+}
+
 // ─── POST /api/tenants/self-serve/register ────────────────────────────────────
 
 const SelfServeRegisterSchema = z.object({

@@ -175,6 +175,8 @@ export async function login(req: Request, res: Response) {
       authProvider: true,
       approvalStatus: true,
       isActive: true,
+      discType: true,
+      needsOrientation: true,
     },
   });
 
@@ -241,6 +243,8 @@ export async function login(req: Request, res: Response) {
       fullName: user.fullName,
       email: user.email,
       approvalStatus: user.approvalStatus,
+      discType: user.discType,
+      needsOrientation: user.needsOrientation,
     },
     tenant: tenant
       ? {
