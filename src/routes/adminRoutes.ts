@@ -11,6 +11,10 @@ import {
   approveUser,
   rejectUser,
   requestCorrection,
+  getCoachingSuggestions,
+  getPendingTuning,
+  approvePendingTuning,
+  rejectPendingTuning,
 } from '../controllers/adminController.js';
 import {
   listPendingTags,
@@ -34,6 +38,8 @@ router.post('/users/:id/approve', approveUser as unknown as RequestHandler);
 router.post('/users/:id/reject', rejectUser as unknown as RequestHandler);
 router.post('/users/:id/request-correction', requestCorrection as unknown as RequestHandler);
 router.post('/users/:id/rematch', triggerRematch as unknown as RequestHandler);
+// GET /api/admin/users/:id/coaching-suggestions — kural bazlı aksiyon önerileri
+router.get('/users/:id/coaching-suggestions', getCoachingSuggestions as unknown as RequestHandler);
 
 // ─── Taxonomy (Etiket Yönetimi) ───────────────────────────────────────────────
 router.get('/tags/pending', listPendingTags as unknown as RequestHandler);
@@ -43,6 +49,11 @@ router.post('/tags/:id/reject', rejectTag as unknown as RequestHandler);
 
 // ─── Double Opt-In ────────────────────────────────────────────────────────────
 router.post('/visibility-optin/:optInId/confirm', confirmDoubleOptIn as unknown as RequestHandler);
+
+// ─── AlgorithmTuner Onay Kapısı ──────────────────────────────────────────────
+router.get( '/algorithm-tuner/pending', getPendingTuning     as unknown as RequestHandler);
+router.post('/algorithm-tuner/approve', approvePendingTuning as unknown as RequestHandler);
+router.post('/algorithm-tuner/reject',  rejectPendingTuning  as unknown as RequestHandler);
 
 // ─── Cron Manuel Tetikleme ────────────────────────────────────────────────────
 router.post('/cron/run-tuning', manualRunTuning as unknown as RequestHandler);

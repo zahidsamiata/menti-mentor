@@ -166,6 +166,7 @@ model Tenant {
   clubs              Club[]
   clubMemberships    ClubMembership[]
   questions          Question[]
+  questionHides      QuestionHide[]
   pendingTags        PendingTag[]
   memberships        TenantMembership[]
   availabilityBlocks AvailabilityBlock[]
@@ -551,21 +552,38 @@ model ClubMembership {
 // tenantId null → tüm tenant'larda geçerli global soru
 model Question {
   id            String        @id @default(cuid())
-  tenantId      String?
+  tenantId      String?       // null = global çekirdek soru (KILITLI — silinemez/değiştirilemez)
   text          String
   type          QuestionType  @default(CORE)
   discDimension DiscDimension @default(GENERAL)
   order         Int           @default(0)
   isActive      Boolean       @default(true)
+  isRequired    Boolean       @default(true)  // opsiyonel/zorunlu işaretleme (tenant sorularında)
   createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  tenant    Tenant?        @relation(fields: [tenantId], references: [id])
+  tenant    Tenant?            @relation(fields: [tenantId], references: [id])
   responses UserResponse[]
+  hiddenFor QuestionHide[]
 
   @@index([tenantId])
   @@index([type])
   @@index([discDimension])
   @@index([isActive])
+}
+
+// Tenant, global bir soruyu kendi kurumundan gizleyebilir (silmez — veri bütünlüğü korunur)
+model QuestionHide {
+  id         String   @id @default(cuid())
+  questionId String
+  tenantId   String
+  hiddenAt   DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id])
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@unique([questionId, tenantId])
+  @@index([tenantId])
 }
 
 // Uzun süreli oturum yönetimi: 7 günlük refresh token

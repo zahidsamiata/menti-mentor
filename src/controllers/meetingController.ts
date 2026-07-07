@@ -367,6 +367,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     return res.status(409).json({ error: 'Bu saatte taraflardan birinin başka görüşmesi var.' });
   }
 
+  // Toplantı PENDING oluşturulur — mentor onayı beklenir
   const meeting = await prisma.meeting.create({
     data: {
       tenantId,
@@ -374,7 +375,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
       mentorUserId,
       mentiUserId:  userId,
       format,
-      status:       MeetingStatus.SCHEDULED,
+      status:       MeetingStatus.PENDING,
       startsAt:     start,
       endsAt:       end,
       locationUrl:  format === MeetingFormat.ONLINE    ? (locationUrl  ?? null) : null,
@@ -383,7 +384,64 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     },
   });
 
-  return res.status(201).json({ meeting });
+  // Mentore bildirim: yeni görüşme talebi var
+  const { notifyMatchRequestReceived } = await import('../services/notificationService.js');
+  void notifyMatchRequestReceived(mentorUserId, tenantId);
+
+  return res.status(201).json({ meeting, awaitingMentorApproval: true });
+}
+
+// 4-a) approveMeetingByMentor — Mentor gelen görüşme talebini onaylar
+export async function approveMeetingByMentor(req: RequestWithTenant, res: Response) {
+  const ctx = getCtx(req);
+  if (!ctx) return res.status(401).json({ error: 'Kimlik veya tenant bağlamı yok.' });
+  const { userId, tenantId } = ctx;
+
+  const meetingId = req.params['meetingId'] as string;
+
+  const meeting = await prisma.meeting.findFirst({
+    where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },
+    select: { id: true, mentiUserId: true },
+  });
+  if (!meeting) {
+    return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+  }
+
+  const updated = await prisma.meeting.update({
+    where: { id: meetingId },
+    data:  { status: MeetingStatus.SCHEDULED },
+  });
+
+  // Mentiye onay bildirimi
+  const { notifyVisibilityApproved } = await import('../services/notificationService.js');
+  void notifyVisibilityApproved(meeting.mentiUserId, tenantId);
+
+  return res.json({ meeting: updated });
+}
+
+// 4-b) rejectMeetingByMentor — Mentor görüşme talebini reddeder
+export async function rejectMeetingByMentor(req: RequestWithTenant, res: Response) {
+  const ctx = getCtx(req);
+  if (!ctx) return res.status(401).json({ error: 'Kimlik veya tenant bağlamı yok.' });
+  const { userId, tenantId } = ctx;
+
+  const meetingId = req.params['meetingId'] as string;
+  const { reason } = req.body as { reason?: string };
+
+  const meeting = await prisma.meeting.findFirst({
+    where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },
+    select: { id: true },
+  });
+  if (!meeting) {
+    return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+  }
+
+  const updated = await prisma.meeting.update({
+    where: { id: meetingId },
+    data:  { status: MeetingStatus.CANCELLED, notes: reason ?? null },
+  });
+
+  return res.json({ meeting: updated });
 }
 
 // 4) getActiveMeetings — Kullanıcının aktif + yakın geçmiş görüşmeleri

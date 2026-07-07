@@ -90,6 +90,123 @@ export async function createQuestion(req: RequestWithTenant, res: Response) {
   return res.status(201).json(question);
 }
 
+// ─── PATCH /api/questions/:id ────────────────────────────────────────────────
+
+const UpdateQuestionSchema = z.object({
+  text:       z.string().min(10).max(500).optional(),
+  order:      z.number().int().min(0).optional(),
+  isRequired: z.boolean().optional(),
+  isActive:   z.boolean().optional(),
+});
+
+/** Admin: tenant'a ait soruyu günceller. Global (kilitli) sorulara dokunulamaz. */
+export async function updateQuestion(req: RequestWithTenant, res: Response) {
+  const { prisma } = await import('../db.js');
+  const questionId = req.params['questionId'] as string;
+
+  const question = await prisma.question.findUnique({
+    where:  { id: questionId },
+    select: { id: true, tenantId: true },
+  });
+  if (!question) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  // Global çekirdek soru kilidi — sadece tenant'a özgü sorular değiştirilebilir
+  if (question.tenantId === null) {
+    return res.status(403).json({
+      error: 'GLOBAL_SORU_KILITLI',
+      message: 'Global çekirdek sorular değiştirilemez. Yeni tenant sorusu oluşturun.',
+    });
+  }
+  if (question.tenantId !== req.tenant.tenantId) {
+    return res.status(403).json({ error: 'YETKI_YETERSIZ' });
+  }
+
+  const parsed = UpdateQuestionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const updated = await prisma.question.update({
+    where: { id: questionId },
+    data:  parsed.data,
+  });
+  invalidateDimensionalCountCache();
+  return res.json(updated);
+}
+
+// ─── DELETE /api/questions/:id ───────────────────────────────────────────────
+
+/** Admin: tenant'a ait soruyu siler. Global sorular silinemez. */
+export async function deleteQuestion(req: RequestWithTenant, res: Response) {
+  const { prisma } = await import('../db.js');
+  const questionId = req.params['questionId'] as string;
+
+  const question = await prisma.question.findUnique({
+    where:  { id: questionId },
+    select: { id: true, tenantId: true },
+  });
+  if (!question) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  if (question.tenantId === null) {
+    return res.status(403).json({
+      error: 'GLOBAL_SORU_KILITLI',
+      message: 'Global çekirdek sorular silinemez. Gizlemek için /hide endpoint\'ini kullanın.',
+    });
+  }
+  if (question.tenantId !== req.tenant.tenantId) {
+    return res.status(403).json({ error: 'YETKI_YETERSIZ' });
+  }
+
+  await prisma.question.delete({ where: { id: questionId } });
+  invalidateDimensionalCountCache();
+  return res.status(204).send();
+}
+
+// ─── POST /api/questions/:id/hide ────────────────────────────────────────────
+
+/** Admin: global bir soruyu kendi kurumundan gizler (silmez — veri bütünlüğü korunur). */
+export async function hideGlobalQuestion(req: RequestWithTenant, res: Response) {
+  const { prisma } = await import('../db.js');
+  const questionId = req.params['questionId'] as string;
+
+  const question = await prisma.question.findUnique({
+    where:  { id: questionId },
+    select: { id: true, tenantId: true },
+  });
+  if (!question) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  if (question.tenantId !== null) {
+    return res.status(400).json({
+      error: 'SADECE_GLOBAL_SORULAR',
+      message: 'Bu endpoint yalnızca global soruları gizler. Tenant sorularını silebilirsiniz.',
+    });
+  }
+
+  const hide = await (prisma as unknown as { questionHide: { upsert: (a: unknown) => Promise<unknown> } })
+    .questionHide.upsert({
+      where:  { questionId_tenantId: { questionId, tenantId: req.tenant.tenantId } },
+      create: { questionId, tenantId: req.tenant.tenantId },
+      update: {},
+    });
+
+  return res.status(201).json(hide);
+}
+
+// ─── DELETE /api/questions/:id/hide ──────────────────────────────────────────
+
+/** Admin: gizlenen global soruyu yeniden gösterir. */
+export async function unhideGlobalQuestion(req: RequestWithTenant, res: Response) {
+  const { prisma } = await import('../db.js');
+  const questionId = req.params['questionId'] as string;
+
+  await (prisma as unknown as { questionHide: { deleteMany: (a: unknown) => Promise<unknown> } })
+    .questionHide.deleteMany({
+      where: { questionId, tenantId: req.tenant.tenantId },
+    });
+
+  return res.status(204).send();
+}
+
 // ─── POST /api/questions/:questionId/respond ─────────────────────────────────
 
 /**

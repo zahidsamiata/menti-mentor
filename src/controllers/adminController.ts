@@ -14,6 +14,12 @@ import { runWeeklyTuning, runWeeklyPurge } from '../services/cronScheduler.js';
 import { logger } from '../services/logger.js';
 import { notifyRematchRequested } from '../services/notificationService.js';
 import { sendUserApprovalNotification } from '../services/emailService.js';
+import { generateSuggestions } from '../services/coachingSuggestions.js';
+import {
+  getPendingAdjustment,
+  applyPendingAdjustment,
+  rejectPendingAdjustment,
+} from '../services/algorithmTuner.js';
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────
 
@@ -398,4 +404,57 @@ export async function rejectUser(req: RequestWithTenant, res: Response) {
   void sendUserApprovalNotification({ toEmail: user.email, userName: user.fullName, approved: false });
 
   return res.json({ message: 'Kullanıcı reddedildi.', userId, approvalStatus: 'REJECTED' });
+}
+
+// ─── Koçluk Önerileri ─────────────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/users/:id/coaching-suggestions
+ *
+ * Kullanıcının metriklerine bakarak yönetici için somut aksiyon önerileri döner.
+ * Compliance: Öneriler kural bazlı üretilir — PII içermez, sadece anonim metrik.
+ */
+export async function getCoachingSuggestions(req: RequestWithTenant, res: Response) {
+  const userId = req.params['id'] as string;
+
+  const user = await prisma.user.findFirst({
+    where: { id: userId, tenantId: req.tenant.tenantId },
+    select: { id: true, fullName: true },
+  });
+  if (!user) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+  }
+
+  const suggestions = await generateSuggestions(userId, req.tenant.tenantId);
+
+  return res.json({
+    userId,
+    suggestionCount: suggestions.length,
+    hasCritical: suggestions.some((s) => s.severity === 'CRITICAL'),
+    items: suggestions,
+  });
+}
+
+// ─── AlgorithmTuner Onay Kapısı ───────────────────────────────────────────────
+
+/** GET /api/admin/algorithm-tuner/pending — bekleyen kalibrasyon önerisini göster */
+export async function getPendingTuning(req: RequestWithTenant, res: Response) {
+  const pending = await getPendingAdjustment(req.tenant.tenantId);
+  if (!pending) return res.json({ pending: null });
+  return res.json({ pending });
+}
+
+/** POST /api/admin/algorithm-tuner/approve — kalibrasyon önerisini onayla */
+export async function approvePendingTuning(req: RequestWithTenant, res: Response) {
+  const applied = await applyPendingAdjustment(req.tenant.tenantId);
+  if (!applied) return res.status(404).json({ error: 'Bekleyen öneri yok.' });
+  void logger.info('ML', 'Admin kalibrasyon önerisini onayladı', { tenantId: req.tenant.tenantId });
+  return res.json({ message: 'Algoritma ağırlıkları güncellendi.', applied });
+}
+
+/** POST /api/admin/algorithm-tuner/reject — kalibrasyon önerisini reddet */
+export async function rejectPendingTuning(req: RequestWithTenant, res: Response) {
+  await rejectPendingAdjustment(req.tenant.tenantId);
+  void logger.info('ML', 'Admin kalibrasyon önerisini reddetti', { tenantId: req.tenant.tenantId });
+  return res.json({ message: 'Öneri reddedildi, mevcut ağırlıklar korunuyor.' });
 }

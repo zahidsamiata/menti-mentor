@@ -18,6 +18,10 @@ import {
   respondToQuestion,
   submitResponses,
   getMyResponses,
+  updateQuestion,
+  deleteQuestion,
+  hideGlobalQuestion,
+  unhideGlobalQuestion,
 } from '../controllers/questionController.js';
 
 const router = Router();
@@ -42,13 +46,24 @@ router.post('/respond', submitResponses as unknown as RequestHandler);
 /** GET /api/questions/my-responses — kullanıcının adaptif ilerleme durumu */
 router.get('/my-responses', getMyResponses as unknown as RequestHandler);
 
+// ── Soru Yönetimi (ADMIN — sabit path'lerden sonra, parametrik'ten önce) ─────
+
+/** PATCH /api/questions/:questionId — tenant sorusunu güncelle (metin/sıra/zorunluluk) */
+router.patch('/:questionId', requireRole('ADMIN'), updateQuestion as unknown as RequestHandler);
+
+/** DELETE /api/questions/:questionId — tenant sorusunu sil (global soru silinemez) */
+router.delete('/:questionId', requireRole('ADMIN'), deleteQuestion as unknown as RequestHandler);
+
+/** POST /api/questions/:questionId/hide — global soruyu bu tenant için gizle */
+router.post('/:questionId/hide', requireRole('ADMIN'), hideGlobalQuestion as unknown as RequestHandler);
+
+/** DELETE /api/questions/:questionId/hide — global soruyu yeniden göster */
+router.delete('/:questionId/hide', requireRole('ADMIN'), unhideGlobalQuestion as unknown as RequestHandler);
+
 // ── Parametrik path'ler ───────────────────────────────────────────────────────
 
 /**
  * POST /api/questions/:questionId/respond — tek soru yanıtı (frontend kullanır)
- *
- * Her cevap anında kaydedilir; discVector güncellenir; adaptif ilerleme döner.
- * Frontend bu endpoint'i CORE→DEEPENING faz geçişini yönetmek için kullanır.
  */
 router.post('/:questionId/respond', respondToQuestion as unknown as RequestHandler);
 

@@ -113,6 +113,41 @@ export async function sendAdminTestCompletedNotification(args: {
   );
 }
 
+export async function sendAlgorithmAdjustmentProposal(args: {
+  toEmail: string;
+  adminName: string;
+  tenantName: string;
+  tenantId: string;
+  reason: string;
+  phase1Nps: number | null;
+  phase3Nps: number | null;
+  prevSector: number; prevDisc: number;
+  newSector: number;  newDisc: number;
+}): Promise<void> {
+  const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3001';
+  const approveUrl = `${frontendUrl}/admin/algorithm-tuner?action=approve&tenantId=${args.tenantId}`;
+  const rejectUrl  = `${frontendUrl}/admin/algorithm-tuner?action=reject&tenantId=${args.tenantId}`;
+
+  await send(
+    args.toEmail,
+    `[${args.tenantName}] Algoritma Kalibrasyon Önerisi — Onayınız Bekleniyor`,
+    `<p>Merhaba ${args.adminName},</p>
+     <p>Bu hafta eşleştirme algoritmanız analiz edildi. Aşağıdaki kalibrasyon önerilmektedir:</p>
+     <table style="border-collapse:collapse;width:100%">
+       <tr><th style="text-align:left;padding:8px;background:#f3f4f6">Kriter</th><th style="padding:8px;background:#f3f4f6">Önceki</th><th style="padding:8px;background:#f3f4f6">Önerilen</th></tr>
+       <tr><td style="padding:8px">Sektör Ağırlığı</td><td style="padding:8px">%${args.prevSector}</td><td style="padding:8px"><strong>%${args.newSector}</strong></td></tr>
+       <tr><td style="padding:8px">Karakter/DISC Ağırlığı</td><td style="padding:8px">%${args.prevDisc}</td><td style="padding:8px"><strong>%${args.newDisc}</strong></td></tr>
+     </table>
+     <p><strong>Neden bu öneri?</strong><br>${args.reason}</p>
+     <p>NPS Verileri: 1. ay = ${args.phase1Nps ?? 'Yetersiz veri'} | 3. ay = ${args.phase3Nps ?? 'Yetersiz veri'}</p>
+     <p>Bu değişiklik küçük (±%5) ve geri alınabilir. Son karar sizindir.</p>
+     <p>
+       <a href="${approveUrl}" style="background:#6366f1;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;margin-right:8px">✅ Onayla</a>
+       <a href="${rejectUrl}"  style="background:#ef4444;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px">❌ Reddet</a>
+     </p>`,
+  );
+}
+
 export async function sendFeedbackReminderEmail(args: {
   toEmail: string;
   recipientName: string;

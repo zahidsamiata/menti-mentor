@@ -156,10 +156,13 @@ export async function tuneScoringWeights(tenantId: string): Promise<TuningResult
     result.adjusted = true;
     result.reason = reason;
 
-    await saveAlgorithmWeights(tenantId, result.newWeights);
-    void logger.info('ML', `Algoritma ağırlıkları ayarlandı: tenant=${tenantId}`, {
+    // Artık direkt uygulamıyoruz — yönetici onayına gönderiyoruz
+    await savePendingAdjustment(tenantId, result);
+    await notifyAdminsAboutPendingAdjustment(tenantId, result);
+
+    void logger.info('ML', `Algoritma kalibrasyon önerisi hazırlandı, yönetici onayı bekleniyor: tenant=${tenantId}`, {
       previousSectorWeight: current.sectorWeight,
-      newSectorWeight,
+      proposedSectorWeight: newSectorWeight,
       reason,
     });
   } else {
@@ -167,6 +170,95 @@ export async function tuneScoringWeights(tenantId: string): Promise<TuningResult
   }
 
   return result;
+}
+
+// ─── Yönetici Onay Mekanizması ────────────────────────────────────────────────
+
+export type PendingAdjustment = TuningResult & { proposedAt: string };
+
+async function savePendingAdjustment(tenantId: string, result: TuningResult): Promise<void> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { tenantVocabulary: true },
+  });
+  const existing = (tenant?.tenantVocabulary as Record<string, unknown>) ?? {};
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      tenantVocabulary: {
+        ...existing,
+        pendingAlgorithmAdjustment: { ...result, proposedAt: new Date().toISOString() },
+      },
+    },
+  });
+}
+
+export async function getPendingAdjustment(tenantId: string): Promise<PendingAdjustment | null> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { tenantVocabulary: true },
+  });
+  const vocab = tenant?.tenantVocabulary as Record<string, unknown> | null;
+  return (vocab?.pendingAlgorithmAdjustment as PendingAdjustment) ?? null;
+}
+
+/** Admin onayladığında çağrılır — ağırlıkları uygular ve pending'i temizler. */
+export async function applyPendingAdjustment(tenantId: string): Promise<PendingAdjustment | null> {
+  const pending = await getPendingAdjustment(tenantId);
+  if (!pending) return null;
+
+  await saveAlgorithmWeights(tenantId, pending.newWeights);
+
+  // Pending'i temizle
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { tenantVocabulary: true } });
+  const existing = (tenant?.tenantVocabulary as Record<string, unknown>) ?? {};
+  delete existing['pendingAlgorithmAdjustment'];
+  await prisma.tenant.update({ where: { id: tenantId }, data: { tenantVocabulary: existing } });
+
+  void logger.info('ML', `Admin onayıyla algoritma ağırlıkları uygulandı: tenant=${tenantId}`, {
+    newSectorWeight: pending.newWeights.sectorWeight,
+    reason: pending.reason,
+  });
+
+  return pending;
+}
+
+/** Admin reddederse pending'i sil, ağırlıklara dokunma. */
+export async function rejectPendingAdjustment(tenantId: string): Promise<void> {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { tenantVocabulary: true } });
+  const existing = (tenant?.tenantVocabulary as Record<string, unknown>) ?? {};
+  delete existing['pendingAlgorithmAdjustment'];
+  await prisma.tenant.update({ where: { id: tenantId }, data: { tenantVocabulary: existing } });
+  void logger.info('ML', `Admin kalibrasyon önerisini reddetti: tenant=${tenantId}`);
+}
+
+async function notifyAdminsAboutPendingAdjustment(tenantId: string, result: TuningResult): Promise<void> {
+  const admins = await prisma.user.findMany({
+    where: { tenantId, role: 'ADMIN', isActive: true },
+    select: { email: true, fullName: true },
+  });
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { displayName: true, name: true } });
+  const tenantName = tenant?.displayName ?? tenant?.name ?? tenantId;
+
+  const prevSector = Math.round(result.previousWeights.sectorWeight * 100);
+  const newSector  = Math.round(result.newWeights.sectorWeight * 100);
+  const prevDisc   = 100 - prevSector;
+  const newDisc    = 100 - newSector;
+
+  const { sendAlgorithmAdjustmentProposal } = await import('./emailService.js');
+  for (const admin of admins) {
+    void sendAlgorithmAdjustmentProposal({
+      toEmail:    admin.email,
+      adminName:  admin.fullName,
+      tenantName,
+      tenantId,
+      reason:     result.reason,
+      phase1Nps:  result.phase1Nps.avgNps,
+      phase3Nps:  result.phase3Nps.avgNps,
+      prevSector, prevDisc,
+      newSector,  newDisc,
+    });
+  }
 }
 
 /**

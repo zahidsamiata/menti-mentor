@@ -70,7 +70,16 @@ export interface AdaptiveProgress {
  * Bu sıralama frontend'de yeniden sıralamaya gerek bırakmaz.
  */
 export async function buildQuestionList(tenantId: string) {
-  const questions = await prisma.question.findMany({
+  // Bu tenant tarafından gizlenmiş global soru ID'leri
+  const hiddenIds = await (prisma as unknown as {
+    questionHide: { findMany: (a: unknown) => Promise<Array<{ questionId: string }>> };
+  }).questionHide.findMany({
+    where:  { tenantId },
+    select: { questionId: true },
+  });
+  const hiddenSet = new Set(hiddenIds.map((h) => h.questionId));
+
+  const allQuestions = await prisma.question.findMany({
     where: {
       isActive: true,
       OR: [{ tenantId: null }, { tenantId }],
@@ -78,6 +87,9 @@ export async function buildQuestionList(tenantId: string) {
     orderBy: [{ type: 'asc' }, { order: 'asc' }],
     select: { id: true, text: true, type: true, discDimension: true, order: true },
   });
+
+  // Gizlenmiş soruları listeden çıkar
+  const questions = allQuestions.filter((q) => !hiddenSet.has(q.id));
 
   const meta = calcPoolMeta(questions);
   return { questions, meta };

@@ -10,6 +10,8 @@ import {
   bookMeeting,
   getActiveMeetings,
   markFeedbackPrompted,
+  approveMeetingByMentor,
+  rejectMeetingByMentor,
 } from '../controllers/meetingController.js';
 import {
   submitFeedback,
@@ -90,6 +92,20 @@ router.get(
   '/:meetingId/feedback',
   requireAuth(),
   getMeetingFeedback as unknown as RequestHandler,
+);
+
+// ─── Mentor Onay Kuyruğu ─────────────────────────────────────────────────────
+// POST /:meetingId/approve  → Mentor gelen talebi onaylar (PENDING → SCHEDULED)
+router.post(
+  '/:meetingId/approve',
+  requireRole('MENTOR'),
+  approveMeetingByMentor as unknown as RequestHandler,
+);
+// POST /:meetingId/reject   → Mentor gelen talebi reddeder (PENDING → CANCELLED)
+router.post(
+  '/:meetingId/reject',
+  requireRole('MENTOR'),
+  rejectMeetingByMentor as unknown as RequestHandler,
 );
 
 // ─── Görüşme Check-in (kısa zorunlu + derin opsiyonel) ───────────────────────
