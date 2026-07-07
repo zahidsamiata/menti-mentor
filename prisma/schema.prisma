@@ -242,6 +242,7 @@ model User {
   meetingsAsMenti   Meeting[]  @relation("MeetingsAsMenti")
   feedbacksGiven    Feedback[] @relation("FeedbacksGiven")
   feedbacksReceived Feedback[] @relation("FeedbacksReceived")
+  checkInsGiven     MeetingCheckIn[] @relation("CheckInsGiven")
 
   clubMemberships    ClubMembership[]
   responses          UserResponse[]
@@ -383,7 +384,8 @@ model Meeting {
   match    Match?    @relation(fields: [matchId], references: [id])
   mentor   User      @relation("MeetingsAsMentor", fields: [mentorUserId], references: [id])
   menti    User      @relation("MeetingsAsMenti", fields: [mentiUserId], references: [id])
-  feedback Feedback?
+  feedback   Feedback?
+  checkIns   MeetingCheckIn[]
 
   @@index([tenantId])
   @@index([mentorUserId])
@@ -394,6 +396,42 @@ model Meeting {
   @@index([tenantId, status, hasFeedback])
 }
 
+// Görüşme sonrası kısa zorunlu değerlendirme (her iki taraf, ~45 saniye)
+model MeetingCheckIn {
+  id        String @id @default(cuid())
+  meetingId String
+  tenantId  String
+  userId    String  // değerlendiren kullanıcı (mentor veya menti)
+  role      UserRole // hangi rolden yaptığı
+
+  // Katman 1 — Zorunlu (3-4 soru)
+  overallRating      Int     // 1-5 yıldız: "Bu görüşme ne kadar değerliydi?"
+  progressRating     Int     // 1-5: "Hedefe ne kadar yaklaştın?"
+  continueIntent     String  // EVET | BELIRSIZ | HAYIR
+
+  // Sadece mentör doldurur
+  menteePreparedness Int?    // 1-5: "Menti hazırlıklı geldi mi?"
+
+  // Katman 2 — Opsiyonel derin (isteğe bağlı)
+  wantedMore         String? // YONLENDIRME | KAYNAK | BAGLANIT | GERI_BILDIRIM | HAYIR
+  nextTopicNote      String? @db.VarChar(500) // "Bir sonraki görüşmede konuşmak istediğim:"
+  concernTag         String? // mentör: MOT_DUSUK | HEDEF_BELIRSIZ | ZAMAN_YOK | ILETISIM | HAYIR
+  continuationView   String? // KESINLIKLE | EVET | KARARSIZ | HAYIR
+  openNote           String? @db.VarChar(1000) // serbest metin
+
+  submittedAt DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id])
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  user    User    @relation("CheckInsGiven", fields: [userId], references: [id])
+
+  @@unique([meetingId, userId])
+  @@index([tenantId])
+  @@index([meetingId])
+  @@index([userId])
+  @@index([tenantId, role, overallRating])
+}
+
 model Feedback {
   id        String @id @default(cuid())
   meetingId String @unique
@@ -401,14 +439,27 @@ model Feedback {
   mentorId  String
   mentiId   String
 
-  guidanceScore        Int?
-  resourceSharingScore Int?
-  trustScore           Int?
-  preparednessScore    Int?
-  proactivityScore     Int?
+  // Menti → Mentor
+  guidanceScore        Int?  // Yönlendirme kalitesi (1-5)
+  resourceSharingScore Int?  // Kaynak paylaşımı (1-5)
+  trustScore           Int?  // Güven ve güvenlik hissi (1-5)
 
-  keyLearnings     String?
-  specificComments String?
+  // Mentor → Menti
+  preparednessScore    Int?  // Hazırlık (1-5)
+  proactivityScore     Int?  // Proaktiflik (1-5)
+  engagementScore      Int?  // Katılım/motivasyon (1-5) — YENİ
+  goalClarityScore     Int?  // Hedef netliği (1-5) — YENİ
+
+  // Nitel — kısa
+  keyLearnings         String? @db.VarChar(1000)
+  specificComments     String? @db.VarChar(1000)
+
+  // Dönemlik derin (opsiyonel, ayda bir tetiklenir)
+  periodicCareerGrowth  String? @db.VarChar(2000) // "Bu ilişki kariyer gelişimine nasıl katkı sağladı?"
+  periodicTrustScore    Int?    // 1-10
+  periodicNetworkScore  Int?    // Ağ genişlemesi 1-5
+  periodicConfidenceScore Int?  // Özgüven değişimi 1-5
+  periodicNpsScore      Int?    // 0-10
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

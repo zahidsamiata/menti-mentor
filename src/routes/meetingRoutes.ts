@@ -17,6 +17,11 @@ import {
   clearOrientationLock,
   sendPendingFeedbackReminders,
 } from '../controllers/feedbackController.js';
+import {
+  submitCheckIn,
+  getCheckIns,
+  getPairEfficiencySignal,
+} from '../controllers/meetingCheckInController.js';
 
 const router = Router();
 router.use(requireTenant as unknown as RequestHandler);
@@ -85,6 +90,26 @@ router.get(
   '/:meetingId/feedback',
   requireAuth(),
   getMeetingFeedback as unknown as RequestHandler,
+);
+
+// ─── Görüşme Check-in (kısa zorunlu + derin opsiyonel) ───────────────────────
+// POST /:meetingId/check-in  → Mentor veya menti hızlı değerlendirme gönderir
+router.post(
+  '/:meetingId/check-in',
+  requireAuth(),
+  submitCheckIn as unknown as RequestHandler,
+);
+// GET /:meetingId/check-ins  → Check-in özetlerini listeler (admin/mentor/menti)
+router.get(
+  '/:meetingId/check-ins',
+  requireAuth(),
+  getCheckIns as unknown as RequestHandler,
+);
+// GET /pair-signal?mentorId=&mentiId=  → Çift verimsizlik sinyali
+router.get(
+  '/pair-signal',
+  requireRole('ADMIN'),
+  getPairEfficiencySignal as unknown as RequestHandler,
 );
 
 // ─── Admin işlemleri (mevcut) ────────────────────────────────────────────────
