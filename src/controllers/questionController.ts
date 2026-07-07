@@ -185,12 +185,11 @@ export async function hideGlobalQuestion(req: RequestWithTenant, res: Response) 
     });
   }
 
-  const hide = await (prisma as unknown as { questionHide: { upsert: (a: unknown) => Promise<unknown> } })
-    .questionHide.upsert({
-      where:  { questionId_tenantId: { questionId, tenantId: req.tenant.tenantId } },
-      create: { questionId, tenantId: req.tenant.tenantId },
-      update: {},
-    });
+  const hide = await prisma.questionHide.upsert({
+    where:  { questionId_tenantId: { questionId, tenantId: req.tenant.tenantId } },
+    create: { questionId, tenantId: req.tenant.tenantId },
+    update: {},
+  });
 
   return res.status(201).json(hide);
 }
@@ -202,10 +201,9 @@ export async function unhideGlobalQuestion(req: RequestWithTenant, res: Response
   const { prisma } = await import('../db.js');
   const questionId = req.params['questionId'] as string;
 
-  await (prisma as unknown as { questionHide: { deleteMany: (a: unknown) => Promise<unknown> } })
-    .questionHide.deleteMany({
-      where: { questionId, tenantId: req.tenant.tenantId },
-    });
+  await prisma.questionHide.deleteMany({
+    where: { questionId, tenantId: req.tenant.tenantId },
+  });
 
   return res.status(204).send();
 }
