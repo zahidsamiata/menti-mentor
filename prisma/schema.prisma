@@ -161,6 +161,11 @@ model Tenant {
   // Super Admin askıya alma / aktif etme
   isActive Boolean @default(true)
 
+  // KVKK — açık rıza kaydı (selfServeRegister sırasında alınır)
+  // Zorunlu: frontend checkbox + backend Zod z.literal(true) kontrolü.
+  // NULL = eski kayıt (migration öncesi) veya API-doğrudan çağrı reddedilmiş.
+  kvkkConsentAt       DateTime?          // Onay anı — KVKK Md.5 ispat yükü
+
   // Faz 3 — Taslak kurtarma e-postası (KVKK: unsubscribe zorunlu)
   // Token: selfServeRegister'da üretilir, e-postada unsubscribe linki olarak gider.
   // Yalnızca onboardingStep ['TEMPLATE','LOGO','PREVIEW'] tenant'larına gönderilir
