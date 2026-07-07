@@ -195,16 +195,54 @@ const DISC_VECTORS: Record<DiscType, { D: number; I: number; S: number; C: numbe
 const TIME_COMMITMENTS: TimeCommitment[] = ['AYDA_1', 'AYDA_2_3', 'HAFTADA_1', 'HAFTADA_2_PLUS'];
 const INTERACTION_STYLES: InteractionStyle[] = ['GOREV_BAZLI', 'SOHBET_BAZLI'];
 
+// ─── Sektör Havuzu ────────────────────────────────────────────────────────────
+// STK / üniversite / sivil toplum ekosistemi için genişletilmiş etiket seti.
+// Eşleştirme motoru bu etiketlerin kesişimini kullanır (Jaccard benzeri).
+// Yeni etiket önerileri PendingTag akışıyla admin onayına gider.
 const SECTOR_POOL = [
-  'teknoloji', 'finans', 'sağlık', 'eğitim', 'hukuk', 'pazarlama',
-  'mühendislik', 'tasarım', 'girişimcilik', 'yapay-zeka', 'veri-bilimi',
-  'siber-güvenlik', 'sürdürülebilirlik', 'lojistik', 'insan-kaynakları',
+  // Teknoloji & Dijital
+  'yazılım-geliştirme', 'veri-bilimi', 'yapay-zeka', 'siber-güvenlik',
+  'ürün-yönetimi', 'ui-ux-tasarım', 'mobil-uygulama', 'bulut-sistemleri',
+
+  // İş Dünyası & Finans
+  'finans', 'muhasebe', 'girişimcilik', 'pazarlama', 'satış',
+  'kurumsal-iletişim', 'sosyal-girişimcilik', 'etki-yatırımı',
+
+  // Sivil Toplum & Kamu
+  'stk-yönetimi', 'proje-yönetimi', 'hibe-yazımı', 'savunuculuk',
+  'gönüllülük-yönetimi', 'sosyal-politika', 'kamu-yönetimi',
+
+  // Eğitim & Akademi
+  'eğitim-teknolojisi', 'akademik-araştırma', 'kariyer-koçluğu',
+  'ölçme-değerlendirme', 'müfredat-tasarımı',
+
+  // Sağlık & Refah
+  'halk-sağlığı', 'sağlık-teknolojisi', 'psikoloji', 'sosyal-hizmet',
+
+  // Hukuk & Uyum
+  'hukuk', 'insan-hakları', 'veri-gizliliği', 'fikri-mülkiyet',
+
+  // Sürdürülebilirlik & Çevre
+  'çevre-politikası', 'sürdürülebilirlik', 'iklim-değişikliği', 'döngüsel-ekonomi',
+
+  // İnsan & Organizasyon
+  'insan-kaynakları', 'liderlik-gelişimi', 'topluluk-yönetimi',
+  'çeşitlilik-kapsayıcılık', 'örgütsel-gelişim',
+
+  // Yaratıcı & Medya
+  'içerik-üretimi', 'sosyal-medya', 'gazetecilik', 'tasarım',
 ];
 
 const SKILL_POOL = [
-  'Python', 'TypeScript', 'SQL', 'React', 'liderlik', 'sunum',
-  'proje-yönetimi', 'analitik-düşünce', 'müzakere', 'iletişim',
-  'veri-analizi', 'machine-learning', 'ürün-yönetimi', 'tasarım',
+  // Teknik
+  'Python', 'TypeScript', 'SQL', 'React', 'Excel', 'Power-BI',
+  'veri-analizi', 'machine-learning', 'bulut-mimarisi',
+  // Profesyonel
+  'liderlik', 'sunum', 'proje-yönetimi', 'analitik-düşünce',
+  'müzakere', 'iletişim', 'koçluk', 'mentorluk',
+  // STK'ya özgü
+  'hibe-yazımı', 'etki-ölçümü', 'paydaş-yönetimi', 'savunuculuk',
+  'gönüllü-koordinasyonu', 'bağış-toplama',
 ];
 
 const EXPECTATION_POOL = [
@@ -588,39 +626,69 @@ type NodeDef = { code: string; label: string; depth: number; parentCode: string 
 
 const INDUSTRY_TREE: NodeDef[] = [
   // ── Seviye 1: Ana Sektörler ────────────────────────────────────────────────
-  { code: 'TEK',     label: 'Teknoloji',               depth: 1, parentCode: null },
-  { code: 'FIN',     label: 'Finans',                  depth: 1, parentCode: null },
-  { code: 'SAG',     label: 'Sağlık',                  depth: 1, parentCode: null },
-  { code: 'EGT',     label: 'Eğitim',                  depth: 1, parentCode: null },
-  { code: 'HUK',     label: 'Hukuk',                   depth: 1, parentCode: null },
-  { code: 'GRS',     label: 'Girişimcilik',             depth: 1, parentCode: null },
-  { code: 'MUH',     label: 'Mühendislik',              depth: 1, parentCode: null },
+  { code: 'TEK', label: 'Teknoloji & Dijital',    depth: 1, parentCode: null },
+  { code: 'FIN', label: 'Finans & İş Dünyası',    depth: 1, parentCode: null },
+  { code: 'STK', label: 'Sivil Toplum & Kamu',    depth: 1, parentCode: null },
+  { code: 'EGT', label: 'Eğitim & Akademi',       depth: 1, parentCode: null },
+  { code: 'SAG', label: 'Sağlık & Refah',         depth: 1, parentCode: null },
+  { code: 'HUK', label: 'Hukuk & Uyum',           depth: 1, parentCode: null },
+  { code: 'SUR', label: 'Sürdürülebilirlik',       depth: 1, parentCode: null },
+  { code: 'INS', label: 'İnsan & Organizasyon',   depth: 1, parentCode: null },
+  { code: 'YRT', label: 'Yaratıcı & Medya',       depth: 1, parentCode: null },
 
-  // ── Seviye 2: Alt-Sektörler ────────────────────────────────────────────────
-  { code: 'TEK.YZ',  label: 'Yazılım Geliştirme',      depth: 2, parentCode: 'TEK' },
-  { code: 'TEK.VB',  label: 'Veri & Yapay Zeka',       depth: 2, parentCode: 'TEK' },
-  { code: 'TEK.GVN', label: 'Siber Güvenlik',           depth: 2, parentCode: 'TEK' },
-  { code: 'FIN.FTK', label: 'Fintek',                   depth: 2, parentCode: 'FIN' },
-  { code: 'FIN.YT',  label: 'Yatırım & Portföy',        depth: 2, parentCode: 'FIN' },
-  { code: 'SAG.TIP', label: 'Tıp Teknolojisi',          depth: 2, parentCode: 'SAG' },
-  { code: 'EGT.EDT', label: 'EdTech',                   depth: 2, parentCode: 'EGT' },
-  { code: 'GRS.SCV', label: 'SaaS & Startup',           depth: 2, parentCode: 'GRS' },
-  { code: 'MUH.ELK', label: 'Elektrik-Elektronik',      depth: 2, parentCode: 'MUH' },
+  // ── Seviye 2: Teknoloji ────────────────────────────────────────────────────
+  { code: 'TEK.YZ',  label: 'Yazılım Geliştirme',   depth: 2, parentCode: 'TEK' },
+  { code: 'TEK.VB',  label: 'Veri & Yapay Zeka',    depth: 2, parentCode: 'TEK' },
+  { code: 'TEK.GVN', label: 'Siber Güvenlik',        depth: 2, parentCode: 'TEK' },
+  { code: 'TEK.URN', label: 'Ürün & UX',             depth: 2, parentCode: 'TEK' },
+
+  // ── Seviye 2: Finans ──────────────────────────────────────────────────────
+  { code: 'FIN.GRS', label: 'Girişimcilik',          depth: 2, parentCode: 'FIN' },
+  { code: 'FIN.FTK', label: 'Fintek',                depth: 2, parentCode: 'FIN' },
+  { code: 'FIN.ETK', label: 'Sosyal Girişimcilik',   depth: 2, parentCode: 'FIN' },
+  { code: 'FIN.MRK', label: 'Pazarlama & Satış',     depth: 2, parentCode: 'FIN' },
+
+  // ── Seviye 2: Sivil Toplum ────────────────────────────────────────────────
+  { code: 'STK.YNT', label: 'STK Yönetimi',         depth: 2, parentCode: 'STK' },
+  { code: 'STK.PRJ', label: 'Proje & Hibe',          depth: 2, parentCode: 'STK' },
+  { code: 'STK.SVN', label: 'Savunuculuk',           depth: 2, parentCode: 'STK' },
+  { code: 'STK.KMY', label: 'Topluluk Yönetimi',    depth: 2, parentCode: 'STK' },
+
+  // ── Seviye 2: Eğitim ──────────────────────────────────────────────────────
+  { code: 'EGT.KRY', label: 'Kariyer Koçluğu',      depth: 2, parentCode: 'EGT' },
+  { code: 'EGT.EDT', label: 'EdTech',                depth: 2, parentCode: 'EGT' },
+  { code: 'EGT.AKD', label: 'Akademik Araştırma',   depth: 2, parentCode: 'EGT' },
+
+  // ── Seviye 2: Sağlık ──────────────────────────────────────────────────────
+  { code: 'SAG.HLK', label: 'Halk Sağlığı',         depth: 2, parentCode: 'SAG' },
+  { code: 'SAG.PSK', label: 'Psikoloji & Refah',    depth: 2, parentCode: 'SAG' },
+  { code: 'SAG.TIP', label: 'Sağlık Teknolojisi',   depth: 2, parentCode: 'SAG' },
+
+  // ── Seviye 2: Sürdürülebilirlik ───────────────────────────────────────────
+  { code: 'SUR.IKL', label: 'İklim & Çevre',        depth: 2, parentCode: 'SUR' },
+  { code: 'SUR.DNG', label: 'Döngüsel Ekonomi',     depth: 2, parentCode: 'SUR' },
+  { code: 'SUR.ENJ', label: 'Yenilenebilir Enerji', depth: 2, parentCode: 'SUR' },
+
+  // ── Seviye 2: İnsan & Organizasyon ───────────────────────────────────────
+  { code: 'INS.IK',  label: 'İnsan Kaynakları',     depth: 2, parentCode: 'INS' },
+  { code: 'INS.LDR', label: 'Liderlik Gelişimi',    depth: 2, parentCode: 'INS' },
+  { code: 'INS.CDI', label: 'Çeşitlilik & Kapsayıcılık', depth: 2, parentCode: 'INS' },
 
   // ── Seviye 3: Yapraklar — Yazılım ─────────────────────────────────────────
-  { code: 'TEK.YZ.BE',  label: 'Backend Geliştirme',   depth: 3, parentCode: 'TEK.YZ' },
-  { code: 'TEK.YZ.FE',  label: 'Frontend Geliştirme',  depth: 3, parentCode: 'TEK.YZ' },
-  { code: 'TEK.YZ.MOB', label: 'Mobil Geliştirme',     depth: 3, parentCode: 'TEK.YZ' },
-  { code: 'TEK.YZ.DOP', label: 'DevOps & Bulut',       depth: 3, parentCode: 'TEK.YZ' },
+  { code: 'TEK.YZ.BE',  label: 'Backend',           depth: 3, parentCode: 'TEK.YZ' },
+  { code: 'TEK.YZ.FE',  label: 'Frontend',          depth: 3, parentCode: 'TEK.YZ' },
+  { code: 'TEK.YZ.MOB', label: 'Mobil',             depth: 3, parentCode: 'TEK.YZ' },
+  { code: 'TEK.YZ.DOP', label: 'DevOps & Bulut',   depth: 3, parentCode: 'TEK.YZ' },
 
   // ── Seviye 3: Yapraklar — Veri & YZ ──────────────────────────────────────
-  { code: 'TEK.VB.ML',  label: 'Makine Öğrenmesi',     depth: 3, parentCode: 'TEK.VB' },
-  { code: 'TEK.VB.DA',  label: 'Veri Analizi',         depth: 3, parentCode: 'TEK.VB' },
-  { code: 'TEK.VB.VGR', label: 'Veri Mühendisliği',    depth: 3, parentCode: 'TEK.VB' },
+  { code: 'TEK.VB.ML',  label: 'Makine Öğrenmesi', depth: 3, parentCode: 'TEK.VB' },
+  { code: 'TEK.VB.DA',  label: 'Veri Analizi',     depth: 3, parentCode: 'TEK.VB' },
+  { code: 'TEK.VB.GYZ', label: 'Generatif YZ',     depth: 3, parentCode: 'TEK.VB' },
 
-  // ── Seviye 3: Yapraklar — Siber Güvenlik ─────────────────────────────────
-  { code: 'TEK.GVN.AG',  label: 'Ağ Güvenliği',        depth: 3, parentCode: 'TEK.GVN' },
-  { code: 'TEK.GVN.SOC', label: 'SOC & Tehdit Analizi', depth: 3, parentCode: 'TEK.GVN' },
+  // ── Seviye 3: Yapraklar — STK ────────────────────────────────────────────
+  { code: 'STK.PRJ.HB', label: 'Hibe Yazımı',      depth: 3, parentCode: 'STK.PRJ' },
+  { code: 'STK.PRJ.IT', label: 'Etki Ölçümü',      depth: 3, parentCode: 'STK.PRJ' },
+  { code: 'STK.KMY.GN', label: 'Gönüllü Yönetimi', depth: 3, parentCode: 'STK.KMY' },
 ];
 
 async function seedIndustryNodes(): Promise<void> {
