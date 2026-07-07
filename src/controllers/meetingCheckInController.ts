@@ -61,14 +61,7 @@ export async function submitCheckIn(req: RequestWithTenant, res: Response) {
 
   const role = isMentor ? 'MENTOR' : 'MENTI';
 
-  const db = prisma as unknown as {
-    meetingCheckIn: {
-      upsert: (args: unknown) => Promise<unknown>;
-      findMany: (args: unknown) => Promise<unknown[]>;
-    };
-  };
-
-  const checkIn = await db.meetingCheckIn.upsert({
+  const checkIn = await prisma.meetingCheckIn.upsert({
     where: { meetingId_userId: { meetingId, userId } },
     create: {
       meetingId,
@@ -106,12 +99,11 @@ export async function submitCheckIn(req: RequestWithTenant, res: Response) {
 export async function getCheckIns(req: RequestWithTenant, res: Response) {
   const meetingId = req.params['meetingId'] as string;
 
-  const db = prisma as unknown as { meetingCheckIn: { findMany: (a: unknown) => Promise<unknown[]> } };
-  const checkIns = await db.meetingCheckIn.findMany({
+  const checkIns = await prisma.meetingCheckIn.findMany({
     where: { meetingId, tenantId: req.tenant.tenantId },
   });
 
-  return res.json({ items: checkIns, total: (checkIns as unknown[]).length });
+  return res.json({ items: checkIns, total: checkIns.length });
 }
 
 // ─── Verimsizlik tespiti: son N check-in'e bakarak çift risk skoru ─────────────
@@ -140,8 +132,7 @@ export async function getPairEfficiencySignal(req: RequestWithTenant, res: Respo
   }
 
   const meetingIds = recentMeetings.map((m) => m.id);
-  const db2 = prisma as unknown as { meetingCheckIn: { findMany: (a: unknown) => Promise<Array<{overallRating: number; continueIntent: string; role: string}>> } };
-  const checkIns = await db2.meetingCheckIn.findMany({
+  const checkIns = await prisma.meetingCheckIn.findMany({
     where: { meetingId: { in: meetingIds } },
   });
 
