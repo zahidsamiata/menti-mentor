@@ -155,6 +155,32 @@ function buildMockPersonas(adminDim: string) {
   });
 }
 
+// ─── GET /api/self-serve/check-slug?slug=xxx ─────────────────────────────────
+// Herkese açık — kimlik doğrulama gerektirmez.
+// Onboarding wizard'da anlık slug müsaitlik kontrolü için kullanılır.
+
+const SlugQuerySchema = z.object({
+  slug: z
+    .string()
+    .min(2)
+    .max(50)
+    .regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
+});
+
+export async function checkSlugAvailability(req: Request, res: Response) {
+  const parsed = SlugQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ available: false, error: 'GECERSIZ_SLUG', message: parsed.error.flatten().fieldErrors['slug']?.[0] ?? 'Geçersiz slug.' });
+  }
+
+  const exists = await prisma.tenant.findUnique({
+    where:  { slug: parsed.data.slug },
+    select: { id: true },
+  });
+
+  return res.json({ available: !exists, slug: parsed.data.slug });
+}
+
 // ─── POST /api/tenants/self-serve/register ────────────────────────────────────
 
 const SelfServeRegisterSchema = z.object({
@@ -168,6 +194,9 @@ const SelfServeRegisterSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
   programTemplate: z.enum(['MEZUN', 'KULUP', 'GONULLU', 'OZEL']).default('OZEL'),
+  // KVKK Md.5 — açık rıza zorunlu. Frontend checkbox ile kontrol edilir;
+  // backend de enforce eder (API doğrudan çağrılırsa da consent şart).
+  kvkkConsent:     z.literal(true, { message: 'KVKK onayı zorunludur.' }),
 });
 
 export async function selfServeRegister(req: Request, res: Response) {
@@ -202,11 +231,13 @@ export async function selfServeRegister(req: Request, res: Response) {
   const { tenant, user } = await prisma.$transaction(async (tx) => {
     const tenant = await tx.tenant.create({
       data: {
-        name:            tenantName,
+        name:             tenantName,
         slug,
-        plan:            'FREE',
-        onboardingStep:  'TEMPLATE',
+        plan:             'FREE',
+        onboardingStep:   'TEMPLATE',
         programTemplate,
+        unsubscribeToken: crypto.randomUUID(), // Faz 3: e-posta unsubscribe linki
+        kvkkConsentAt:    new Date(),           // KVKK Md.5: onay anını kaydet
       },
     });
 
@@ -529,4 +560,38 @@ export async function joinViaInvitation(req: Request, res: Response) {
     programTemplate: tenant.programTemplate,
     plan:            tenant.plan,
   });
+}
+
+// ─── GET /api/tenants/unsubscribe?token=<uuid> ────────────────────────────────
+
+/**
+ * Faz 3 — E-posta aboneliğinden çıkma.
+ * Auth gerektirmez; token yeterlidir (e-postaya gönderilen link).
+ * KVKK: pazarlama/kurtarma e-postalarında unsubscribe linki ZORUNLU.
+ */
+export async function unsubscribeTenant(req: Request, res: Response) {
+  const token = req.query['token'] as string | undefined;
+  if (!token || typeof token !== 'string' || token.length < 10) {
+    return res.status(400).json({ error: 'GECERSIZ_TOKEN', message: 'Geçersiz token.' });
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where:  { unsubscribeToken: token },
+    select: { id: true, unsubscribedAt: true },
+  });
+
+  if (!tenant) {
+    return res.status(404).json({ error: 'TOKEN_BULUNAMADI', message: 'Token bulunamadı veya zaten geçersiz.' });
+  }
+
+  if (tenant.unsubscribedAt) {
+    return res.json({ message: 'Bu kurum zaten e-posta listesinden çıkmıştı.' });
+  }
+
+  await prisma.tenant.update({
+    where: { id: tenant.id },
+    data:  { unsubscribedAt: new Date() },
+  });
+
+  return res.json({ message: 'E-posta aboneliğiniz iptal edildi. Artık kurtarma e-postası almayacaksınız.' });
 }

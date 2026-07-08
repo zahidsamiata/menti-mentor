@@ -22,6 +22,9 @@ const RegisterSchema = z.object({
   fullName: z.string().min(2, 'Ad soyad zorunlu').max(120),
   role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol MENTOR veya MENTI olmalı' }),
   tenantSlug: z.string().min(1, 'Kuruluş kodu zorunlu'),
+  // KVKK Md.5 — bireysel kullanıcı açık rızası; frontend checkbox zorunlu,
+  // backend de enforce eder (API doğrudan çağrılırsa da consent şart).
+  kvkkConsent: z.literal(true, { message: 'KVKK onayı zorunludur.' }),
 });
 
 const LoginSchema = z.object({
@@ -108,13 +111,14 @@ export async function register(req: Request, res: Response) {
 
   const user = await prisma.user.create({
     data: {
-      tenantId: tenant.id,
+      tenantId:     tenant.id,
       email,
-      password: hashedPassword,
+      password:     hashedPassword,
       authProvider: 'LOCAL',
       fullName,
       role,
       approvalStatus: 'PENDING',
+      kvkkConsentAt:  new Date(), // KVKK Md.5: onay anını kaydet
     },
     select: {
       id: true,
@@ -175,6 +179,8 @@ export async function login(req: Request, res: Response) {
       authProvider: true,
       approvalStatus: true,
       isActive: true,
+      discType: true,
+      needsOrientation: true,
     },
   });
 
@@ -241,6 +247,8 @@ export async function login(req: Request, res: Response) {
       fullName: user.fullName,
       email: user.email,
       approvalStatus: user.approvalStatus,
+      discType: user.discType,
+      needsOrientation: user.needsOrientation,
     },
     tenant: tenant
       ? {

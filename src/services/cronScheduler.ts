@@ -14,6 +14,7 @@ import cron from 'node-cron';
 import { prisma } from '../db.js';
 import { tuneScoringWeights } from './algorithmTuner.js';
 import { purgeExpiredData } from './gdprService.js';
+import { sendDraftTenantReminderEmail } from './emailService.js';
 import { logger } from './logger.js';
 
 /**
@@ -85,6 +86,114 @@ async function runWeeklyPurge(): Promise<void> {
   }
 }
 
+// ─── Görev: Taslak Tenant Kurtarma E-postası (Faz 3) ─────────────────────────
+
+const DRAFT_STEPS: string[] = ['TEMPLATE', 'LOGO', 'PREVIEW'];
+const DRAFT_REMINDER_HOURS = 72;
+const DRAFT_CLEANUP_HOURS  = 96; // 24h sonra temizle (reminder sonrası)
+
+/**
+ * Her 6 saatte bir çalışır.
+ * Hedef: onboardingStep in ['TEMPLATE','LOGO','PREVIEW'], createdAt < 72h önce,
+ * unsubscribedAt null, reminderEmailSentAt null olan tenant adminleri.
+ * KVKK: Step4 geçilmiş = e-posta + KVKK onayı alınmıştır.
+ * Unsubscribe linki e-posta şablonunda ZORUNLU (emailService'te mevcut).
+ */
+async function runDraftTenantReminder(): Promise<void> {
+  void logger.info('SYSTEM', 'Cron: Taslak tenant kurtarma e-postası kontrolü');
+  try {
+    const cutoff = new Date(Date.now() - DRAFT_REMINDER_HOURS * 60 * 60 * 1000);
+
+    const drafts = await prisma.tenant.findMany({
+      where: {
+        onboardingStep:      { in: DRAFT_STEPS },
+        createdAt:           { lt: cutoff },
+        reminderEmailSentAt: null,
+        unsubscribedAt:      null,
+        isActive:            true,
+        unsubscribeToken:    { not: null },
+      },
+      select: {
+        id: true, name: true, displayName: true, unsubscribeToken: true,
+      },
+    });
+
+    // Admin e-postalarını ayrı çek (Prisma select ile nested relation include karışık değil)
+    const draftsWithAdmins = await Promise.all(
+      drafts.map(async (t) => {
+        const admin = await prisma.user.findFirst({
+          where:  { tenantId: t.id, role: 'ADMIN', isActive: true },
+          select: { email: true, fullName: true },
+        });
+        return { ...t, admin };
+      }),
+    );
+
+    let sent = 0;
+    for (const tenant of draftsWithAdmins) {
+      const { admin } = tenant;
+      if (!admin || !tenant.unsubscribeToken) continue;
+
+      try {
+        await sendDraftTenantReminderEmail({
+          toEmail:          admin.email,
+          adminName:        admin.fullName,
+          tenantName:       tenant.displayName ?? tenant.name,
+          unsubscribeToken: tenant.unsubscribeToken,
+        });
+        await prisma.tenant.update({
+          where: { id: tenant.id },
+          data:  { reminderEmailSentAt: new Date() },
+        });
+        sent++;
+      } catch (err) {
+        void logger.error('EMAIL', `Taslak kurtarma e-postası başarısız: ${tenant.id}`, { error: String(err) });
+      }
+    }
+
+    void logger.info('SYSTEM', 'Cron: Taslak kurtarma e-postaları gönderildi', { sent });
+  } catch (err) {
+    void logger.error('SYSTEM', 'Cron: Taslak kurtarma e-postası hatası', { error: String(err) });
+  }
+}
+
+/**
+ * Her gün 04:00 UTC çalışır.
+ * 96 saati geçmiş ve hâlâ taslak olan tenant'ları siler (GDPR/KVKK veri minimizasyonu).
+ * Cascade: users + memberships + refreshTokens otomatik silinir.
+ */
+async function runDraftTenantCleanup(): Promise<void> {
+  void logger.info('SYSTEM', 'Cron: Taslak tenant temizliği başladı');
+  try {
+    const cutoff = new Date(Date.now() - DRAFT_CLEANUP_HOURS * 60 * 60 * 1000);
+
+    const stale = await prisma.tenant.findMany({
+      where: {
+        onboardingStep: { in: DRAFT_STEPS },
+        createdAt:      { lt: cutoff },
+        isActive:       true,
+      },
+      select: { id: true, name: true },
+    });
+
+    let deleted = 0;
+    for (const t of stale) {
+      try {
+        // Kullanıcıları sil (cascade yeterli değilse manuel)
+        await prisma.user.deleteMany({ where: { tenantId: t.id } });
+        await prisma.tenant.delete({ where: { id: t.id } });
+        deleted++;
+      } catch (err) {
+        void logger.error('SYSTEM', `Taslak tenant silinemedi: ${t.id}`, { error: String(err) });
+      }
+    }
+
+    void logger.info('SYSTEM', 'Cron: Taslak tenant temizliği tamamlandı', { deleted });
+  } catch (err) {
+    void logger.error('SYSTEM', 'Cron: Taslak tenant temizliği hatası', { error: String(err) });
+  }
+}
+
 // ─── Scheduler başlatma ───────────────────────────────────────────────────────
 
 export function startCronScheduler(): void {
@@ -103,9 +212,20 @@ export function startCronScheduler(): void {
     void runWeeklyPurge();
   }, { timezone: 'UTC' });
 
+  // Her 6 saatte bir — Taslak tenant kurtarma e-postası (Faz 3)
+  cron.schedule('0 */6 * * *', () => {
+    void runDraftTenantReminder();
+  }, { timezone: 'UTC' });
+
+  // Her gün 04:00 UTC — Taslak tenant temizliği (Faz 3)
+  cron.schedule('0 4 * * *', () => {
+    void runDraftTenantCleanup();
+  }, { timezone: 'UTC' });
+
   console.log('[CRON] Haftalık görevler zamanlandı: Pazar 02:00 (tuning) + 03:00 (purge) UTC');
+  console.log('[CRON] Faz 3 cron\'ları aktif: Her 6h (taslak reminder) + Her gün 04:00 (taslak temizlik) UTC');
 }
 
 // ─── Manuel tetikleme (admin endpoint'inden çağrılır) ────────────────────────
 
-export { runWeeklyTuning, runWeeklyPurge };
+export { runWeeklyTuning, runWeeklyPurge, runDraftTenantReminder, runDraftTenantCleanup };

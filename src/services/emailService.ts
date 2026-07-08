@@ -148,6 +148,39 @@ export async function sendAlgorithmAdjustmentProposal(args: {
   );
 }
 
+/**
+ * Faz 3 — Taslak kurtarma e-postası.
+ * Yalnızca onboardingStep in ['TEMPLATE','LOGO','PREVIEW'] olan tenant adminlerine gönderilir.
+ * Step4 geçilmiş = e-posta + KVKK onayı alınmıştır.
+ * KVKK zorunluluğu: her e-postada unsubscribe linki bulunmalı.
+ */
+export async function sendDraftTenantReminderEmail(args: {
+  toEmail:          string;
+  adminName:        string;
+  tenantName:       string;
+  unsubscribeToken: string;
+}): Promise<void> {
+  const frontendUrl    = process.env['FRONTEND_URL'] ?? 'http://localhost:3001';
+  // BACKEND_URL kullan: /api/tenants/unsubscribe bir backend route'u.
+  // Tek-domain deploy'da FRONTEND_URL ile aynı; ayrı-domain deploy'da farklı olabilir.
+  const backendUrl     = process.env['BACKEND_URL'] ?? process.env['FRONTEND_URL'] ?? 'http://localhost:3000';
+  const resumeUrl      = `${frontendUrl}/onboarding/stk`;
+  const unsubscribeUrl = `${backendUrl}/api/tenants/unsubscribe?token=${args.unsubscribeToken}`;
+
+  await send(
+    args.toEmail,
+    `${args.tenantName} — Programınızı Tamamlamayı Unutmayın`,
+    `<p>Merhaba ${args.adminName},</p>
+     <p><strong>${args.tenantName}</strong> için kurulum sürecinizi başlattınız ancak henüz tamamlamadınız.</p>
+     <p>Birkaç adım kaldı — programınızı aktive etmek için:</p>
+     <p><a href="${resumeUrl}" style="background:#6366f1;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block">Kuruluma Devam Et →</a></p>
+     <p style="margin-top:32px;font-size:12px;color:#6b7280">
+       Bu e-postayı almak istemiyorsanız
+       <a href="${unsubscribeUrl}" style="color:#6b7280">buraya tıklayarak</a> abonelikten çıkabilirsiniz.
+     </p>`,
+  );
+}
+
 export async function sendFeedbackReminderEmail(args: {
   toEmail: string;
   recipientName: string;

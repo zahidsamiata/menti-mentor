@@ -30,6 +30,7 @@ describe('Auth: Register', () => {
         fullName: 'Yeni Kullanıcı',
         role: 'MENTI',
         tenantSlug: tenant.slug,
+        kvkkConsent: true,
       })
       .expect(201);
 
@@ -57,7 +58,7 @@ describe('Auth: Register', () => {
     const user = await createUser({ tenantId: tenant.id, role: 'MENTI' });
     await http
       .post('/api/auth/register')
-      .send({ email: user.email, password: 'Test1234!', fullName: 'Tekrar', role: 'MENTI', tenantSlug: tenant.slug })
+      .send({ email: user.email, password: 'Test1234!', fullName: 'Tekrar', role: 'MENTI', tenantSlug: tenant.slug, kvkkConsent: true })
       .expect(409);
   });
 

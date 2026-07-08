@@ -47,6 +47,11 @@ export const config = {
   // Frontend base URL — davet linkleri ve şifre sıfırlama URL'leri için kullanılır
   frontendBaseUrl: process.env.FRONTEND_URL ?? 'http://localhost:3001',
 
+  // Backend base URL — backend API route'larına doğrudan link üretirken kullanılır.
+  // Tek-domain deploy'da FRONTEND_URL ile aynı olabilir; ayrı-domain deploy'da farklı set edilir.
+  // Örnek: e-posta unsubscribe linki backend'in /api/tenants/unsubscribe endpoint'ine gitmeli.
+  backendBaseUrl: process.env.BACKEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000',
+
   // Davet token geçerlilik süresi — sosyal girişim kullanıcıları için uzun tutulur
   invitationTokenExpiry: process.env.INVITATION_TOKEN_EXPIRY ?? '90d',
 
