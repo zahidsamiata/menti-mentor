@@ -46,8 +46,17 @@ export async function rankMentisForMentor(args: {
 }): Promise<{ items: RankedMenti[]; fallbackLevel: 0 | 1 | 2 | 3 }> {
   // Mentor profili, tenant yapılandırması ve mentor'un kişisel filtresi paralel çek
   const [mentor, tenantConfig, mentorFilter] = await Promise.all([
+    // Mentor sorgusu: User.role (global) yerine TenantMembership.role (tenant-başına) kontrol eder.
+    // User.tenantId filtresi korunur — Prisma RLS extension override'ı için gerekli.
     prisma.user.findFirst({
-      where: { id: args.mentorId, tenantId: args.mentorTenantId, role: 'MENTOR', isActive: true },
+      where: {
+        id: args.mentorId,
+        tenantId: args.mentorTenantId,
+        isActive: true,
+        memberships: {
+          some: { tenantId: args.mentorTenantId, role: 'MENTOR', isActive: true },
+        },
+      },
       select: {
         id: true,
         tenantId: true,
@@ -99,21 +108,27 @@ export async function rankMentisForMentor(args: {
   });
   const sharedIds = new Set(sharedTenants.map((t) => t.id));
 
-  // Eligibil tenant ID listesi: kendi tenant + her ikisi de shared pool'da olan tenant'lar
+  // Eligibil tenant ID listesi: istek tenant'ı + her ikisi de shared pool'da olan tenant'lar.
+  // mentor.tenantId (home tenant) değil args.mentorTenantId (istek tenant'ı) temel alınır —
+  // cross-tenant membership'e sahip mentor senaryosunda ikisi farklı olabilir.
   const eligibleTenantIds = [
-    mentor.tenantId,
+    args.mentorTenantId,
     ...Array.from(sharedIds).filter(
-      (id) => id !== mentor.tenantId && sharedIds.has(mentor.tenantId),
+      (id) => id !== args.mentorTenantId && sharedIds.has(args.mentorTenantId),
     ),
   ];
 
-  // Tek sorguda yalnızca eligibil tenant'lardan aday çek (cross-tenant veri izolasyonu)
+  // Aday sorgusu: User.role (global) yerine TenantMembership.role (tenant-başına) kontrol eder.
+  // tenantId: { in: eligibleTenantIds } korunur — hem Prisma RLS override hem shared-pool genişlemesi için.
+  // Filtreleme SIKILAŞTIRILDI: User.tenantId eligibility + per-tenant MENTI membership aktifliği.
   const candidates = await prisma.user.findMany({
     where: {
       isActive: true,
       approvalStatus: 'APPROVED',
-      role: 'MENTI',
       tenantId: { in: eligibleTenantIds },
+      memberships: {
+        some: { tenantId: { in: eligibleTenantIds }, role: 'MENTI', isActive: true },
+      },
     },
     select: {
       id: true,
@@ -134,7 +149,7 @@ export async function rankMentisForMentor(args: {
     mentorTimeCommitment:   mentor.timeCommitment as string | null | undefined,
     mentorInteractionStyle: mentor.interactionStyle as string | null | undefined,
     mentorExpectations:     mentor.expectationCategories as string[],
-    mentorTenantId:         mentor.tenantId,
+    mentorTenantId:         args.mentorTenantId,
     excludeDiscTypes:       effectiveExcludeDiscTypes,
     blockedMentiIds,        // idari blok listesi — her fallback kademe için uygulanır
   };
