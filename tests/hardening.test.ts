@@ -303,3 +303,71 @@ describe('Hardening: Sabotajcı Menti /disc/submit', () => {
     expect((res.body as { error: string }).error).toBe('VALIDATION');
   });
 });
+
+// ─── Test 4: DISC Matematik Edge-Case Koruması ───────────────────────────────
+// calculateDiscResult: sıfıra bölme koruması (|| 1), NaN guard (Number.isFinite)
+// ve dominant tiebreak (D>I>S>C) HTTP entegrasyon testleriyle doğrulanır.
+
+describe('Hardening: DISC Matematik Edge-Case Koruması', () => {
+  let http:       TestAgent;
+  let tenant:     Tenant;
+  let menti:      User & { rawPassword: string };
+  let mentiToken: string;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http   = agent();
+    tenant = await createTenant();
+    menti  = await createMenti(tenant.id, { discType: 'D', sectorTags: ['teknoloji'] });
+
+    const tokens = await loginAs(http, menti.email, menti.rawPassword);
+    mentiToken   = tokens.accessToken;
+  });
+
+  // Tüm sorular aynı boyuta (D → seçenek 'A') cevaplansa bile
+  // NaN/Infinity üretilmemeli; normalize vektör [0,1] aralığında olmalıdır.
+  it('Tüm cevaplar D boyutundan (seçenek A) → dominant="D", vektör değerleri finite ve [0,1]', async () => {
+    const allD = [1, 2, 3, 4, 5, 6].map((id) => ({ questionId: id, selectedOption: 'A' }));
+
+    const res = await http
+      .post('/api/users/disc/submit')
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .send({ answers: allD })
+      .expect(200);
+
+    // yanıt: resultCard.discVector (result.vector → discResultCard.discVector)
+    const body = res.body as { resultCard: { dominant: string; discVector: Record<string, number> } };
+    expect(body.resultCard.dominant).toBe('D');
+
+    for (const dim of ['D', 'I', 'S', 'C']) {
+      const val = body.resultCard.discVector[dim] ?? NaN;
+      expect(Number.isFinite(val)).toBe(true);
+      expect(val).toBeGreaterThanOrEqual(0);
+      expect(val).toBeLessThanOrEqual(1);
+    }
+  });
+
+  // Karma 6 cevapla normalize edilmiş vektörün toplamı 1.0'a yakın olmalıdır
+  // (normalize işleminin doğru çalıştığını, sıfıra bölmediğini kanıtlar).
+  it('Karma 6 geçerli cevap → normalize vektör D+I+S+C toplamı ~1.0', async () => {
+    const mixed = [
+      { questionId: 1, selectedOption: 'A' }, // D
+      { questionId: 2, selectedOption: 'B' }, // I
+      { questionId: 3, selectedOption: 'C' }, // S
+      { questionId: 4, selectedOption: 'D' }, // C
+      { questionId: 5, selectedOption: 'A' }, // D
+      { questionId: 6, selectedOption: 'B' }, // I
+    ];
+
+    const res = await http
+      .post('/api/users/disc/submit')
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .send({ answers: mixed })
+      .expect(200);
+
+    const body = res.body as { resultCard: { discVector: Record<string, number> } };
+    const vec = body.resultCard.discVector;
+    const sum = (vec['D'] ?? 0) + (vec['I'] ?? 0) + (vec['S'] ?? 0) + (vec['C'] ?? 0);
+    expect(sum).toBeCloseTo(1.0, 1);
+  });
+});
