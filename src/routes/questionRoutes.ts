@@ -11,7 +11,7 @@
 
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
-import { requireRole } from '../middleware/authorize.js';
+import { requireAuth, requireRole } from '../middleware/authorize.js';
 import {
   listQuestions,
   createQuestion,
@@ -29,8 +29,8 @@ router.use(requireTenant as unknown as RequestHandler);
 
 // ── Sabit path'ler (parametrik route'lardan önce) ─────────────────────────────
 
-/** GET /api/questions — soru listesi + pool meta verisi (herkes) */
-router.get('/', listQuestions as unknown as RequestHandler);
+/** GET /api/questions — soru listesi + pool meta verisi (kimlik doğrulaması zorunlu) */
+router.get('/', requireAuth(), listQuestions as unknown as RequestHandler);
 
 /** POST /api/questions — yeni soru ekle (yalnızca ADMIN) */
 router.post('/', requireRole('ADMIN'), createQuestion as unknown as RequestHandler);
@@ -41,10 +41,10 @@ router.post('/', requireRole('ADMIN'), createQuestion as unknown as RequestHandl
  * Uyarı: Bu route /:questionId/respond'dan ÖNCE tanımlı olmalı.
  * Aksi takdirde "respond" kelimesi questionId olarak parse edilir.
  */
-router.post('/respond', submitResponses as unknown as RequestHandler);
+router.post('/respond', requireAuth(), submitResponses as unknown as RequestHandler);
 
-/** GET /api/questions/my-responses — kullanıcının adaptif ilerleme durumu */
-router.get('/my-responses', getMyResponses as unknown as RequestHandler);
+/** GET /api/questions/my-responses — kullanıcının adaptif ilerleme durumu (kimlik doğrulaması zorunlu) */
+router.get('/my-responses', requireAuth(), getMyResponses as unknown as RequestHandler);
 
 // ── Soru Yönetimi (ADMIN — sabit path'lerden sonra, parametrik'ten önce) ─────
 
@@ -65,6 +65,6 @@ router.delete('/:questionId/hide', requireRole('ADMIN'), unhideGlobalQuestion as
 /**
  * POST /api/questions/:questionId/respond — tek soru yanıtı (frontend kullanır)
  */
-router.post('/:questionId/respond', respondToQuestion as unknown as RequestHandler);
+router.post('/:questionId/respond', requireAuth(), respondToQuestion as unknown as RequestHandler);
 
 export default router;

@@ -12,28 +12,14 @@ export const testPrisma = new PrismaClient({
 });
 
 /**
- * Tabloları FK bağımlılık sırasına göre temizler.
- * Transaction kullanılır; kısmi temizlik önlenir.
+ * Tüm test verilerini tek seferde siler.
+ * TRUNCATE ... CASCADE: FK bağımlılık sırası yerine PostgreSQL'e bırakılır;
+ * Neon serverless pooler'ında $transaction([...]) array'inin FK sıra sorununu önler.
  */
 export async function cleanDb(): Promise<void> {
-  await testPrisma.$transaction([
-    testPrisma.userResponse.deleteMany(),
-    testPrisma.feedbackLog.deleteMany(),
-    testPrisma.feedback.deleteMany(),
-    testPrisma.meeting.deleteMany(),
-    testPrisma.pendingTag.deleteMany(),
-    testPrisma.passwordResetToken.deleteMany(),
-    testPrisma.refreshToken.deleteMany(),
-    testPrisma.matchRequest.deleteMany(),
-    testPrisma.visibilityOptIn.deleteMany(),
-    testPrisma.matchCombinationScore.deleteMany(),
-    testPrisma.clubMembership.deleteMany(),
-    testPrisma.club.deleteMany(),
-    testPrisma.question.deleteMany(),
-    testPrisma.systemLog.deleteMany(),
-    testPrisma.user.deleteMany(),
-    testPrisma.tenant.deleteMany(),
-  ]);
+  await testPrisma.$executeRaw`
+    TRUNCATE TABLE "User", "Tenant", "SystemLog" CASCADE
+  `;
 }
 
 /** Test sonunda bağlantıyı kapat. */

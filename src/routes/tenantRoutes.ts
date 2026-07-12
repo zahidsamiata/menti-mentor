@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requirePlatformAdmin } from '../middleware/platformAuth.js';
 import {
   createTenant,
   listTenants,
@@ -8,7 +9,10 @@ import {
 
 const router = Router();
 
-// Global tenant yönetimi (X-Tenant-Id gerektirmez)
+// Tenant CRUD yalnızca platform yöneticisine açıktır.
+// Self-serve akış için ayrı endpoint: POST /api/tenants/self-serve/register
+router.use(requirePlatformAdmin);
+
 router.get('/', listTenants);
 router.post('/', createTenant);
 router.get('/:id', getTenant);
