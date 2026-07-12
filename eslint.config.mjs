@@ -1,20 +1,19 @@
-import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
 
-export default [
+export default tseslint.config(
+  { ignores: ['dist/**', 'node_modules/**', 'coverage/**'] },
+  ...tseslint.configs.recommended,
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
-  },
-  {
-    files: ['src/**/*.ts', 'tests/**/*.ts'],
-    ...js.configs.recommended,
-    languageOptions: {
-      ecmaVersion: 2022,
-      sourceType: 'module',
-    },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-      'no-console': 'off',
+      // Codebase has intentional `as unknown as RequestHandler` casts throughout Express routes
+      '@typescript-eslint/no-explicit-any': 'off',
+      // Warn (not error) for unused vars; underscore prefix = intentional
+      '@typescript-eslint/no-unused-vars': ['warn', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
       'no-undef': 'off',
     },
   },
-];
+);
