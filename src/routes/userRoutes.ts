@@ -28,8 +28,8 @@ router.get('/users/mentor-count', requireAuth(), countApprovedMentors as unknown
 // POST /users        → yalnızca ADMIN
 router.post('/users', requireRole('ADMIN'), createUser as unknown as RequestHandler);
 
-// GET  /users/:id    → tenant içindeki herkes
-router.get('/users/:id', getUser as unknown as RequestHandler);
+// GET  /users/:id    → kimlik doğrulaması zorunlu
+router.get('/users/:id', requireAuth(), getUser as unknown as RequestHandler);
 
 // PATCH /users/:id   → yalnızca ADMIN
 router.patch('/users/:id', requireRole('ADMIN'), updateUser as unknown as RequestHandler);
@@ -63,7 +63,7 @@ router.get('/requests/:id', requireAuth(), getRequest as unknown as RequestHandl
 router.post('/requests', requireAuth(), createMatchRequest as unknown as RequestHandler);
 
 // ─── Kullanıcının kulüpleri ───────────────────────────────────────────────────
-router.get('/users/:userId/clubs', getUserClubs as unknown as RequestHandler);
+router.get('/users/:userId/clubs', requireAuth(), getUserClubs as unknown as RequestHandler);
 
 // ─── Serbest profil metadata ──────────────────────────────────────────────────
 // PATCH /users/:id/self-profile → kendi kaydını güncelleyebilir (ADMIN veya sahibi)

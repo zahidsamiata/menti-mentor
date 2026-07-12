@@ -108,6 +108,35 @@ export async function countApprovedMentors(req: RequestWithTenant, res: Response
 export async function getUser(req: RequestWithTenant, res: Response) {
   const user = await prisma.user.findFirst({
     where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
+    select: {
+      id: true,
+      tenantId: true,
+      role: true,
+      email: true,
+      fullName: true,
+      isActive: true,
+      sectorTags: true,
+      discType: true,
+      discVector: true,
+      discResultCard: true,
+      skills: true,
+      bioSummary: true,
+      expertiseDetails: true,
+      targetAudience: true,
+      needsOrientation: true,
+      timeCommitment: true,
+      expectationCategories: true,
+      interactionStyle: true,
+      approvalStatus: true,
+      mentorVisibilityEnabled: true,
+      temperamentJson: true,
+      volunteerHistory: true,
+      pastProjects: true,
+      education: true,
+      selfProfile: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 
   if (!user) {

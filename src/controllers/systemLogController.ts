@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import type { Response } from 'express';
-import type { RequestWithTenant } from '../types.js';
+import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import type { LogLevel } from '@prisma/client';
 
@@ -18,7 +17,7 @@ const ListSystemLogsQuerySchema = z.object({
  * Admin için sistem log kayıtlarını listeler.
  * Query: level (INFO|WARN|ERROR), category, limit (max 100, varsayılan 50)
  */
-export async function listSystemLogs(req: RequestWithTenant, res: Response) {
+export async function listSystemLogs(req: Request, res: Response) {
   const parsed = ListSystemLogsQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
