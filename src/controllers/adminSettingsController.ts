@@ -336,3 +336,93 @@ export async function updateTenantStatus(req: Request, res: Response) {
     tenant:   updated,
   });
 }
+
+// ─── GET /api/super-admin/tenants/pending ─────────────────────────────────────
+
+export async function listPendingTenants(_req: Request, res: Response) {
+  const tenants = await prisma.tenant.findMany({
+    where: { verificationStatus: 'PENDING_REVIEW' },
+    select: {
+      id:                 true,
+      name:               true,
+      displayName:        true,
+      slug:               true,
+      verificationStatus: true,
+      verificationNote:   true,
+      createdAt:          true,
+      users: {
+        where: { role: 'ADMIN' },
+        select: { id: true, email: true, fullName: true },
+        take: 1,
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  return res.json({ items: tenants, total: tenants.length });
+}
+
+// ─── PATCH /api/super-admin/tenants/:id/verify ────────────────────────────────
+
+const VerifyTenantSchema = z.object({
+  action: z.enum(['approve', 'reject']),
+  note:   z.string().max(500).optional(),
+});
+
+export async function verifyTenant(req: Request, res: Response) {
+  const parsed = VerifyTenantSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const tenantId = req.params['id'] as string;
+
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { id: true, slug: true, verificationStatus: true },
+  });
+  if (!tenant) {
+    return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
+  }
+
+  if (tenant.verificationStatus !== 'PENDING_REVIEW') {
+    return res.status(409).json({
+      error:   'DURUM_UYGUN_DEGIL',
+      message: 'Yalnızca PENDING_REVIEW durumundaki kurumlar doğrulanabilir.',
+    });
+  }
+
+  const { action, note } = parsed.data;
+
+  if (action === 'approve') {
+    const updated = await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        verificationStatus: 'APPROVED',
+        verifiedAt: new Date(),
+        ...(note && { verificationNote: note }),
+      },
+      select: { id: true, name: true, slug: true, verificationStatus: true },
+    });
+
+    invalidateTenant(tenantId);
+    return res.json({ message: 'Kurum onaylandı.', tenant: updated });
+  }
+
+  // reject: slug'ı serbest bırak → yeni tenant aynı slug'ı alabilsin
+  const rejectedSlug = `__rej_${tenant.slug}_${Date.now()}`;
+  const updated = await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      verificationStatus: 'REJECTED',
+      isActive: false,
+      slug: rejectedSlug,
+      verifiedAt: new Date(),
+      ...(note && { verificationNote: note }),
+    },
+    select: { id: true, name: true, slug: true, verificationStatus: true },
+  });
+
+  invalidateTenant(tenantId);
+  return res.json({ message: 'Kurum reddedildi. Orijinal slug serbest bırakıldı.', tenant: updated });
+}

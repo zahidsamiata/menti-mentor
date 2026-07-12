@@ -6,7 +6,6 @@
  */
 
 import supertest from 'supertest';
-import type { SuperTestStatic } from 'supertest';
 import express from 'express';
 import cors from 'cors';
 import authRoutes          from '../../src/routes/authRoutes.js';
@@ -17,6 +16,8 @@ import userRoutes          from '../../src/routes/userRoutes.js';
 import onboardingRoutes    from '../../src/routes/onboardingRoutes.js';
 import adminRoutes         from '../../src/routes/adminRoutes.js';
 import questionRoutes      from '../../src/routes/questionRoutes.js';
+import platformRoutes      from '../../src/routes/platformRoutes.js';
+import superAdminRoutes    from '../../src/routes/superAdminRoutes.js';
 import { notFoundHandler, globalErrorHandler } from '../../src/middleware/errorHandler.js';
 import { generalRateLimiter } from '../../src/middleware/rateLimiter.js';
 import { suggestTag } from '../../src/controllers/tagController.js';
@@ -36,14 +37,16 @@ export function createTestApp(): Express {
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
   app.use('/api', generalRateLimiter);
-  app.use('/api/auth',    authRoutes);
-  app.use('/api/tenants', selfServeRoutes);
-  app.use('/api/tenants', adminSettingsRoutes);
-  app.use('/api/tenants', tenantRoutes);
-  app.use('/api',         onboardingRoutes);
-  app.use('/api',         userRoutes);
-  app.use('/api/admin',   adminRoutes);
-  app.use('/api/questions', questionRoutes);
+  app.use('/api/platform',     platformRoutes);
+  app.use('/api/super-admin',  superAdminRoutes);
+  app.use('/api/auth',         authRoutes);
+  app.use('/api/tenants',      selfServeRoutes);
+  app.use('/api/tenants',      adminSettingsRoutes);
+  app.use('/api/tenants',      tenantRoutes);
+  app.use('/api',              onboardingRoutes);
+  app.use('/api',              userRoutes);
+  app.use('/api/admin',        adminRoutes);
+  app.use('/api/questions',    questionRoutes);
   app.post('/api/tags/suggest', suggestTag as unknown as RequestHandler);
   app.use(notFoundHandler);
   app.use(globalErrorHandler);
@@ -51,23 +54,22 @@ export function createTestApp(): Express {
   return app;
 }
 
-/** supertest instance — her test dosyasında yeni app üzerinde çalışır. */
-export type TestAgent = ReturnType<SuperTestStatic>;
+/** supertest.agent — cookie jar'ı korur (HttpOnly refresh token akışı için gerekli) */
+export type TestAgent = ReturnType<typeof supertest.agent>;
 
 export function agent(): TestAgent {
-  return supertest(createTestApp());
+  return supertest.agent(createTestApp());
 }
 
 // ─── Auth yardımcıları ────────────────────────────────────────────────────────
 
 export interface LoginTokens {
   accessToken: string;
-  refreshToken: string;
 }
 
 /**
- * E-posta + şifre ile giriş yapar ve token çiftini döner.
- * Factory ile oluşturulan kullanıcılar için kullanılır.
+ * E-posta + şifre ile giriş yapar; accessToken döner.
+ * refreshToken artık HttpOnly cookie'de — agent cookie jar'ı otomatik yönetir.
  */
 export async function loginAs(
   http: TestAgent,
@@ -79,8 +81,8 @@ export async function loginAs(
     .send({ email, password })
     .expect(200);
 
-  const body = res.body as { accessToken: string; refreshToken: string };
-  return { accessToken: body.accessToken, refreshToken: body.refreshToken };
+  const body = res.body as { accessToken: string };
+  return { accessToken: body.accessToken };
 }
 
 /** Tenant-scope istek için standart header'ları döner. */

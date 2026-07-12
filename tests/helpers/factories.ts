@@ -18,6 +18,7 @@ const uid = () => `${Date.now()}-${++counter}`;
 export interface TenantSeed {
   name?: string;
   isSharedPoolActive?: boolean;
+  verificationStatus?: 'AUTO_APPROVED' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 }
 
 export async function createTenant(overrides: TenantSeed = {}): Promise<Tenant> {
@@ -29,6 +30,7 @@ export async function createTenant(overrides: TenantSeed = {}): Promise<Tenant> 
       displayName: overrides.name ?? `Test Tenant ${id}`,
       isSharedPoolActive: overrides.isSharedPoolActive ?? false,
       primaryColor: '#6366f1',
+      verificationStatus: overrides.verificationStatus ?? 'AUTO_APPROVED',
     },
   });
 }

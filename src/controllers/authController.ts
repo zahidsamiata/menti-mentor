@@ -5,7 +5,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { signToken } from '../middleware/jwtAuth.js';
 import type { RequestWithTenant } from '../types.js';
-import { sendAdminNewUserNotification, sendPasswordResetEmail } from '../services/emailService.js';
+import { sendAdminNewUserNotification, sendPasswordResetEmail, sendAlreadyRegisteredEmail } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { GoogleOAuthProvider, OAuthProviderError } from '../services/oauth/googleProvider.js';
 import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
@@ -32,14 +32,6 @@ const LoginSchema = z.object({
   password: z.string().min(1, 'Şifre zorunlu'),
 });
 
-const RefreshSchema = z.object({
-  refreshToken: z.string().min(1, 'Refresh token zorunlu'),
-});
-
-const LogoutSchema = z.object({
-  refreshToken: z.string().min(1, 'Refresh token zorunlu'),
-});
-
 const ForgotPasswordSchema = z.object({
   email: z.string().email('Geçerli bir e-posta adresi girin'),
 });
@@ -54,6 +46,35 @@ const ResetPasswordSchema = z.object({
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 const RESET_TOKEN_EXPIRY_MINUTES = 60;
 const BCRYPT_ROUNDS = 12;
+const REFRESH_COOKIE_NAME = 'mm_refresh';
+
+const isProd = process.env.NODE_ENV === 'production';
+
+function setRefreshCookie(res: Response, token: string): void {
+  res.cookie(REFRESH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'strict',
+    maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+  });
+}
+
+function clearRefreshCookie(res: Response): void {
+  res.clearCookie(REFRESH_COOKIE_NAME, { httpOnly: true, secure: isProd, sameSite: 'strict' });
+}
+
+function getRefreshTokenFromCookie(req: Request): string | undefined {
+  const cookieHeader = req.headers['cookie'];
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(';')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = part.slice(0, eqIdx).trim();
+    const val = part.slice(eqIdx + 1).trim();
+    if (key === REFRESH_COOKIE_NAME) return decodeURIComponent(val);
+  }
+  return undefined;
+}
 
 /**
  * Token güvenlik modeli:
@@ -96,15 +117,30 @@ export async function register(req: Request, res: Response) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
-    select: { id: true, name: true, displayName: true },
+    select: { id: true, name: true, displayName: true, verificationStatus: true },
   });
   if (!tenant) {
     return res.status(400).json({ error: 'TENANT_BULUNAMADI', message: 'Kuruluş bulunamadı.' });
   }
 
-  const existing = await prisma.user.findUnique({ where: { email } });
+  if (tenant.verificationStatus === 'PENDING_REVIEW') {
+    return res.status(403).json({
+      error: 'TENANT_ONAY_BEKLENIYOR',
+      message: 'Bu kurum henüz platform tarafından onaylanmamıştır.',
+    });
+  }
+
+  const existing = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, fullName: true },
+  });
   if (existing) {
-    return res.status(409).json({ error: 'EMAIL_MEVCUT', message: 'Bu e-posta adresi zaten kayıtlı.' });
+    // E-posta numaralandırmasını önle: kayıtlı ve kayıtsız e-posta için aynı yanıt
+    void sendAlreadyRegisteredEmail({ toEmail: email, userName: existing.fullName });
+    return res.status(201).json({
+      message: 'Kayıt başarılı. Admin onayı bekleniyor.',
+      user: null,
+    });
   }
 
   const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -236,9 +272,10 @@ export async function login(req: Request, res: Response) {
     },
   });
 
+  setRefreshCookie(res, refreshTokenValue);
+
   return res.json({
     accessToken,
-    refreshToken: refreshTokenValue,
     expiresIn: 3600,
     user: {
       id: user.id,
@@ -264,12 +301,13 @@ export async function login(req: Request, res: Response) {
 
 // ─── POST /api/auth/refresh ───────────────────────────────────────────────────
 export async function refresh(req: Request, res: Response) {
-  const parsed = RefreshSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  const refreshToken = getRefreshTokenFromCookie(req);
+  if (!refreshToken) {
+    return res.status(401).json({
+      error: 'REFRESH_TOKEN_EKSIK',
+      message: 'Oturum bilgisi bulunamadı. Lütfen tekrar giriş yapın.',
+    });
   }
-
-  const { refreshToken } = parsed.data;
 
   const stored = await prisma.refreshToken.findUnique({
     where: { token: refreshToken },
@@ -319,22 +357,23 @@ export async function refresh(req: Request, res: Response) {
     fullName: stored.user.fullName,
   });
 
+  setRefreshCookie(res, newRefreshTokenValue);
+
   return res.json({
     accessToken,
-    refreshToken: newRefreshTokenValue,
     expiresIn: 3600,
   });
 }
 
 // ─── POST /api/auth/logout ────────────────────────────────────────────────────
 export async function logout(req: Request, res: Response) {
-  const parsed = LogoutSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  const refreshToken = getRefreshTokenFromCookie(req);
+
+  if (refreshToken) {
+    await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
   }
 
-  // Silme işlemi başarısız olsa bile 204 dön (token zaten geçersiz sayılır)
-  await prisma.refreshToken.deleteMany({ where: { token: parsed.data.refreshToken } });
+  clearRefreshCookie(res);
   return res.status(204).send();
 }
 
@@ -508,9 +547,9 @@ export async function oauthCallback(req: Request, res: Response) {
     const profile = await provider.exchangeCodeForProfile(code);
     const result = await handleOAuthCallback(profile, statePayload);
 
+    setRefreshCookie(res, result.refreshToken);
     const params = new URLSearchParams({
       accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
       isNewUser: String(result.isNewUser),
     });
     return res.redirect(`${config.oauth.frontendCallbackUrl}?${params.toString()}`);

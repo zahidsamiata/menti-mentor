@@ -131,6 +131,13 @@ enum DiscDimension {
   GENERAL // Boyut-bağımsız genel profil sorusu
 }
 
+enum TenantVerificationStatus {
+  AUTO_APPROVED  // Kurumsal domain → otomatik onay
+  PENDING_REVIEW // .edu.tr veya generic domain → platform admin incelemesi
+  APPROVED       // Platform admin tarafından onaylandı
+  REJECTED       // Platform admin tarafından reddedildi
+}
+
 model Tenant {
   id                 String  @id @default(cuid())
   name               String
@@ -165,6 +172,12 @@ model Tenant {
   // Zorunlu: frontend checkbox + backend Zod z.literal(true) kontrolü.
   // NULL = eski kayıt (migration öncesi) veya API-doğrudan çağrı reddedilmiş.
   kvkkConsentAt       DateTime?          // Onay anı — KVKK Md.5 ispat yükü
+
+  // Kurum kayıt doğrulama — selfServeRegister e-posta domain'ine göre atanır
+  verificationStatus TenantVerificationStatus @default(AUTO_APPROVED)
+  verificationNote   String?  // Başvuru kanıtı (görev + ispat URL)
+  verifiedAt         DateTime?
+  verifiedBy         String?  // Platform admin user ID
 
   // Faz 3 — Taslak kurtarma e-postası (KVKK: unsubscribe zorunlu)
   // Token: selfServeRegister'da üretilir, e-postada unsubscribe linki olarak gider.

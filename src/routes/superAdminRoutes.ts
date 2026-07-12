@@ -3,20 +3,19 @@ import { requirePlatformAdmin } from '../middleware/platformAuth.js';
 import {
   getSuperAdminDashboard,
   updateTenantStatus,
+  listPendingTenants,
+  verifyTenant,
 } from '../controllers/adminSettingsController.js';
 
 const router = Router();
 
-// Tüm super-admin endpoint'leri platform admin token'ı gerektirir.
-// Token: POST /api/platform/auth → { accessToken } → isPlatformAdmin: true
 router.use(requirePlatformAdmin);
 
-// GET /api/super-admin/dashboard
-// Tüm platformun çatı görünümü: tenant sayısı, aktif kullanıcı, toplam mentörlük saati.
 router.get('/dashboard', getSuperAdminDashboard);
-
-// PATCH /api/super-admin/tenants/:id/status
-// Bir derneği askıya alma veya aktif etme.
 router.patch('/tenants/:id/status', updateTenantStatus);
+
+// Kurum kayıt doğrulama
+router.get('/tenants/pending', listPendingTenants);
+router.patch('/tenants/:id/verify', verifyTenant);
 
 export default router;

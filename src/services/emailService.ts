@@ -181,6 +181,19 @@ export async function sendDraftTenantReminderEmail(args: {
   );
 }
 
+export async function sendAlreadyRegisteredEmail(args: {
+  toEmail: string;
+  userName: string;
+}): Promise<void> {
+  return send(
+    args.toEmail,
+    'Hesabınızla İlgili Bilgilendirme',
+    `<p>Merhaba ${args.userName},</p>
+     <p>E-posta adresinizle yeni bir hesap oluşturulmaya çalışıldı. Zaten bir hesabınız bulunmaktadır — giriş yapmak için <a href="${config.frontendBaseUrl}/login">buraya tıklayın</a>.</p>
+     <p>Eğer bu işlemi siz yapmadıysanız herhangi bir şey yapmanıza gerek yok; hesabınız güvende.</p>`,
+  );
+}
+
 export async function sendFeedbackReminderEmail(args: {
   toEmail: string;
   recipientName: string;

@@ -10,6 +10,8 @@ import { config } from '../config.js';
 
 const BCRYPT_ROUNDS = 12;
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
+const REFRESH_COOKIE_NAME = 'mm_refresh';
+const isProd = process.env.NODE_ENV === 'production';
 
 // ─── Yardımcılar ──────────────────────────────────────────────────────────────
 
@@ -21,6 +23,35 @@ function refreshTokenExpiresAt(): Date {
   const d = new Date();
   d.setDate(d.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
   return d;
+}
+
+function setRefreshCookie(res: Response, token: string): void {
+  res.cookie(REFRESH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'strict',
+    maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+  });
+}
+
+const GENERIC_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com',
+  'hotmail.com', 'hotmail.co.uk',
+  'outlook.com',
+  'yahoo.com', 'yahoo.co.uk', 'ymail.com',
+  'yandex.com', 'yandex.ru',
+  'icloud.com', 'me.com', 'mac.com',
+  'proton.me', 'protonmail.com', 'protonmail.ch',
+  'live.com', 'msn.com', 'aol.com', 'mail.com',
+]);
+
+type DomainTier = 'INSTITUTION' | 'EDU' | 'GENERIC';
+
+function classifyEmailDomain(email: string): DomainTier {
+  const domain = email.split('@')[1]?.toLowerCase() ?? '';
+  if (GENERIC_EMAIL_DOMAINS.has(domain)) return 'GENERIC';
+  if (domain.endsWith('.edu.tr')) return 'EDU';
+  return 'INSTITUTION';
 }
 
 // JWT'yi doğrula ve ADMIN olduğunu kontrol et.
@@ -184,19 +215,21 @@ export async function checkSlugAvailability(req: Request, res: Response) {
 // ─── POST /api/tenants/self-serve/register ────────────────────────────────────
 
 const SelfServeRegisterSchema = z.object({
-  email:           z.string().email('Geçerli bir e-posta adresi girin'),
-  password:        z.string().min(8, 'Şifre en az 8 karakter olmalı'),
-  name:            z.string().min(2, 'Ad soyad zorunlu').max(120),
-  tenantName:      z.string().min(2, 'Kurum adı zorunlu').max(120),
-  slug:            z
+  email:            z.string().email('Geçerli bir e-posta adresi girin'),
+  password:         z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  name:             z.string().min(2, 'Ad soyad zorunlu').max(120),
+  tenantName:       z.string().min(2, 'Kurum adı zorunlu').max(120),
+  slug:             z
     .string()
     .min(2, 'Slug en az 2 karakter olmalı')
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
-  programTemplate: z.enum(['MEZUN', 'KULUP', 'GONULLU', 'OZEL']).default('OZEL'),
-  // KVKK Md.5 — açık rıza zorunlu. Frontend checkbox ile kontrol edilir;
-  // backend de enforce eder (API doğrudan çağrılırsa da consent şart).
-  kvkkConsent:     z.literal(true, { message: 'KVKK onayı zorunludur.' }),
+  programTemplate:  z.enum(['MEZUN', 'KULUP', 'GONULLU', 'OZEL']).default('OZEL'),
+  // KVKK Md.5 — açık rıza zorunlu.
+  kvkkConsent:      z.literal(true, { message: 'KVKK onayı zorunludur.' }),
+  // Doğrulama alanları — .edu.tr veya generic domain için zorunlu hale gelir (frontend kontrolü)
+  institutionRole:  z.string().min(1).max(200).optional(),
+  verificationNote: z.string().min(1).max(1000).optional(),
 });
 
 export async function selfServeRegister(req: Request, res: Response) {
@@ -205,14 +238,20 @@ export async function selfServeRegister(req: Request, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const { email, password, name, tenantName, slug, programTemplate } = parsed.data;
+  const { email, password, name, tenantName, slug, programTemplate, institutionRole, verificationNote } = parsed.data;
+
+  const domainTier = classifyEmailDomain(email);
+  const verificationStatus = domainTier === 'INSTITUTION' ? 'AUTO_APPROVED' : 'PENDING_REVIEW';
 
   const [slugExists, emailExists] = await Promise.all([
-    prisma.tenant.findUnique({ where: { slug }, select: { id: true } }),
+    prisma.tenant.findUnique({
+      where: { slug },
+      select: { id: true, verificationStatus: true },
+    }),
     prisma.user.findUnique({ where: { email }, select: { id: true } }),
   ]);
 
-  if (slugExists) {
+  if (slugExists && slugExists.verificationStatus !== 'REJECTED') {
     return res.status(409).json({
       error:   'SLUG_MEVCUT',
       message: 'Bu kurum adresi (slug) zaten kullanılıyor. Farklı bir tane deneyin.',
@@ -225,19 +264,25 @@ export async function selfServeRegister(req: Request, res: Response) {
     });
   }
 
+  const combinedNote = (institutionRole || verificationNote)
+    ? JSON.stringify({ institutionRole, proof: verificationNote })
+    : undefined;
+
   const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
   // Atomic transaction: tenant + admin kullanıcı + üyelik
   const { tenant, user } = await prisma.$transaction(async (tx) => {
     const tenant = await tx.tenant.create({
       data: {
-        name:             tenantName,
+        name:               tenantName,
         slug,
-        plan:             'FREE',
-        onboardingStep:   'TEMPLATE',
+        plan:               'FREE',
+        onboardingStep:     'TEMPLATE',
         programTemplate,
-        unsubscribeToken: crypto.randomUUID(), // Faz 3: e-posta unsubscribe linki
-        kvkkConsentAt:    new Date(),           // KVKK Md.5: onay anını kaydet
+        unsubscribeToken:   crypto.randomUUID(),
+        kvkkConsentAt:      new Date(),
+        verificationStatus,
+        verificationNote:   combinedNote,
       },
     });
 
@@ -271,7 +316,6 @@ export async function selfServeRegister(req: Request, res: Response) {
     return { tenant, user };
   });
 
-  // Access token + refresh token (login akışıyla tutarlı)
   const accessToken = signToken({
     sub:      user.id,
     tenantId: tenant.id,
@@ -288,15 +332,20 @@ export async function selfServeRegister(req: Request, res: Response) {
     },
   });
 
+  setRefreshCookie(res, rawRefresh);
+
   return res.status(201).json({
-    message: 'Kurumunuz başarıyla oluşturuldu.',
+    message: verificationStatus === 'AUTO_APPROVED'
+      ? 'Kurumunuz başarıyla oluşturuldu.'
+      : 'Başvurunuz alındı. Platform ekibimiz en kısa sürede inceleyecektir.',
     tenant: {
-      id:              tenant.id,
-      name:            tenant.name,
-      slug:            tenant.slug,
-      plan:            tenant.plan,
-      onboardingStep:  tenant.onboardingStep,
-      programTemplate: tenant.programTemplate,
+      id:                 tenant.id,
+      name:               tenant.name,
+      slug:               tenant.slug,
+      plan:               tenant.plan,
+      onboardingStep:     tenant.onboardingStep,
+      programTemplate:    tenant.programTemplate,
+      verificationStatus: tenant.verificationStatus,
     },
     user: {
       id:       user.id,
@@ -305,7 +354,7 @@ export async function selfServeRegister(req: Request, res: Response) {
       role:     user.role,
     },
     accessToken,
-    refreshToken: rawRefresh,
+    expiresIn: 3600,
   });
 }
 
@@ -489,13 +538,19 @@ export async function createInvitation(req: Request, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  // Tenant varlık kontrolü (JWT payload'ı stale olabilir)
   const tenant = await prisma.tenant.findUnique({
     where:  { id: tenantId },
-    select: { id: true, name: true, displayName: true, slug: true },
+    select: { id: true, name: true, displayName: true, slug: true, verificationStatus: true },
   });
   if (!tenant) {
     return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
+  }
+
+  if (tenant.verificationStatus === 'PENDING_REVIEW') {
+    return res.status(403).json({
+      error:   'TENANT_ONAY_BEKLENIYOR',
+      message: 'Başvurunuz inceleniyor. Onay alındıktan sonra davet gönderebilirsiniz.',
+    });
   }
 
   const { role } = parsed.data;

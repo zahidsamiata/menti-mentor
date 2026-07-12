@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { agent, loginAs, type LoginTokens, type TestAgent } from './helpers/request.js';
+import { agent, loginAs, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser } from './helpers/factories.js';
 import type { Tenant } from '@prisma/client';
@@ -54,12 +54,15 @@ describe('Auth: Register', () => {
       .expect(400);
   });
 
-  it('mevcut e-posta ile 409 döner', async () => {
+  it('mevcut e-posta ile de 201 döner — numaralandırma önleme (YÜKSEK-3)', async () => {
     const user = await createUser({ tenantId: tenant.id, role: 'MENTI' });
-    await http
+    const res = await http
       .post('/api/auth/register')
       .send({ email: user.email, password: 'Test1234!', fullName: 'Tekrar', role: 'MENTI', tenantSlug: tenant.slug, kvkkConsent: true })
-      .expect(409);
+      .expect(201);
+    // Kayıtlı ve kayıtsız e-posta için aynı status + aynı mesaj yapısı
+    expect(res.body.message).toBeDefined();
+    expect(res.body.user).toBeNull();
   });
 
   it('geçersiz tenant slug ile 400 döner', async () => {
@@ -80,7 +83,7 @@ describe('Auth: Login', () => {
     tenant = await createTenant();
   });
 
-  it('doğru kimlik bilgileriyle accessToken + refreshToken döner', async () => {
+  it('doğru kimlik bilgileriyle accessToken döner ve refreshToken cookie olarak set edilir', async () => {
     const user = await createUser({ tenantId: tenant.id });
     const res = await http
       .post('/api/auth/login')
@@ -89,9 +92,13 @@ describe('Auth: Login', () => {
 
     expect(res.body).toMatchObject({
       accessToken: expect.any(String),
-      refreshToken: expect.any(String),
       expiresIn: 3600,
     });
+    expect(res.body).not.toHaveProperty('refreshToken');
+    expect(res.headers['set-cookie']).toBeDefined();
+    const setCookie = (res.headers['set-cookie'] as string[]).join(';');
+    expect(setCookie).toContain('mm_refresh=');
+    expect(setCookie).toContain('HttpOnly');
     expect(res.body.user.id).toBe(user.id);
   });
 
@@ -126,37 +133,38 @@ describe('Auth: Login', () => {
 describe('Auth: Refresh Token', () => {
   let http: TestAgent;
   let tenant: Tenant;
-  let tokens: LoginTokens;
 
   beforeEach(async () => {
     await cleanDb();
     http = agent();
     tenant = await createTenant();
     const user = await createUser({ tenantId: tenant.id });
-    tokens = await loginAs(http, user.email, user.rawPassword);
+    // Login → cookie jar'a mm_refresh cookie set edilir
+    await loginAs(http, user.email, user.rawPassword);
   });
 
-  it('geçerli refreshToken ile yeni token çifti döner', async () => {
+  it('cookie ile yeni accessToken döner, refreshToken body\'de yok', async () => {
     const res = await http
       .post('/api/auth/refresh')
-      .send({ refreshToken: tokens.refreshToken })
       .expect(200);
 
     expect(res.body.accessToken).toBeDefined();
-    expect(res.body.refreshToken).toBeDefined();
-    // Token rotasyonu: eski token artık geçersiz
-    expect(res.body.refreshToken).not.toBe(tokens.refreshToken);
+    expect(res.body).not.toHaveProperty('refreshToken');
+    expect(res.headers['set-cookie']).toBeDefined();
   });
 
-  it('eski refreshToken ikinci kullanımda 401 döner (replay attack koruması)', async () => {
-    // İlk kullanım
-    await http.post('/api/auth/refresh').send({ refreshToken: tokens.refreshToken }).expect(200);
-    // Replay dene
-    await http.post('/api/auth/refresh').send({ refreshToken: tokens.refreshToken }).expect(401);
+  it('cookie olmadan 401 döner', async () => {
+    // Farklı agent — cookie yok
+    const freshAgent = agent();
+    await freshAgent.post('/api/auth/refresh').expect(401);
   });
 
-  it('geçersiz token ile 401 döner', async () => {
-    await http.post('/api/auth/refresh').send({ refreshToken: 'gecersiz-token' }).expect(401);
+  it('token rotasyonu: iki kez refresh → ikinci refresh de çalışır', async () => {
+    const res1 = await http.post('/api/auth/refresh').expect(200);
+    expect(res1.body.accessToken).toBeDefined();
+    // Cookie rotasyonu nedeniyle yeni cookie set edildi
+    const res2 = await http.post('/api/auth/refresh').expect(200);
+    expect(res2.body.accessToken).toBeDefined();
   });
 });
 
@@ -170,21 +178,27 @@ describe('Auth: Logout', () => {
     tenant = await createTenant();
   });
 
-  it('geçerli refreshToken ile 204 döner ve token DB\'den silinir', async () => {
+  it('cookie ile 204 döner ve token DB\'den silinir', async () => {
     const user = await createUser({ tenantId: tenant.id });
-    const tokens = await loginAs(http, user.email, user.rawPassword);
+    await loginAs(http, user.email, user.rawPassword);
 
-    await http.post('/api/auth/logout').send({ refreshToken: tokens.refreshToken }).expect(204);
-
-    // DB'den silindi mi?
-    const dbToken = await testPrisma.refreshToken.findUnique({
-      where: { token: tokens.refreshToken },
+    // DB'deki token'ı bul
+    const dbTokenBefore = await testPrisma.refreshToken.findFirst({
+      where: { userId: user.id },
     });
-    expect(dbToken).toBeNull();
+    expect(dbTokenBefore).not.toBeNull();
+
+    await http.post('/api/auth/logout').expect(204);
+
+    const dbTokenAfter = await testPrisma.refreshToken.findUnique({
+      where: { token: dbTokenBefore!.token },
+    });
+    expect(dbTokenAfter).toBeNull();
   });
 
-  it('var olmayan token ile de 204 döner (idempotent)', async () => {
-    await http.post('/api/auth/logout').send({ refreshToken: 'olmayan-token' }).expect(204);
+  it('cookie olmadan da 204 döner (idempotent)', async () => {
+    const freshAgent = agent();
+    await freshAgent.post('/api/auth/logout').expect(204);
   });
 });
 
@@ -246,7 +260,7 @@ describe('Auth: Onay Durumu Güvenlik Koruması', () => {
     expect(res.body.accessToken).toBeDefined();
     expect(typeof res.body.accessToken).toBe('string');
     expect(res.body.accessToken.length).toBeGreaterThan(0);
-    expect(res.body.refreshToken).toBeDefined();
+    expect(res.body).not.toHaveProperty('refreshToken');
     expect(res.body.user.approvalStatus).toBe('APPROVED');
   });
 });
