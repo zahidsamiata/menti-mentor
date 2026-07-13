@@ -24,12 +24,6 @@ const SECTOR_TAGS_SCHEMA = z
   .optional()
   .transform((tags) => (tags ? [...new Set(tags)] : undefined)); // deduplicate
 
-// selfProfile için derinlik/boyut koruması
-const SELF_PROFILE_SCHEMA = z
-  .record(z.string().max(100), z.unknown())
-  .refine((obj) => Object.keys(obj).length <= 50, 'selfProfile en fazla 50 anahtar içerebilir.')
-  .optional();
-
 const ListUsersQuerySchema = z.object({
   role: z.enum(['ADMIN', 'MENTOR', 'MENTI']).optional(),
   isActive: z

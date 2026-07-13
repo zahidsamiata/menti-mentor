@@ -12,7 +12,7 @@ import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
 import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthStateService.js';
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { config } from '../config.js';
-import type { OAuthProviderName } from '../services/oauth/oauthTypes.js';
+
 
 // ─── Validation şemaları ──────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
-import { createTenant, createMentor, createMenti, createUser } from './helpers/factories.js';
+import { createTenant, createMentor, createMenti } from './helpers/factories.js';
 import type { Tenant } from '@prisma/client';
 
 describe('Matching: Ranked Mentis', () => {

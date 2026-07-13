@@ -1,4 +1,3 @@
-import type { DiscType } from '@prisma/client';
 import type { DiscVector } from './scoring.js';
 
 // ─── Tip tanımları ────────────────────────────────────────────────────────────

@@ -44,7 +44,6 @@ export async function computeProfileCompleteness(
   let realFollowupCount = 0;
   try {
     realFollowupCount =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (await (prisma as any).answeredFollowup?.count({ where: { userId } })) || 0;
   } catch {
     realFollowupCount = profile.profileSource === 'HYBRID' ? 1 : 0;
