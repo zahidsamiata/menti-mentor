@@ -82,6 +82,15 @@ export async function createQuestion(req: RequestWithTenant, res: Response) {
   if (!parsed.success) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
+
+  // DISC soru havuzu kilidi — sadece platform seviyesinde seed script ekleyebilir
+  if (parsed.data.category === 'DISC_ASSESSMENT') {
+    return res.status(403).json({
+      error: 'DISC_KATEGORI_KILITLI',
+      message: 'DISC_ASSESSMENT soruları sistem tarafından yönetilir. STK_CUSTOM kategorisinde soru ekleyebilirsiniz.',
+    });
+  }
+
   const { tenantScoped, ...data } = parsed.data;
 
   const { prisma } = await import('../db.js');
@@ -174,7 +183,7 @@ export async function hideGlobalQuestion(req: RequestWithTenant, res: Response) 
 
   const question = await prisma.question.findUnique({
     where:  { id: questionId },
-    select: { id: true, tenantId: true },
+    select: { id: true, tenantId: true, category: true },
   });
   if (!question) return res.status(404).json({ error: 'NOT_FOUND' });
 
@@ -182,6 +191,14 @@ export async function hideGlobalQuestion(req: RequestWithTenant, res: Response) 
     return res.status(400).json({
       error: 'SADECE_GLOBAL_SORULAR',
       message: 'Bu endpoint yalnızca global soruları gizler. Tenant sorularını silebilirsiniz.',
+    });
+  }
+
+  // DISC soru havuzu kilidi — gizleme eşleştirme vektörünü bozar
+  if (question.category === 'DISC_ASSESSMENT') {
+    return res.status(403).json({
+      error: 'DISC_SORULARI_KILITLI',
+      message: 'DISC değerlendirme soruları gizlenemez. Bu sorular eşleştirme algoritması için zorunludur.',
     });
   }
 
