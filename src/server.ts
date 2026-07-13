@@ -26,6 +26,7 @@ import { generalRateLimiter } from './middleware/rateLimiter.js';
 import { startCronScheduler } from './services/cronScheduler.js';
 import sjtScoringRoutes from './routes/sjtScoringRoutes.js';
 import suspicionRoutes from './routes/suspicionRoutes.js';
+import agreementRoutes from './routes/agreementRoutes.js';
 import type { RequestHandler } from 'express';
 
 const app = express();
@@ -99,6 +100,7 @@ app.use('/api/questions', questionRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/scoring', sjtScoringRoutes);
+app.use('/api/agreements', agreementRoutes);
 // Kullanıcı etiket önerisi (authenticated, tenant-scoped)
 app.post('/api/tags/suggest', generalRateLimiter, suggestTag as unknown as RequestHandler);
 
