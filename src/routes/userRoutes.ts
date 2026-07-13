@@ -7,6 +7,7 @@ import { getRankedMentisForMentor, setVisibilityOptIn } from '../controllers/mat
 import { createMatchRequest, listRequests, getRequest } from '../controllers/requestController.js';
 import { getUserClubs } from '../controllers/clubController.js';
 import { anonymizeUserHandler, hardDeleteUserHandler, exportUserDataHandler } from '../controllers/gdprController.js';
+import { completedOrientation } from '../controllers/userController.js';
 import { requestVisibilityFromMentor, getPendingVisibilityRequests, respondToVisibilityRequest } from '../controllers/mentiRequestController.js';
 import { getMentorFilter, upsertMentorFilter } from '../controllers/mentorFilterController.js';
 import { getNextAdaptiveQuestion, submitAdaptiveAnswer, previewAdaptiveResult } from '../controllers/adaptiveTestController.js';
@@ -122,6 +123,14 @@ router.patch(
   '/mentors/:mentorId/visibility-optin/:optInId/respond',
   requireRole('ADMIN', 'MENTOR'),
   respondToVisibilityRequest as unknown as RequestHandler,
+);
+
+// ─── Oryantasyon kilidi — kullanıcı kendi kilidini kaldırır (rehber tamamlandı) ──
+// POST /users/me/orientation-completed → needsOrientation=false (MENTI)
+router.post(
+  '/users/me/orientation-completed',
+  requireRole('MENTI'),
+  completedOrientation as unknown as RequestHandler,
 );
 
 // ─── KVKK / GDPR hakları ─────────────────────────────────────────────────────
