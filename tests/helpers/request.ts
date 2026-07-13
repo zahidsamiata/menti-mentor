@@ -19,6 +19,7 @@ import questionRoutes      from '../../src/routes/questionRoutes.js';
 import platformRoutes      from '../../src/routes/platformRoutes.js';
 import superAdminRoutes    from '../../src/routes/superAdminRoutes.js';
 import agreementRoutes     from '../../src/routes/agreementRoutes.js';
+import meetingRoutes       from '../../src/routes/meetingRoutes.js';
 import { notFoundHandler, globalErrorHandler } from '../../src/middleware/errorHandler.js';
 import { generalRateLimiter } from '../../src/middleware/rateLimiter.js';
 import { suggestTag } from '../../src/controllers/tagController.js';
@@ -49,6 +50,7 @@ export function createTestApp(): Express {
   app.use('/api/admin',        adminRoutes);
   app.use('/api/questions',    questionRoutes);
   app.use('/api/agreements',   agreementRoutes);
+  app.use('/api/meetings',     meetingRoutes);
   app.post('/api/tags/suggest', suggestTag as unknown as RequestHandler);
   app.use(notFoundHandler);
   app.use(globalErrorHandler);

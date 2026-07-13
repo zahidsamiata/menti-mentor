@@ -15,9 +15,20 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant } from './helpers/factories.js';
+import { signToken } from '../src/middleware/jwtAuth.js';
 
-const PLATFORM_KEY   = process.env.PLATFORM_ADMIN_KEY   ?? 'platform-dev-key-change-in-production';
-const PLATFORM_EMAIL = process.env.PLATFORM_ADMIN_EMAIL ?? 'admin@platform.local';
+// Platform cookie'si path:'/api/platform' kısıtlıdır; super-admin isteklerine
+// agent otomatik göndermez. signToken() ile doğrudan token üretip set ediyoruz.
+function makePlatformCookie(): string {
+  const token = signToken({
+    sub: 'platform-admin',
+    tenantId: '__platform__',
+    role: 'ADMIN',
+    fullName: 'Platform Yöneticisi',
+    isPlatformAdmin: true,
+  });
+  return `platform_token=${encodeURIComponent(token)}`;
+}
 
 // ─── Yardımcı: selfServeRegister isteği ──────────────────────────────────────
 
@@ -135,17 +146,9 @@ describe('Tenant Verification: Platform Admin Onay/Red', () => {
 
     const tenantId = (reg.body as { tenant: { id: string } }).tenant.id;
 
-    // Platform auth
-    const authRes = await http
-      .post('/api/platform/auth')
-      .send({ email: PLATFORM_EMAIL, password: PLATFORM_KEY })
-      .expect(200);
-
-    const platformToken = (authRes.body as { accessToken: string }).accessToken;
-
     const verifyRes = await http
       .patch(`/api/super-admin/tenants/${tenantId}/verify`)
-      .set('Authorization', `Bearer ${platformToken}`)
+      .set('Cookie', makePlatformCookie())
       .send({ action: 'approve' })
       .expect(200);
 
@@ -162,16 +165,9 @@ describe('Tenant Verification: Platform Admin Onay/Red', () => {
 
     const tenantId = (reg.body as { tenant: { id: string } }).tenant.id;
 
-    const authRes = await http
-      .post('/api/platform/auth')
-      .send({ email: PLATFORM_EMAIL, password: PLATFORM_KEY })
-      .expect(200);
-
-    const platformToken = (authRes.body as { accessToken: string }).accessToken;
-
     await http
       .patch(`/api/super-admin/tenants/${tenantId}/verify`)
-      .set('Authorization', `Bearer ${platformToken}`)
+      .set('Cookie', makePlatformCookie())
       .send({ action: 'reject', note: 'Kanıt yetersiz' })
       .expect(200);
 
@@ -201,16 +197,9 @@ describe('Tenant Verification: Platform Admin Onay/Red', () => {
       .send(selfServeRegisterPayload('admin2@gmail.com'))
       .expect(201);
 
-    const authRes = await http
-      .post('/api/platform/auth')
-      .send({ email: PLATFORM_EMAIL, password: PLATFORM_KEY })
-      .expect(200);
-
-    const platformToken = (authRes.body as { accessToken: string }).accessToken;
-
     const listRes = await http
       .get('/api/super-admin/tenants/pending')
-      .set('Authorization', `Bearer ${platformToken}`)
+      .set('Cookie', makePlatformCookie())
       .expect(200);
 
     expect(listRes.body.total).toBeGreaterThanOrEqual(2);

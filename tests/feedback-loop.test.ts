@@ -117,13 +117,12 @@ describe('İş 1: computeMentorQualityMultiplier', () => {
       .set(tenantHeaders(tenant.id, adminTokens.accessToken))
       .expect(200);
 
-    const goodItems = (goodRes.body as { items: { totalScore: number; qualityMultiplier: number }[] }).items;
-    const badItems  = (badRes.body as { items: { totalScore: number; qualityMultiplier: number }[] }).items;
+    const goodItems = (goodRes.body as { items: { totalScore: number }[] }).items;
+    const badItems  = (badRes.body as { items: { totalScore: number }[] }).items;
 
     if (goodItems.length > 0 && badItems.length > 0) {
-      // İyi mentorun katsayısı 1.0, kötü mentorun 0.8 → aynı ham skor için total daha düşük
-      expect(badItems[0].qualityMultiplier).toBe(0.8);
-      expect(goodItems[0].qualityMultiplier).toBe(1.0);
+      // qualityMultiplier API response'unda artık yok (KARAR 3 — PII/gürültü azaltma).
+      // Katsayının etkisini dolaylı doğrula: kötü mentorun total skoru daha düşük.
       expect(badItems[0].totalScore).toBeLessThan(goodItems[0].totalScore);
     }
   });
