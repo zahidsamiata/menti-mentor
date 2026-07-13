@@ -472,20 +472,39 @@ export async function listAdmins(req: RequestWithTenant, res: Response) {
   return res.json({ items: admins, total: admins.length });
 }
 
+const MAX_ADMINS_PER_TENANT = 3;
+
 /** POST /api/admin/users/:id/promote-admin — kullanıcıyı ADMIN yap */
 export async function promoteToAdmin(req: RequestWithTenant, res: Response) {
+  const actorId = req.auth?.userId;
   const target = await prisma.user.findFirst({
     where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
   });
   if (!target) return res.status(404).json({ error: 'KULLANICI_BULUNAMADI' });
   if (target.role === 'ADMIN') return res.status(400).json({ error: 'ZATEN_ADMIN' });
 
+  const adminCount = await prisma.user.count({
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
+  });
+  if (adminCount >= MAX_ADMINS_PER_TENANT) {
+    return res.status(403).json({
+      error: 'ADMIN_LIMITI_ASILDI',
+      message: `Kurum başına en fazla ${MAX_ADMINS_PER_TENANT} yönetici atanabilir.`,
+    });
+  }
+
   await prisma.user.update({ where: { id: target.id }, data: { role: 'ADMIN' } });
+  void logger.info('AUTH', 'Admin yetkisi verildi', {
+    actorId,
+    targetId: target.id,
+    tenantId: req.tenant.tenantId,
+  });
   return res.json({ ok: true });
 }
 
 /** POST /api/admin/users/:id/demote-admin — kullanıcıyı ADMIN'den düşür */
 export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
+  const actorId = req.auth?.userId;
   const target = await prisma.user.findFirst({
     where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
   });
@@ -504,5 +523,10 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
   }
 
   await prisma.user.update({ where: { id: target.id }, data: { role: 'MENTOR' } });
+  void logger.info('AUTH', 'Admin yetkisi alındı', {
+    actorId,
+    targetId: target.id,
+    tenantId: req.tenant.tenantId,
+  });
   return res.json({ ok: true });
 }

@@ -220,7 +220,13 @@ const CreateUserSchema = z.object({
 });
 
 export async function patchSelfProfile(req: RequestWithTenant, res: Response) {
-  const userId = req.params['id'] as string;
+  const userId  = req.params['id'] as string;
+  const isAdmin = req.auth?.role === 'ADMIN';
+  const isSelf  = req.auth?.userId === userId;
+
+  if (!isSelf && !isAdmin) {
+    return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca kendi profilinizi düzenleyebilirsiniz.' });
+  }
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },

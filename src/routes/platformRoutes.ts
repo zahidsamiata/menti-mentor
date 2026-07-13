@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requirePlatformAdmin } from '../middleware/platformAuth.js';
 import {
   platformLogin,
+  platformLogout,
   getPlatformStats,
   getPlatformHealth,
   getPlatformLogs,
@@ -17,8 +18,9 @@ import {
 
 const router = Router();
 
-// Public: e-posta + şifre ile platform auth
+// Public: e-posta + şifre ile platform auth / logout
 router.post('/auth', platformLogin);
+router.post('/logout', platformLogout);
 
 // Protected: platform-admin token tüm aşağıdaki endpoint'ler için zorunlu
 router.use(requirePlatformAdmin);
