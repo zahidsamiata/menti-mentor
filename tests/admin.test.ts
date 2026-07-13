@@ -54,6 +54,16 @@ describe('Admin: User Approval', () => {
     expect(dbUser?.isActive).toBe(false);
   });
 
+  it('admin kendi hesabını onaylamaya çalışırsa 403 döner (self-approval yasak)', async () => {
+    const admin = await createAdminUser(tenant.id);
+    const tokens = await loginAs(http, admin.email, admin.rawPassword);
+
+    await http
+      .post(`/api/admin/users/${admin.id}/approve`)
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .expect(403);
+  });
+
   it('zaten onaylı kullanıcıyı tekrar onaylamaya 409 döner', async () => {
     const approved = await createUser({ tenantId: tenant.id, approvalStatus: 'APPROVED' });
     await http

@@ -304,6 +304,10 @@ export async function manualRunPurge(_req: RequestWithTenant, res: Response) {
 export async function approveUser(req: RequestWithTenant, res: Response) {
   const userId = req.params['id'] as string;
 
+  if (userId === req.auth?.userId) {
+    return res.status(403).json({ error: 'KENDINI_ONAYLA_YASAK', message: 'Kendi hesabınızı kendiniz onaylayamazsınız.' });
+  }
+
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },
     select: { id: true, email: true, fullName: true, approvalStatus: true },

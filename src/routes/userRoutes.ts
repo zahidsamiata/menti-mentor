@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
 import { requireAuth, requireRole } from '../middleware/authorize.js';
-import { createUser, listUsers, getUser, updateUser, patchSelfProfile, countApprovedMentors } from '../controllers/userController.js';
+import { createUser, listUsers, getUser, updateUser, patchSelfProfile, countApprovedMentors, updateMyProfile } from '../controllers/userController.js';
 import { submitTemperamentTest } from '../controllers/temperamentController.js';
 import { getRankedMentisForMentor, setVisibilityOptIn } from '../controllers/matchingController.js';
 import { createMatchRequest, listRequests, getRequest } from '../controllers/requestController.js';
@@ -31,6 +31,13 @@ router.post('/users', requireRole('ADMIN'), createUser as unknown as RequestHand
 
 // GET  /users/:id    → kimlik doğrulaması zorunlu
 router.get('/users/:id', requireAuth(), getUser as unknown as RequestHandler);
+
+// PATCH /users/me/profile → kullanıcı kendi profilini düzenler (whitelist korumalı)
+router.patch(
+  '/users/me/profile',
+  requireAuth(),
+  updateMyProfile as unknown as RequestHandler,
+);
 
 // PATCH /users/:id   → yalnızca ADMIN
 router.patch('/users/:id', requireRole('ADMIN'), updateUser as unknown as RequestHandler);
