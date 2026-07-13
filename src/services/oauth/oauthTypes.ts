@@ -39,6 +39,7 @@ export interface OAuthUserProfile {
   email: string;
   fullName: string;
   provider: OAuthProviderName;
+  avatarUrl?: string;
 }
 
 /**

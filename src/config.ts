@@ -23,6 +23,9 @@ if (isProd && platformAdminKey === DEV_PLATFORM_KEY) {
   throw new Error('PLATFORM_ADMIN_KEY production ortamında varsayılan değerle çalışamaz.');
 }
 
+// Platform admin e-posta — /platform/login için ikinci faktör
+const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL ?? 'admin@platform.local';
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -34,6 +37,7 @@ export const config = {
   },
 
   platformAdminKey,
+  platformAdminEmail,
 
   llm: {
     provider: process.env.LLM_PROVIDER ?? 'openai',

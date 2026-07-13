@@ -458,3 +458,51 @@ export async function rejectPendingTuning(req: RequestWithTenant, res: Response)
   void logger.info('ML', 'Admin kalibrasyon önerisini reddetti', { tenantId: req.tenant.tenantId });
   return res.json({ message: 'Öneri reddedildi, mevcut ağırlıklar korunuyor.' });
 }
+
+// ─── Çoklu Admin Yönetimi ─────────────────────────────────────────────────────
+
+/** GET /api/admin/managers — kurumun tüm adminlerini listele */
+export async function listAdmins(req: RequestWithTenant, res: Response) {
+  const admins = await prisma.user.findMany({
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
+    select: { id: true, fullName: true, email: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  return res.json({ items: admins, total: admins.length });
+}
+
+/** POST /api/admin/users/:id/promote-admin — kullanıcıyı ADMIN yap */
+export async function promoteToAdmin(req: RequestWithTenant, res: Response) {
+  const target = await prisma.user.findFirst({
+    where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
+  });
+  if (!target) return res.status(404).json({ error: 'KULLANICI_BULUNAMADI' });
+  if (target.role === 'ADMIN') return res.status(400).json({ error: 'ZATEN_ADMIN' });
+
+  await prisma.user.update({ where: { id: target.id }, data: { role: 'ADMIN' } });
+  return res.json({ ok: true });
+}
+
+/** POST /api/admin/users/:id/demote-admin — kullanıcıyı ADMIN'den düşür */
+export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
+  const target = await prisma.user.findFirst({
+    where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
+  });
+  if (!target) return res.status(404).json({ error: 'KULLANICI_BULUNAMADI' });
+  if (target.role !== 'ADMIN') return res.status(400).json({ error: 'KULLANICI_ADMIN_DEGIL' });
+
+  // Son admin koruma: en az 1 admin kalmalı
+  const adminCount = await prisma.user.count({
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
+  });
+  if (adminCount <= 1) {
+    return res.status(400).json({
+      error: 'SON_ADMIN',
+      message: 'Kurumun son yöneticisini çıkaramazsınız. Önce başka bir yönetici ekleyin.',
+    });
+  }
+
+  await prisma.user.update({ where: { id: target.id }, data: { role: 'MENTOR' } });
+  return res.json({ ok: true });
+}

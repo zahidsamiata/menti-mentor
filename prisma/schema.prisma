@@ -204,8 +204,9 @@ model Tenant {
   questionHides      QuestionHide[]
   meetingCheckIns    MeetingCheckIn[]
   pendingTags        PendingTag[]
-  memberships        TenantMembership[]
-  availabilityBlocks AvailabilityBlock[]
+  memberships          TenantMembership[]
+  availabilityBlocks   AvailabilityBlock[]
+  invitationTemplates  InvitationTemplate[]
 }
 
 model User {
@@ -262,6 +263,11 @@ model User {
   // Önerilen yapı: { personal, professional, tracking, customMetrics, certifications, ... }
   // Tüm alanlar isteğe bağlıdır; istemci istediği anahtarı ekleyebilir.
   selfProfile Json?
+
+  // Profil fotoğrafı (OAuth'dan alınan URL) ve sosyal medya linkleri
+  avatarUrl    String?
+  linkedinUrl  String?
+  instagramUrl String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -965,4 +971,38 @@ model MatchFeedback {
   @@unique([matchId, checkpoint, fromUserId])
   @@index([matchId])
   @@index([checkpoint])
+}
+
+// ─── Şüphe Bildirimi ─────────────────────────────────────────────────────────
+// Sahte kurum kaydı veya yetkisiz davet şüphesi bildirimleri için public form.
+model SuspicionReport {
+  id           String   @id @default(cuid())
+  tenantName   String
+  reporterName String
+  reporterRole String
+  contact      String
+  description  String
+  reviewed     Boolean  @default(false)
+  reviewNote   String?
+  createdAt    DateTime @default(now())
+
+  @@index([reviewed])
+}
+
+// ─── Davet Şablonu ────────────────────────────────────────────────────────────
+// Her tenant kendi düzenlenmiş davet metnini rol+format bazında saklar.
+model InvitationTemplate {
+  id       String   @id @default(cuid())
+  tenantId String
+  role     String   // MENTOR | MENTI
+  format   String   // EMAIL | WHATSAPP
+  content  String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, role, format])
+  @@index([tenantId])
 }

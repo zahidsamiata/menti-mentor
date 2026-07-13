@@ -25,6 +25,7 @@ import { requestLogger } from './middleware/requestLogger.js';
 import { generalRateLimiter } from './middleware/rateLimiter.js';
 import { startCronScheduler } from './services/cronScheduler.js';
 import sjtScoringRoutes from './routes/sjtScoringRoutes.js';
+import suspicionRoutes from './routes/suspicionRoutes.js';
 import type { RequestHandler } from 'express';
 
 const app = express();
@@ -57,6 +58,9 @@ app.use('/api', generalRateLimiter);
 
 // ─── Platform yöneticisi (tenant sisteminin dışında) ────────────────────────
 app.use('/api/platform', platformRoutes);
+
+// ─── Şüphe bildirimi (herkese açık) ─────────────────────────────────────────
+app.use('/api/suspicion-reports', suspicionRoutes);
 
 // ─── Kimlik doğrulama (tenant gerektirmez) ───────────────────────────────────
 app.use('/api/auth', authRoutes);

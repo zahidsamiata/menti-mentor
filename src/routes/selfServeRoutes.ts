@@ -7,6 +7,8 @@ import {
   getTenantPreview,
   createInvitation,
   unsubscribeTenant,
+  getInvitationTemplates,
+  saveInvitationTemplate,
 } from '../controllers/selfServeController.js';
 
 const router = Router();
@@ -20,6 +22,10 @@ router.post('/self-serve/register',  selfServeRegister     as RequestHandler);
 router.patch('/:id/onboarding',      updateOnboarding      as RequestHandler);
 router.get('/:slug/preview',         getTenantPreview      as RequestHandler);
 router.post('/:id/invitations',      createInvitation      as RequestHandler);
+
+// Davet şablonu — admin JWT ile korunan
+router.get('/:id/invitation-templates', getInvitationTemplates as RequestHandler);
+router.put('/:id/invitation-templates', saveInvitationTemplate as RequestHandler);
 
 // Faz 3: e-posta listesinden çıkma — auth gerektirmez, token yeterli
 // GET /api/tenants/unsubscribe?token=<uuid>

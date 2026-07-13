@@ -23,6 +23,7 @@ interface GoogleUserInfo {
   email: string;
   name: string;
   email_verified: boolean;
+  picture?: string;   // Profil fotoğrafı URL'i
 }
 
 // Google token exchange endpoint'inin döndürdüğü şekli
@@ -66,6 +67,7 @@ export class GoogleOAuthProvider implements IOAuthProvider {
       email: userInfo.email.toLowerCase(),
       fullName: userInfo.name,
       provider: this.providerName,
+      avatarUrl: userInfo.picture,
     };
   }
 

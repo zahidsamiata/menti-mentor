@@ -101,6 +101,7 @@ async function handleNewUser(
       role: state.role,
       authProvider: profile.provider,
       approvalStatus: 'PENDING',
+      avatarUrl: profile.avatarUrl ?? null,
       // password null — OAuth kullanıcıları şifre kullanmaz
     },
     select: { id: true, tenantId: true, role: true, fullName: true },

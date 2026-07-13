@@ -387,3 +387,28 @@ export async function getDiscQuestions(_req: RequestWithTenant, res: Response) {
 
   return res.json({ questions, total: questions.length });
 }
+
+// ─── PATCH /api/users/me/social ──────────────────────────────────────────────
+const SocialProfileSchema = z.object({
+  linkedinUrl:  z.string().url().max(300).optional().nullable(),
+  instagramUrl: z.string().url().max(300).optional().nullable(),
+}).strict();
+
+export async function updateSocialProfile(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
+  }
+
+  const parsed = SocialProfileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: req.auth.userId },
+    data: parsed.data,
+    select: { id: true, linkedinUrl: true, instagramUrl: true, avatarUrl: true },
+  });
+
+  return res.json(updated);
+}

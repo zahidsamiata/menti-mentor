@@ -15,6 +15,9 @@ import {
   getPendingTuning,
   approvePendingTuning,
   rejectPendingTuning,
+  listAdmins,
+  promoteToAdmin,
+  demoteFromAdmin,
 } from '../controllers/adminController.js';
 import {
   listPendingTags,
@@ -58,5 +61,10 @@ router.post('/algorithm-tuner/reject',  rejectPendingTuning  as unknown as Reque
 // ─── Cron Manuel Tetikleme ────────────────────────────────────────────────────
 router.post('/cron/run-tuning', manualRunTuning as unknown as RequestHandler);
 router.post('/cron/run-purge', manualRunPurge as unknown as RequestHandler);
+
+// ─── Çoklu Admin Yönetimi ─────────────────────────────────────────────────────
+router.get('/managers', listAdmins as unknown as RequestHandler);
+router.post('/users/:id/promote-admin', promoteToAdmin as unknown as RequestHandler);
+router.post('/users/:id/demote-admin', demoteFromAdmin as unknown as RequestHandler);
 
 export default router;

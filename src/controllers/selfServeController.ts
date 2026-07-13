@@ -489,19 +489,25 @@ export async function getTenantPreview(req: Request, res: Response) {
 // ─── Davet Token Yardımcıları ─────────────────────────────────────────────────
 
 interface InvitationTokenClaims {
-  tenantId: string;
-  role:     'MENTOR' | 'MENTI';
-  type:     'invitation';
-  iat?:     number;
-  exp?:     number;
+  tenantId:        string;
+  role:            'MENTOR' | 'MENTI';
+  type:            'invitation';
+  invitedByName?:  string;
+  invitedByTitle?: string;
+  iat?:            number;
+  exp?:            number;
 }
 
-function signInvitationToken(tenantId: string, role: 'MENTOR' | 'MENTI'): string {
-  return jwt.sign(
-    { tenantId, role, type: 'invitation' },
-    config.jwt.secret,
-    { expiresIn: config.invitationTokenExpiry } as jwt.SignOptions,
-  );
+function signInvitationToken(
+  tenantId: string,
+  role: 'MENTOR' | 'MENTI',
+  invitedByName?: string,
+  invitedByTitle?: string,
+): string {
+  const payload: Omit<InvitationTokenClaims, 'iat' | 'exp'> = { tenantId, role, type: 'invitation' };
+  if (invitedByName) payload.invitedByName = invitedByName;
+  if (invitedByTitle) payload.invitedByTitle = invitedByTitle;
+  return jwt.sign(payload, config.jwt.secret, { expiresIn: '30d' } as jwt.SignOptions);
 }
 
 function verifyInvitationToken(token: string): InvitationTokenClaims | null {
@@ -517,7 +523,9 @@ function verifyInvitationToken(token: string): InvitationTokenClaims | null {
 // ─── POST /api/tenants/:id/invitations ───────────────────────────────────────
 
 const CreateInvitationSchema = z.object({
-  role: z.enum(['MENTOR', 'MENTI']),
+  role:            z.enum(['MENTOR', 'MENTI']),
+  invitedByName:   z.string().max(100).optional(),
+  invitedByTitle:  z.string().max(100).optional(),
 });
 
 export async function createInvitation(req: Request, res: Response) {
@@ -553,15 +561,17 @@ export async function createInvitation(req: Request, res: Response) {
     });
   }
 
-  const { role } = parsed.data;
-  const invitationToken = signInvitationToken(tenantId, role);
+  const { role, invitedByName, invitedByTitle } = parsed.data;
+  const invitationToken = signInvitationToken(tenantId, role, invitedByName, invitedByTitle);
   const invitationLink  = `${config.frontendBaseUrl}/join?token=${invitationToken}`;
 
   return res.status(201).json({
     invitationLink,
     token:     invitationToken,
-    expiresIn: config.invitationTokenExpiry,
+    expiresIn: '30d',
     role,
+    invitedByName:  invitedByName ?? null,
+    invitedByTitle: invitedByTitle ?? null,
     tenant: {
       id:   tenant.id,
       name: tenant.displayName ?? tenant.name,
@@ -614,6 +624,8 @@ export async function joinViaInvitation(req: Request, res: Response) {
     primaryColor:    tenant.primaryColor ?? '#6366f1',
     programTemplate: tenant.programTemplate,
     plan:            tenant.plan,
+    invitedByName:   claims.invitedByName ?? null,
+    invitedByTitle:  claims.invitedByTitle ?? null,
   });
 }
 
@@ -649,4 +661,51 @@ export async function unsubscribeTenant(req: Request, res: Response) {
   });
 
   return res.json({ message: 'E-posta aboneliğiniz iptal edildi. Artık kurtarma e-postası almayacaksınız.' });
+}
+
+// ─── Davet Şablonu CRUD ───────────────────────────────────────────────────────
+
+const SaveTemplateSchema = z.object({
+  role:    z.enum(['MENTOR', 'MENTI']),
+  format:  z.enum(['EMAIL', 'WHATSAPP']),
+  content: z.string().min(10).max(5000),
+});
+
+// GET /api/tenants/:id/invitation-templates
+export async function getInvitationTemplates(req: Request, res: Response) {
+  const payload = extractAdminPayload(req, res);
+  if (!payload) return;
+
+  const tenantId = req.params['id'] as string;
+  if (payload.tenantId !== tenantId) {
+    return res.status(403).json({ error: 'YETKI_YOK' });
+  }
+
+  const templates = await prisma.invitationTemplate.findMany({ where: { tenantId } });
+  return res.json({ items: templates });
+}
+
+// PUT /api/tenants/:id/invitation-templates
+export async function saveInvitationTemplate(req: Request, res: Response) {
+  const payload = extractAdminPayload(req, res);
+  if (!payload) return;
+
+  const tenantId = req.params['id'] as string;
+  if (payload.tenantId !== tenantId) {
+    return res.status(403).json({ error: 'YETKI_YOK' });
+  }
+
+  const parsed = SaveTemplateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const { role, format, content } = parsed.data;
+  const template = await prisma.invitationTemplate.upsert({
+    where:  { tenantId_role_format: { tenantId, role, format } },
+    create: { tenantId, role, format, content },
+    update: { content },
+  });
+
+  return res.json(template);
 }

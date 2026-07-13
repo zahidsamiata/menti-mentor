@@ -5,6 +5,7 @@ import {
   completeProfile,
   submitDiscTest,
   getDiscQuestions,
+  updateSocialProfile,
 } from '../controllers/onboardingController.js';
 
 const router = Router();
@@ -34,6 +35,12 @@ router.post(
   '/users/disc/submit',
   requireAuth(),
   submitDiscTest as unknown as RequestHandler,
+);
+
+router.patch(
+  '/users/me/social',
+  requireAuth(),
+  updateSocialProfile as unknown as RequestHandler,
 );
 
 export default router;
