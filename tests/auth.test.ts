@@ -96,7 +96,8 @@ describe('Auth: Login', () => {
     });
     expect(res.body).not.toHaveProperty('refreshToken');
     expect(res.headers['set-cookie']).toBeDefined();
-    const setCookie = (res.headers['set-cookie'] as string[]).join(';');
+    const rawCookie = res.headers['set-cookie'];
+    const setCookie = Array.isArray(rawCookie) ? rawCookie.join(';') : (rawCookie ?? '');
     expect(setCookie).toContain('mm_refresh=');
     expect(setCookie).toContain('HttpOnly');
     expect(res.body.user.id).toBe(user.id);
