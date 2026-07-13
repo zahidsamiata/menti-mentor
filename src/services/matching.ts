@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import { computeTotalScore, isAntiMatch, type DiscVector } from './scoring.js';
+import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, type DiscVector } from './scoring.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
 
 export type RankedMenti = {
@@ -9,7 +9,8 @@ export type RankedMenti = {
   totalScore: number;
   sectorScore: number;
   discScore: number;
-  confidence: number;   // 0-1 profil bütünlüğü; UI'da gösterilebilir
+  confidence: number;      // 0-1 profil bütünlüğü; UI'da gösterilebilir
+  qualityMultiplier: number; // Mentorun geri bildirim katsayısı (1.0 = nötr)
   skills: string[];
   fallbackLevel: 0 | 1 | 2 | 3;
   warnings: string[];
@@ -77,6 +78,9 @@ export async function rankMentisForMentor(args: {
     }),
   ]);
   if (!mentor) return { items: [], fallbackLevel: 0 };
+
+  // Mentorun geçmiş geri bildirim kalite katsayısı (< 3 görüşme → 1.0 nötr)
+  const qualityMultiplier = await computeMentorQualityMultiplier(args.mentorId);
 
   // Öncelik sırası: çağıranın arg'ı > mentor'un kaydedilmiş filtresi > tenant barajı
   const savedFilter = mentorFilter?.filterEnabled ? mentorFilter : null;
@@ -169,23 +173,23 @@ export async function rankMentisForMentor(args: {
 
   const limit = args.limit ?? 50;
 
-  const scored = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: true, applyAntiMatch: true, sectorOnly: false });
+  const scored = scoreAndFilter(candidates, mentor, { ...opts, qualityMultiplier, applyTimeFilter: true, applyAntiMatch: true, sectorOnly: false });
   const filtered0 = strictFilter(scored);
   if (filtered0.length > 0) return { items: filtered0.slice(0, limit), fallbackLevel: 0 };
 
-  const fallback1 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: true, sectorOnly: false });
+  const fallback1 = scoreAndFilter(candidates, mentor, { ...opts, qualityMultiplier, applyTimeFilter: false, applyAntiMatch: true, sectorOnly: false });
   const filtered1 = strictFilter(fallback1);
   if (filtered1.length > 0) {
     return { items: filtered1.slice(0, limit).map((m) => ({ ...m, fallbackLevel: 1 as const })), fallbackLevel: 1 };
   }
 
-  const fallback2 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: false, sectorOnly: false });
+  const fallback2 = scoreAndFilter(candidates, mentor, { ...opts, qualityMultiplier, applyTimeFilter: false, applyAntiMatch: false, sectorOnly: false });
   const filtered2 = strictFilter(fallback2);
   if (filtered2.length > 0) {
     return { items: filtered2.slice(0, limit).map((m) => ({ ...m, fallbackLevel: 2 as const })), fallbackLevel: 2 };
   }
 
-  const fallback3 = scoreAndFilter(candidates, mentor, { ...opts, applyTimeFilter: false, applyAntiMatch: false, sectorOnly: true });
+  const fallback3 = scoreAndFilter(candidates, mentor, { ...opts, qualityMultiplier, applyTimeFilter: false, applyAntiMatch: false, sectorOnly: true });
   // Level 3 acil çıkış kapısıdır: yalnızca kullanıcı/mentor kaynaklı eşik (explicitMinScore)
   // uygulanır. Tenant konfigürasyon barajı (tenantConfig.minMatchScoreThreshold) atlanır —
   // aksi hâlde yüksek eşikli tenant'larda ilk eşleşme hiç oluşmaz (aktivasyon deadlock).
@@ -224,6 +228,7 @@ function scoreAndFilter(
     applyTimeFilter: boolean;
     applyAntiMatch: boolean;
     sectorOnly: boolean;
+    qualityMultiplier?: number;
     excludeDiscTypes?: Array<'D' | 'I' | 'S' | 'C'>;
     blockedMentiIds?: Set<string>; // admin tarafından idari olarak bloklanmış menti IDs
   },
@@ -253,14 +258,6 @@ function scoreAndFilter(
     // Kesirli vektörü güvenli şekilde cast et
     const mentiVector = opts.sectorOnly ? null : (c.discVector as DiscVector | null);
 
-    const breakdown = computeTotalScore({
-      mentiTags: c.sectorTags,
-      mentorTags: mentor.sectorTags,
-      mentiDisc: opts.sectorOnly ? null : (c.discType as any),
-      mentorDisc: opts.sectorOnly ? null : (mentor.discType as any),
-      mentiVector,
-    });
-
     const interactionBonus =
       !opts.sectorOnly &&
       c.interactionStyle &&
@@ -269,7 +266,16 @@ function scoreAndFilter(
         ? 10
         : 0;
 
-    const totalScore = Math.min(100, Math.round((breakdown.totalScore + interactionBonus) * 10) / 10);
+    const breakdown = computeTotalScore({
+      mentiTags: c.sectorTags,
+      mentorTags: mentor.sectorTags,
+      mentiDisc: opts.sectorOnly ? null : (c.discType as any),
+      mentorDisc: opts.sectorOnly ? null : (mentor.discType as any),
+      mentiVector,
+      qualityMultiplier: opts.qualityMultiplier ?? 1.0,
+    });
+
+    const totalScore = Math.min(100, Math.round((breakdown.totalScore + interactionBonus * (opts.qualityMultiplier ?? 1.0)) * 10) / 10);
 
     filtered.push({
       mentiId: c.id,
@@ -279,6 +285,7 @@ function scoreAndFilter(
       sectorScore: breakdown.sectorScore,
       discScore: breakdown.discScore,
       confidence: breakdown.confidence,
+      qualityMultiplier: opts.qualityMultiplier ?? 1.0,
       skills: c.skills,
       fallbackLevel: 0,
       warnings: [],
