@@ -219,6 +219,86 @@ const CreateUserSchema = z.object({
   targetAudience: z.string().max(1000).optional(),
 });
 
+// ─── PATCH /users/me/profile ──────────────────────────────────────────────────
+// Kullanıcı KENDİ profilini düzenler. Roller, onay durumu, DISC tipi bu
+// endpoint'ten değiştirilemez — .strict() ile whitelist korunur.
+//
+// Prisma Json? alanlar (education, pastProjects, volunteerHistory):
+//   string → doğrudan kaydedilir, boş string → undefined (güncelleme atlanır).
+// Prisma String? alanlar: null doğrudan kabul edilir.
+
+const NULLABLE_STR = (max: number) =>
+  z.preprocess((v) => (v === '' ? null : v), z.string().max(max).nullable().optional());
+
+const OPTIONAL_JSON_STR = (max: number) =>
+  z.preprocess((v) => (v === '' ? undefined : v), z.string().max(max).optional());
+
+const NULLABLE_URL = z.preprocess(
+  (v) => (v === '' ? null : v),
+  z.string().url('Geçerli bir URL giriniz (https://... ile başlamalı)').max(300).nullable().optional(),
+);
+
+const UpdateMyProfileSchema = z.object({
+  // String? alanlar — null doğrudan Prisma'ya geçebilir
+  bioSummary:       NULLABLE_STR(1000),
+  expertiseDetails: NULLABLE_STR(1000),
+  targetAudience:   NULLABLE_STR(500),
+  linkedinUrl:      NULLABLE_URL,
+  instagramUrl:     NULLABLE_URL,
+  // Json? alanlar — null için Prisma.DbNull dönüşümü controller'da yapılır
+  education:        OPTIONAL_JSON_STR(2000),
+  pastProjects:     OPTIONAL_JSON_STR(2000),
+  volunteerHistory: OPTIONAL_JSON_STR(2000),
+  // Array alanlar
+  skills:    z.array(z.string().min(1).max(100)).max(30).optional(),
+  sectorTags: SECTOR_TAGS_SCHEMA,
+}).strict();
+
+export async function updateMyProfile(req: RequestWithTenant, res: Response) {
+  if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
+
+  const parsed = UpdateMyProfileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { id: req.auth.userId, tenantId: req.tenant.tenantId },
+    select: { id: true },
+  });
+  if (!user) return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+
+  const { education, pastProjects, volunteerHistory, ...rest } = parsed.data;
+
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      ...rest,
+      // Json? alanlar: undefined → atla, string → kaydet
+      ...(education        !== undefined && { education }),
+      ...(pastProjects     !== undefined && { pastProjects }),
+      ...(volunteerHistory !== undefined && { volunteerHistory }),
+    },
+    select: {
+      id:               true,
+      fullName:         true,
+      bioSummary:       true,
+      expertiseDetails: true,
+      targetAudience:   true,
+      education:        true,
+      pastProjects:     true,
+      volunteerHistory: true,
+      skills:           true,
+      sectorTags:       true,
+      linkedinUrl:      true,
+      instagramUrl:     true,
+      updatedAt:        true,
+    },
+  });
+
+  return res.json(updated);
+}
+
 export async function patchSelfProfile(req: RequestWithTenant, res: Response) {
   const userId  = req.params['id'] as string;
   const isAdmin = req.auth?.role === 'ADMIN';
