@@ -16,7 +16,8 @@ import { agent, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant } from './helpers/factories.js';
 
-const PLATFORM_KEY = process.env.PLATFORM_ADMIN_KEY ?? 'platform-dev-key-change-in-production';
+const PLATFORM_KEY   = process.env.PLATFORM_ADMIN_KEY   ?? 'platform-dev-key-change-in-production';
+const PLATFORM_EMAIL = process.env.PLATFORM_ADMIN_EMAIL ?? 'admin@platform.local';
 
 // ─── Yardımcı: selfServeRegister isteği ──────────────────────────────────────
 
@@ -137,7 +138,7 @@ describe('Tenant Verification: Platform Admin Onay/Red', () => {
     // Platform auth
     const authRes = await http
       .post('/api/platform/auth')
-      .send({ key: PLATFORM_KEY })
+      .send({ email: PLATFORM_EMAIL, password: PLATFORM_KEY })
       .expect(200);
 
     const platformToken = (authRes.body as { accessToken: string }).accessToken;
@@ -163,7 +164,7 @@ describe('Tenant Verification: Platform Admin Onay/Red', () => {
 
     const authRes = await http
       .post('/api/platform/auth')
-      .send({ key: PLATFORM_KEY })
+      .send({ email: PLATFORM_EMAIL, password: PLATFORM_KEY })
       .expect(200);
 
     const platformToken = (authRes.body as { accessToken: string }).accessToken;
@@ -202,7 +203,7 @@ describe('Tenant Verification: Platform Admin Onay/Red', () => {
 
     const authRes = await http
       .post('/api/platform/auth')
-      .send({ key: PLATFORM_KEY })
+      .send({ email: PLATFORM_EMAIL, password: PLATFORM_KEY })
       .expect(200);
 
     const platformToken = (authRes.body as { accessToken: string }).accessToken;
