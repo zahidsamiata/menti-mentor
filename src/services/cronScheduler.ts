@@ -14,7 +14,7 @@ import cron from 'node-cron';
 import { prisma } from '../db.js';
 import { tuneScoringWeights } from './algorithmTuner.js';
 import { purgeExpiredData } from './gdprService.js';
-import { sendDraftTenantReminderEmail } from './emailService.js';
+import { sendDraftTenantReminderEmail, sendFeedbackReminderEmail } from './emailService.js';
 import { logger } from './logger.js';
 
 /**
@@ -194,6 +194,85 @@ async function runDraftTenantCleanup(): Promise<void> {
   }
 }
 
+// ─── Görev: Feedback Hatırlatıcısı ───────────────────────────────────────────
+
+const FEEDBACK_REMINDER_HOURS_MIN = 1;   // En az 1 saat geçsin (toplantı biter bitmez gönderme)
+const FEEDBACK_REMINDER_DAYS_MAX  = 7;   // 7 günden eski toplantıları atla
+
+export async function runFeedbackReminderCron(): Promise<{ sent: number }> {
+  void logger.info('SYSTEM', 'Cron: Feedback hatırlatıcısı başladı');
+  try {
+    const now = new Date();
+    const minAgo = new Date(now.getTime() - FEEDBACK_REMINDER_HOURS_MIN * 60 * 60 * 1000);
+    const maxAgo = new Date(now.getTime() - FEEDBACK_REMINDER_DAYS_MAX  * 24 * 60 * 60 * 1000);
+
+    const pendingMeetings = await prisma.meeting.findMany({
+      where: {
+        status: 'COMPLETED',
+        hasFeedback: false,
+        feedbackPrompted: false,
+        endsAt: { lt: minAgo, gt: maxAgo },
+      },
+      include: {
+        mentor: { select: { fullName: true, email: true } },
+        menti:  { select: { fullName: true, email: true } },
+      },
+    });
+
+    let sent = 0;
+    for (const m of pendingMeetings) {
+      await sendFeedbackReminderEmail({ toEmail: m.mentor.email, recipientName: m.mentor.fullName, meetingId: m.id, scheduledAt: m.startsAt }).catch(() => null);
+      await sendFeedbackReminderEmail({ toEmail: m.menti.email,  recipientName: m.menti.fullName,  meetingId: m.id, scheduledAt: m.startsAt }).catch(() => null);
+      await prisma.meeting.update({ where: { id: m.id }, data: { feedbackPrompted: true } });
+      sent++;
+    }
+
+    void logger.info('SYSTEM', 'Cron: Feedback hatırlatıcısı tamamlandı', { sent });
+    return { sent };
+  } catch (err) {
+    void logger.error('SYSTEM', 'Cron: Feedback hatırlatıcısı başarısız', { error: String(err) });
+    return { sent: 0 };
+  }
+}
+
+// ─── Görev: Anlaşma Yenileme Kontrolü ────────────────────────────────────────
+
+const RENEWAL_WARN_DAYS = 7; // Bitmeden 7 gün önce bildir
+
+export async function runAgreementRenewalCron(): Promise<{ prompted: number }> {
+  void logger.info('SYSTEM', 'Cron: Anlaşma yenileme kontrolü başladı');
+  try {
+    const warnThreshold = new Date(Date.now() + RENEWAL_WARN_DAYS * 24 * 60 * 60 * 1000);
+
+    const expiring = await prisma.mentorshipAgreement.findMany({
+      where: {
+        status: 'ACTIVE',
+        renewalAskedAt: null,
+        expiresAt: { not: null, lte: warnThreshold },
+      },
+      include: {
+        mentor: { select: { email: true, fullName: true } },
+        menti:  { select: { email: true, fullName: true } },
+      },
+    });
+
+    let prompted = 0;
+    for (const agreement of expiring) {
+      await prisma.mentorshipAgreement.update({
+        where: { id: agreement.id },
+        data:  { status: 'RENEWAL_PENDING', renewalAskedAt: new Date() },
+      });
+      prompted++;
+    }
+
+    void logger.info('SYSTEM', 'Cron: Anlaşma yenileme kontrolü tamamlandı', { prompted });
+    return { prompted };
+  } catch (err) {
+    void logger.error('SYSTEM', 'Cron: Anlaşma yenileme kontrolü başarısız', { error: String(err) });
+    return { prompted: 0 };
+  }
+}
+
 // ─── Scheduler başlatma ───────────────────────────────────────────────────────
 
 export function startCronScheduler(): void {
@@ -222,8 +301,18 @@ export function startCronScheduler(): void {
     void runDraftTenantCleanup();
   }, { timezone: 'UTC' });
 
+  // Her gün 09:00 UTC — Feedback hatırlatıcısı (feedbackPrompted=false koruması)
+  cron.schedule('0 9 * * *', () => {
+    void runFeedbackReminderCron();
+  }, { timezone: 'UTC' });
+
+  // Her gün 10:00 UTC — Anlaşma yenileme kontrolü (7 gün önceden bildirim)
+  cron.schedule('0 10 * * *', () => {
+    void runAgreementRenewalCron();
+  }, { timezone: 'UTC' });
+
   console.log('[CRON] Haftalık görevler zamanlandı: Pazar 02:00 (tuning) + 03:00 (purge) UTC');
-  console.log('[CRON] Faz 3 cron\'ları aktif: Her 6h (taslak reminder) + Her gün 04:00 (taslak temizlik) UTC');
+  console.log('[CRON] Faz 3 cron\'ları aktif: Her 6h (taslak reminder) + Her gün 04:00 (taslak temizlik) + 09:00 (feedback hatırlatıcı) UTC');
 }
 
 // ─── Manuel tetikleme (admin endpoint'inden çağrılır) ────────────────────────

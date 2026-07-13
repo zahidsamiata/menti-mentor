@@ -89,11 +89,54 @@ export function computeTotalScore(args: {
   mentiDisc?: DiscType | null;
   mentorDisc?: DiscType | null;
   mentiVector?: DiscVector | null;
+  qualityMultiplier?: number;
 }): ScoreBreakdown {
   const sectorScore = computeSectorScore(args.mentiTags, args.mentorTags);
   const discScore = computeDiscScore(args.mentiDisc, args.mentorDisc, args.mentiVector);
-  const totalScore = Math.round((sectorScore * 0.6 + discScore * 0.4) * 10) / 10;
+  const base = sectorScore * 0.6 + discScore * 0.4;
+  const totalScore = Math.min(100, Math.round(base * (args.qualityMultiplier ?? 1.0) * 10) / 10);
   const confidence = args.mentiVector?.confidence ?? (args.mentiDisc ? 1 : 0.5);
   return { sectorScore, discScore, totalScore, confidence };
+}
+
+// ─── Mentor kalite katsayısı (feedback döngüsü) ──────────────────────────────
+
+// Saf hesaplama — DB bağlantısı gerektirmez, birim testlerde kullanılır.
+// avgScore: 1-5 arası ortalama; feedbackCount: en az 3 olmalı (az veriyle sert ceza yok).
+export function applyQualityMultiplier(avgScore: number, feedbackCount: number): number {
+  if (feedbackCount < 3) return 1.0;
+  const raw = 1.0 + ((avgScore - 3.0) / 2.0) * 0.2;
+  return Math.min(1.2, Math.max(0.8, Math.round(raw * 1000) / 1000));
+}
+
+// Mentorun son 10 görüşmesindeki menti → mentor geri bildirim ortalamasından
+// kalite katsayısı hesaplar. Yeni mentor (< 3 görüşme) → 1.0 (nötr, ceza yok).
+// guidanceScore + resourceSharingScore + trustScore ortalaması → ±%20 aralık.
+export async function computeMentorQualityMultiplier(mentorId: string): Promise<number> {
+  const { prisma } = await import('../db.js');
+  const feedbacks = await prisma.feedback.findMany({
+    where: {
+      mentorId,
+      OR: [
+        { guidanceScore: { not: null } },
+        { resourceSharingScore: { not: null } },
+        { trustScore: { not: null } },
+      ],
+    },
+    select: { guidanceScore: true, resourceSharingScore: true, trustScore: true },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+  });
+
+  let total = 0;
+  let count = 0;
+  for (const fb of feedbacks) {
+    if (fb.guidanceScore != null) { total += fb.guidanceScore; count++; }
+    if (fb.resourceSharingScore != null) { total += fb.resourceSharingScore; count++; }
+    if (fb.trustScore != null) { total += fb.trustScore; count++; }
+  }
+
+  const avgScore = count === 0 ? 3.0 : total / count;
+  return applyQualityMultiplier(avgScore, feedbacks.length);
 }
 

@@ -315,3 +315,28 @@ export async function createUser(req: RequestWithTenant, res: Response) {
 
   return res.status(201).json(user);
 }
+
+// ─── POST /users/me/orientation-completed ────────────────────────────────────
+
+// Menti, görüşme rehberini tamamladıktan sonra bu endpoint'i çağırır.
+// needsOrientation=false → kilit kalkar, yeni görüşme alabilir.
+export async function completedOrientation(req: RequestWithTenant, res: Response) {
+  if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
+
+  const user = await prisma.user.findFirst({
+    where: { id: req.auth.userId, tenantId: req.tenant.tenantId },
+    select: { id: true, needsOrientation: true },
+  });
+  if (!user) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  if (!user.needsOrientation) {
+    return res.json({ message: 'Oryantasyon kilidi zaten açık.', needsOrientation: false });
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data:  { needsOrientation: false },
+  });
+
+  return res.json({ message: 'Görüşme rehberi tamamlandı, kilid kaldırıldı.', needsOrientation: false });
+}

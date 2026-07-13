@@ -207,6 +207,7 @@ model Tenant {
   memberships          TenantMembership[]
   availabilityBlocks   AvailabilityBlock[]
   invitationTemplates  InvitationTemplate[]
+  agreements           MentorshipAgreement[]
 }
 
 model User {
@@ -297,6 +298,8 @@ model User {
   memberships        TenantMembership[]
   availabilityBlocks AvailabilityBlock[]
   mentorFilter       MentorFilter?
+  agreementsAsMentor MentorshipAgreement[] @relation("AgreementsAsMentor")
+  agreementsAsMenti  MentorshipAgreement[] @relation("AgreementsAsMenti")
 
   // email @unique ile global unique; ayrıca tenant bazlı sorgular için index
   @@index([tenantId, role, isActive])
@@ -669,6 +672,14 @@ enum CertificationStatus {
   COOLDOWN
 }
 
+enum AgreementStatus {
+  DRAFT            // Taslak — henüz iki taraf onaylamamış
+  ACTIVE           // Her iki taraf onaylamış, aktif
+  RENEWAL_PENDING  // Süre dolmak üzere — sistem yenileme sordu
+  RENEWED          // Yenilendi (eski anlaşma arşivlendi)
+  ENDED            // Onurlu bitiş — iki taraf mutabık
+}
+
 model PendingTag {
   id          String           @id @default(cuid())
   tenantId    String
@@ -987,6 +998,49 @@ model SuspicionReport {
   createdAt    DateTime @default(now())
 
   @@index([reviewed])
+}
+
+// ─── Mentörlük Anlaşması ─────────────────────────────────────────────────────
+// Eşleşme onaylandıktan sonra iki tarafın imzaladığı dijital anlaşma.
+// İki taraf da onaylamadan görüşme oluşturulamaz (İş 2'deki orientation guard'a paralel).
+model MentorshipAgreement {
+  id       String @id @default(cuid())
+  tenantId String
+  mentorId String
+  mentiId  String
+  matchId  String?
+
+  // Anlaşma içeriği — iki taraf birlikte doldurur
+  meetingFrequency     String  // WEEKLY | BIWEEKLY | MONTHLY
+  communicationChannel String  // ONLINE | IN_PERSON | PHONE
+  durationWeeks        Int     // İlişki süresi (hafta cinsinden)
+  targetMeetings       Int     // Hedef görüşme sayısı
+  mentiGoal            String  @db.VarChar(1000) // Menti'nin somut hedefi
+  agendaOwner          String  @default("MENTI") // Gündem kim belirler
+  privacyAgreed        Boolean @default(false)   // Gizlilik taahhüdü
+
+  // Dijital onaylar — her iki taraf onaylamadan ACTIVE olmaz
+  mentorConfirmedAt DateTime?
+  mentiConfirmedAt  DateTime?
+
+  // Yaşam döngüsü
+  status         AgreementStatus @default(DRAFT)
+  renewalAskedAt DateTime?       // Sistem "devam?" sorusunu sorduğunda
+  expiresAt      DateTime?       // durationWeeks'ten hesaplanır
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  mentor User   @relation("AgreementsAsMentor", fields: [mentorId], references: [id])
+  menti  User   @relation("AgreementsAsMenti",  fields: [mentiId],  references: [id])
+
+  @@index([tenantId])
+  @@index([mentorId])
+  @@index([mentiId])
+  @@index([status])
+  @@index([tenantId, status])
+  @@index([expiresAt, status])
 }
 
 // ─── Davet Şablonu ────────────────────────────────────────────────────────────
