@@ -2,8 +2,18 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
-import { rankMentisForMentor } from '../services/matching.js';
+import { rankMentisForMentor, type RankedMenti } from '../services/matching.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
+
+// KARAR 3: qualityMultiplier kullanıcıya gösterilmez (gizli yorumları dolaylı sızdırır).
+// DISC tipi açıklanmaz; bunun yerine nitel uyum gerekçesi üretilir.
+function buildPublicItem(item: RankedMenti) {
+  const { qualityMultiplier: _hidden, ...rest } = item;
+  const reasons: string[] = [];
+  if (item.sectorScore > 0) reasons.push('Ortak sektör ve ilgi alanları');
+  if (item.discScore > 0)   reasons.push('İletişim tarzları uyumlu');
+  return { ...rest, compatibilityReason: reasons.join(' · ') || 'Genel profil uyumu' };
+}
 
 const DISC_VALUES = ['D', 'I', 'S', 'C'] as const;
 
@@ -41,7 +51,10 @@ export async function getRankedMentisForMentor(req: RequestWithTenant, res: Resp
     excludeDiscTypes: parsed.data.excludeDiscTypes,
   });
 
-  return res.json(result);
+  return res.json({
+    items: result.items.map(buildPublicItem),
+    fallbackLevel: result.fallbackLevel,
+  });
 }
 
 const OptInSchema = z.object({

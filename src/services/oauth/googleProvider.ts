@@ -35,6 +35,20 @@ interface GoogleTokenResponse {
   error_description?: string;
 }
 
+const ALLOWED_AVATAR_HOSTS = new Set(['lh3.googleusercontent.com', 'lh4.googleusercontent.com', 'lh5.googleusercontent.com', 'lh6.googleusercontent.com']);
+
+function sanitizeAvatarUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return undefined;
+    if (!ALLOWED_AVATAR_HOSTS.has(parsed.hostname)) return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
 export class GoogleOAuthProvider implements IOAuthProvider {
   readonly providerName = 'GOOGLE' as const;
 
@@ -67,7 +81,7 @@ export class GoogleOAuthProvider implements IOAuthProvider {
       email: userInfo.email.toLowerCase(),
       fullName: userInfo.name,
       provider: this.providerName,
-      avatarUrl: userInfo.picture,
+      avatarUrl: sanitizeAvatarUrl(userInfo.picture),
     };
   }
 

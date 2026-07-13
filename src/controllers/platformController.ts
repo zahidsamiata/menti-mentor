@@ -1,18 +1,43 @@
+import { timingSafeEqual } from 'crypto';
 import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { signToken } from '../middleware/jwtAuth.js';
+import { logger } from '../services/logger.js';
+
+export const PLATFORM_COOKIE = 'platform_token';
+export const PLATFORM_COOKIE_OPTS = {
+  httpOnly: true,
+  secure:   process.env['NODE_ENV'] === 'production',
+  sameSite: 'strict' as const,
+  maxAge:   60 * 60 * 1000, // 1 saat (ms)
+  path:     '/api/platform',
+};
+
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  // Uzunluk farkı timing side-channel yaratmamak için sabit-zaman dummy karşılaştırma
+  if (bufA.length !== bufB.length) {
+    timingSafeEqual(Buffer.alloc(bufA.length), Buffer.alloc(bufA.length));
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
+}
 
 // POST /api/platform/auth
 export async function platformLogin(req: Request, res: Response) {
   const { email, password } = req.body as { email?: string; password?: string };
 
-  if (
-    !email || !password ||
-    email !== config.platformAdminEmail ||
-    password !== config.platformAdminKey
-  ) {
+  const emailOk    = !!email    && safeEqual(email,    config.platformAdminEmail);
+  const passwordOk = !!password && safeEqual(password, config.platformAdminKey);
+
+  if (!emailOk || !passwordOk) {
+    void logger.warn('AUTH', 'Platform login başarısız', {
+      email: email ?? '(boş)',
+      ip:    req.ip ?? 'unknown',
+    });
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Geçersiz platform yönetici bilgileri.' });
   }
 
@@ -24,7 +49,14 @@ export async function platformLogin(req: Request, res: Response) {
     isPlatformAdmin: true,
   });
 
-  return res.json({ accessToken: token, expiresIn: config.jwt.expiresIn });
+  res.cookie(PLATFORM_COOKIE, token, PLATFORM_COOKIE_OPTS);
+  return res.json({ ok: true });
+}
+
+// POST /api/platform/logout
+export async function platformLogout(_req: Request, res: Response) {
+  res.clearCookie(PLATFORM_COOKIE, { ...PLATFORM_COOKIE_OPTS, maxAge: 0 });
+  return res.json({ ok: true });
 }
 
 // GET /api/platform/stats

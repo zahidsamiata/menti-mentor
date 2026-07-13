@@ -421,6 +421,7 @@ model Meeting {
   format           MeetingFormat @default(ONLINE)
   durationMin      Int           @default(60)
   notes            String?
+  requestMessage   String?       @db.VarChar(500)
   locationUrl      String?
   locationText     String?
   phoneNumber      String?

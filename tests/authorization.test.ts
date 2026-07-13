@@ -13,6 +13,11 @@ import { createTenant } from './helpers/factories.js';
 import { signToken } from '../src/middleware/jwtAuth.js';
 import type { Tenant } from '@prisma/client';
 
+// requirePlatformAdmin cookie okur (Bearer değil) — bu yardımcı doğru header kurar.
+function platformCookieHeader(token: string): Record<string, string> {
+  return { Cookie: `platform_token=${encodeURIComponent(token)}` };
+}
+
 // ─── KRİTİK-3a: tenantRoutes CRUD — platform admin guard ─────────────────────
 
 describe('KRİTİK-3a: tenantRoutes — platform admin zorunlu', () => {
@@ -54,7 +59,7 @@ describe('KRİTİK-3a: tenantRoutes — platform admin zorunlu', () => {
     });
     const res = await http
       .get('/api/tenants/')
-      .set('Authorization', `Bearer ${tenantAdminToken}`);
+      .set(platformCookieHeader(tenantAdminToken));
     expect(res.status).toBe(403);
   });
 
@@ -67,7 +72,7 @@ describe('KRİTİK-3a: tenantRoutes — platform admin zorunlu', () => {
     });
     const res = await http
       .post('/api/tenants/')
-      .set('Authorization', `Bearer ${mentiToken}`)
+      .set(platformCookieHeader(mentiToken))
       .send({ name: 'X', slug: 'x' });
     expect(res.status).toBe(403);
   });
@@ -82,7 +87,7 @@ describe('KRİTİK-3a: tenantRoutes — platform admin zorunlu', () => {
     });
     const res = await http
       .get('/api/tenants/')
-      .set('Authorization', `Bearer ${platformToken}`);
+      .set(platformCookieHeader(platformToken));
     expect(res.status).toBe(200);
     expect(Array.isArray((res.body as { items: unknown[] }).items)).toBe(true);
   });
@@ -98,7 +103,7 @@ describe('KRİTİK-3a: tenantRoutes — platform admin zorunlu', () => {
     const slug = `test-tenant-${Date.now()}`;
     const res = await http
       .post('/api/tenants/')
-      .set('Authorization', `Bearer ${platformToken}`)
+      .set(platformCookieHeader(platformToken))
       .send({ name: 'Yeni Tenant', slug });
     expect(res.status).toBe(201);
     expect((res.body as { slug: string }).slug).toBe(slug);

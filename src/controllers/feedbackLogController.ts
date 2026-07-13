@@ -100,20 +100,34 @@ export async function createFeedbackLog(req: RequestWithTenant, res: Response) {
 }
 
 // GET /api/feedback-logs
+// Erişim kuralı (KARAR 1):
+//   ADMIN  → tenant geneli (program sağlığı/istatistik için zorunlu)
+//   MENTOR → yalnızca kendi yazdığı kayıtlar (mentorId === userId)
+//   MENTI  → FeedbackLog'lar mentor tarafından yazılır; menti göremez
 export async function listFeedbackLogs(req: RequestWithTenant, res: Response) {
   const parsed = ListFeedbackLogQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
+  const role   = req.auth?.role;
+  const userId = req.auth?.userId;
+
+  if (role === 'MENTI') {
+    return res.json({ items: [], total: 0 });
+  }
+
   const { mentorId, mentiId, phase } = parsed.data;
+
+  // MENTOR: yalnızca kendi kayıtları; dışarıdan gelen mentorId query param'ı görmezden gel
+  const effectiveMentorId = role === 'MENTOR' ? userId : mentorId;
 
   const logs = await prisma.feedbackLog.findMany({
     where: {
       tenantId: req.tenant.tenantId,
-      ...(mentorId && { mentorId }),
-      ...(mentiId  && { mentiId }),
-      ...(phase    && { phase }),
+      ...(effectiveMentorId && { mentorId: effectiveMentorId }),
+      ...(role === 'ADMIN' && mentiId  && { mentiId }),
+      ...(phase && { phase }),
     },
     orderBy: { createdAt: 'desc' },
     include: {
@@ -136,6 +150,13 @@ export async function getFeedbackLog(req: RequestWithTenant, res: Response) {
   });
 
   if (!log) return res.status(404).json({ error: 'NOT_FOUND', message: 'Geri bildirim kaydı bulunamadı.' });
+
+  const role   = req.auth?.role;
+  const userId = req.auth?.userId;
+
+  // MENTI hiç erişemez; MENTOR yalnızca kendi yazdığı kayda erişebilir
+  if (role === 'MENTI') return res.status(403).json({ error: 'YETKISIZ' });
+  if (role === 'MENTOR' && log.mentorId !== userId) return res.status(403).json({ error: 'YETKISIZ' });
 
   return res.json(log);
 }

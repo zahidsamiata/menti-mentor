@@ -42,6 +42,13 @@ export async function createAgreement(req: RequestWithTenant, res: Response) {
 
   const d = parsed.data;
   const tenantId = req.tenant.tenantId;
+  const callerId = req.auth?.userId;
+  const isAdmin  = req.auth?.role === 'ADMIN';
+
+  // Çağıran anlaşmanın tarafı (mentor veya menti) ya da admin olmalı
+  if (!isAdmin && callerId !== d.mentorId && callerId !== d.mentiId) {
+    return res.status(403).json({ error: 'YETKISIZ', message: 'Anlaşma yalnızca taraflar veya admin tarafından oluşturulabilir.' });
+  }
 
   // Her iki kullanıcı da bu tenant'a üye olmalı
   const [mentor, menti] = await Promise.all([

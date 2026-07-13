@@ -30,7 +30,13 @@ export async function submitTemperamentTest(req: RequestWithTenant, res: Respons
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const userId = req.params['id'] as string;
+  const userId  = req.params['id'] as string;
+  const isAdmin = req.auth?.role === 'ADMIN';
+  const isSelf  = req.auth?.userId === userId;
+
+  if (!isSelf && !isAdmin) {
+    return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca kendi testinizi gönderebilirsiniz.' });
+  }
 
   const existing = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },

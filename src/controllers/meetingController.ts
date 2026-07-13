@@ -139,7 +139,8 @@ export async function listMeetings(req: RequestWithTenant, res: Response) {
     orderBy: { startsAt: 'desc' },
     include: {
       mentor: { select: { id: true, fullName: true } },
-      menti:  { select: { id: true, fullName: true } },
+      menti:  { select: { id: true, fullName: true, sectorTags: true, expectationCategories: true } },
+      match:  { select: { id: true, predictedScore: true, sectorScore: true, characterScore: true } },
     },
   });
 
@@ -281,25 +282,39 @@ export async function getAvailability(req: RequestWithTenant, res: Response) {
   return res.status(200).json({ mentorUserId, blocks });
 }
 
+const BookMeetingSchema = z.object({
+  mentorUserId:   z.string().min(1),
+  matchId:        z.string().optional(),
+  format:         z.enum(['ONLINE', 'IN_PERSON', 'PHONE']),
+  startsAt:       z.string(),
+  endsAt:         z.string(),
+  locationUrl:    z.string().optional(),
+  locationText:   z.string().optional(),
+  phoneNumber:    z.string().optional(),
+  requestMessage: z.string()
+    .min(50, 'Niyet mesajı en az 50 karakter olmalıdır.')
+    .max(500, 'Niyet mesajı en fazla 500 karakter olabilir.'),
+});
+
 // 3) bookMeeting — Menti uygun slota görüşme oluşturur (çakışma + müsaitlik kontrollü)
 export async function bookMeeting(req: RequestWithTenant, res: Response) {
   const ctx = getCtx(req);
   if (!ctx) return res.status(401).json({ error: 'Kimlik veya tenant bağlamı yok.' });
   const { userId, tenantId } = ctx;
 
-  const {
-    matchId, mentorUserId, format, startsAt: startsAtRaw, endsAt: endsAtRaw,
-    locationUrl, locationText, phoneNumber,
-  } = req.body as {
-    matchId?: string; mentorUserId?: string; format?: MeetingFormat;
-    startsAt?: string; endsAt?: string;
-    locationUrl?: string; locationText?: string; phoneNumber?: string;
-  };
-
-  if (!mentorUserId || !format || !startsAtRaw || !endsAtRaw) {
-    return res.status(400).json({ error: 'mentorUserId, format, startsAt, endsAt zorunlu.' });
+  const parsed = BookMeetingSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
-  if (!VALID_FORMATS.includes(format)) {
+
+  const {
+    matchId, mentorUserId, format,
+    startsAt: startsAtRaw, endsAt: endsAtRaw,
+    locationUrl, locationText, phoneNumber,
+    requestMessage,
+  } = parsed.data;
+
+  if (!VALID_FORMATS.includes(format as MeetingFormat)) {
     return res.status(400).json({ error: `Geçersiz format: ${format}` });
   }
 
@@ -371,16 +386,17 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   const meeting = await prisma.meeting.create({
     data: {
       tenantId,
-      matchId:      matchId ?? null,
+      matchId:        matchId ?? null,
       mentorUserId,
-      mentiUserId:  userId,
+      mentiUserId:    userId,
       format,
-      status:       MeetingStatus.PENDING,
-      startsAt:     start,
-      endsAt:       end,
-      locationUrl:  format === MeetingFormat.ONLINE    ? (locationUrl  ?? null) : null,
-      locationText: format === MeetingFormat.IN_PERSON ? (locationText ?? null) : null,
-      phoneNumber:  format === MeetingFormat.PHONE     ? (phoneNumber  ?? null) : null,
+      status:         MeetingStatus.PENDING,
+      startsAt:       start,
+      endsAt:         end,
+      requestMessage,
+      locationUrl:    format === MeetingFormat.ONLINE    ? (locationUrl  ?? null) : null,
+      locationText:   format === MeetingFormat.IN_PERSON ? (locationText ?? null) : null,
+      phoneNumber:    format === MeetingFormat.PHONE     ? (phoneNumber  ?? null) : null,
     },
   });
 

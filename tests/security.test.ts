@@ -125,6 +125,11 @@ describe('KRİTİK-1c: GET /users/:userId/clubs — auth guard', () => {
 
 // ─── KRİTİK-2: GET /api/system-logs ─────────────────────────────────────────
 
+// requirePlatformAdmin cookie okur (Bearer değil) — token cookie olarak gönderilmeli.
+function sysCookie(token: string): string {
+  return `platform_token=${encodeURIComponent(token)}`;
+}
+
 describe('KRİTİK-2: GET /api/system-logs — platform admin zorunlu', () => {
   it('auth olmadan → 401', async () => {
     const res = await sysHttp.get('/api/system-logs');
@@ -140,7 +145,7 @@ describe('KRİTİK-2: GET /api/system-logs — platform admin zorunlu', () => {
     });
     const res = await sysHttp
       .get('/api/system-logs')
-      .set('Authorization', `Bearer ${tenantAdminToken}`);
+      .set('Cookie', sysCookie(tenantAdminToken));
     expect(res.status).toBe(403);
   });
 
@@ -153,7 +158,7 @@ describe('KRİTİK-2: GET /api/system-logs — platform admin zorunlu', () => {
     });
     const res = await sysHttp
       .get('/api/system-logs')
-      .set('Authorization', `Bearer ${mentorToken}`);
+      .set('Cookie', sysCookie(mentorToken));
     expect(res.status).toBe(403);
   });
 
@@ -167,7 +172,7 @@ describe('KRİTİK-2: GET /api/system-logs — platform admin zorunlu', () => {
     });
     const res = await sysHttp
       .get('/api/system-logs')
-      .set('Authorization', `Bearer ${platformToken}`);
+      .set('Cookie', sysCookie(platformToken));
     expect(res.status).toBe(200);
     expect(Array.isArray((res.body as { items: unknown[] }).items)).toBe(true);
   });

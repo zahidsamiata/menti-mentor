@@ -92,7 +92,7 @@ export async function getMeetingFeedback(req: RequestWithTenant, res: Response) 
   const feedback = await prisma.feedback.findUnique({
     where: { meetingId },
     include: {
-      meeting: { select: { tenantId: true } },
+      meeting: { select: { tenantId: true, mentorUserId: true, mentiUserId: true } },
     },
   });
 
@@ -100,7 +100,40 @@ export async function getMeetingFeedback(req: RequestWithTenant, res: Response) 
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Geri bildirim bulunamadı.' });
   }
 
-  return res.json(feedback);
+  const userId  = req.auth?.userId;
+  const role    = req.auth?.role;
+  const isMentor = feedback.meeting.mentorUserId === userId;
+  const isMenti  = feedback.meeting.mentiUserId  === userId;
+  const isAdmin  = role === 'ADMIN';
+
+  if (!isMentor && !isMenti && !isAdmin) {
+    return res.status(403).json({ error: 'YETKISIZ' });
+  }
+
+  // KARAR 1: Taraflar yalnızca KENDİ yazdıklarını görür; karşı tarafın değerlendirmesi gizlenir.
+  // Mentor → Menti alanları: preparednessScore, proactivityScore, engagementScore,
+  //   goalClarityScore, keyLearnings, specificComments, periodic* alanları.
+  // Menti → Mentor alanları: guidanceScore, resourceSharingScore, trustScore.
+  if (isAdmin) {
+    return res.json(feedback);
+  }
+
+  const { meeting: _m, ...base } = feedback;
+
+  if (isMentor) {
+    const { guidanceScore: _g, resourceSharingScore: _r, trustScore: _t, ...mentorView } = base;
+    return res.json(mentorView);
+  }
+
+  // isMenti: yalnızca menti → mentor alanları
+  const {
+    preparednessScore: _p, proactivityScore: _pr, engagementScore: _e, goalClarityScore: _gc,
+    keyLearnings: _kl, specificComments: _sc,
+    periodicCareerGrowth: _pcg, periodicTrustScore: _pts,
+    periodicNetworkScore: _pns, periodicConfidenceScore: _pcs, periodicNpsScore: _pnps,
+    ...mentiView
+  } = base;
+  return res.json(mentiView);
 }
 
 // Admin: oryantasyon kilidini kaldırır (örn. mentor onayı veya program tamamlama sonrası)
