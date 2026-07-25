@@ -147,6 +147,14 @@ export async function recalcDiscVector(userId: string): Promise<DiscVector> {
     data: { discVector: vector satisfies object },
   });
 
+  // UserProfile'a normalize DISC bileşenlerini de yaz (skorlayıcının kullandığı kaynak).
+  // upsert idempotenttir; profil yoksa oluşturur, varsa yalnızca DISC alanlarını günceller.
+  await prisma.userProfile.upsert({
+    where:  { userId },
+    create: { userId, discD: vector.D, discI: vector.I, discS: vector.S, discC: vector.C },
+    update: { discD: vector.D, discI: vector.I, discS: vector.S, discC: vector.C },
+  });
+
   return vector;
 }
 

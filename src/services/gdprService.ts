@@ -16,9 +16,12 @@
  *   - volunteerHistory, pastProjects, education, selfProfile (serbest form)
  *   - discVector (kişilik verisi — hassas kategori)
  *   - discType (kişilik verisi — hassas kategori)
+ *   - UserProfile.schools, UserProfile.companies, UserProfile.communities (bağlam/PII)
+ *   - UserProfile.discD/I/S/C, oceanO..N, archetype (kişilik verisi — hassas kategori)
  *
  * Analitik Alanları (silinmez — anonimleştirme sonrası korunur):
  *   - sectorTags, role, tenantId (tenant-seviyesi istatistik)
+ *   - UserProfile.skillTags, goalTags, industryCode, yearsExp (mesleki, non-PII)
  *   - FeedbackLog.npsScore, FeedbackLog.starRating (anonim)
  *   - createdAt (zaman analizi)
  */
@@ -79,6 +82,18 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
 
     // Kullanıcı yanıtlarını sil (DISC soruları — kişilik profili)
     await tx.userResponse.deleteMany({ where: { userId } });
+
+    // UserProfile: PII/kişilik alanlarını temizle, Analitik (skill/goal/industry/yearsExp) koru.
+    // updateMany kullanılır — profil satırı yoksa sessizce no-op olur.
+    await tx.userProfile.updateMany({
+      where: { userId },
+      data: {
+        schools: [], companies: [], communities: [],           // PII bağlam
+        discD: 0, discI: 0, discS: 0, discC: 0,                 // kişilik verisi
+        oceanO: null, oceanC: null, oceanE: null, oceanA: null, oceanN: null,
+        archetype: null,
+      },
+    });
   });
 
   const fieldsCleared = [
@@ -86,6 +101,8 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     'volunteerHistory', 'pastProjects', 'education', 'selfProfile',
     'discVector', 'discType', 'temperamentJson',
     'userResponses',
+    'userProfile.schools', 'userProfile.companies', 'userProfile.communities',
+    'userProfile.disc', 'userProfile.ocean', 'userProfile.archetype',
   ];
 
   void logger.info('SYSTEM', 'KVKK: Kullanıcı anonimleştirildi', {
@@ -145,6 +162,11 @@ export async function hardDeleteUser(userId: string, tenantId: string): Promise<
       where: { OR: [{ mentorId: userId }, { mentiId: userId }] },
     });
     if (feedbackLogs.count > 0) tablesAffected.push('FeedbackLog');
+
+    // UserProfile: PII (schools/companies/communities) dahil tüm profil kalıcı silinir.
+    // (User silme zaten cascade eder; burada açıkça silip tablesAffected'a yazarız.)
+    const profiles = await tx.userProfile.deleteMany({ where: { userId } });
+    if (profiles.count > 0) tablesAffected.push('UserProfile');
 
     // Toplantıları ve geri bildirimleri anonimleştir (istatistik için koru)
     // Not: Meeting ve Feedback kayıtları silinmez — mentorId/mentiId NULL yapılır.

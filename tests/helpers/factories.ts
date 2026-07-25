@@ -8,7 +8,7 @@
 
 import bcrypt from 'bcryptjs';
 import { testPrisma } from './db.js';
-import type { Tenant, User } from '@prisma/client';
+import type { Tenant, User, UserProfile } from '@prisma/client';
 
 let counter = 0;
 const uid = () => `${Date.now()}-${++counter}`;
@@ -94,6 +94,51 @@ export async function createUser(seed: UserSeed): Promise<User & { rawPassword: 
 /** Admin kullanıcısı oluştur + JWT token'ı döner (test isteklerinde Authorization header için). */
 export async function createAdminUser(tenantId: string): Promise<User & { rawPassword: string }> {
   return createUser({ tenantId, role: 'ADMIN', approvalStatus: 'APPROVED' });
+}
+
+// ─── UserProfile ────────────────────────────────────────────────────────────
+
+export interface UserProfileSeed {
+  discD?: number;
+  discI?: number;
+  discS?: number;
+  discC?: number;
+  archetype?: string | null;
+  archetypeRole?: 'ADMIN' | 'MENTOR' | 'MENTI';
+  industryCode?: string | null;
+  yearsExp?: number | null;
+  skillTags?: string[];
+  goalTags?: string[];
+  schools?: string[];
+  companies?: string[];
+  communities?: string[];
+}
+
+/** Verilen kullanıcı için bir UserProfile satırı oluşturur (idempotent — upsert). */
+export async function createUserProfile(
+  userId: string,
+  seed: UserProfileSeed = {},
+): Promise<UserProfile> {
+  const data = {
+    discD: seed.discD ?? 0,
+    discI: seed.discI ?? 0,
+    discS: seed.discS ?? 0,
+    discC: seed.discC ?? 0,
+    archetype: seed.archetype ?? null,
+    archetypeRole: seed.archetypeRole ?? 'MENTI',
+    industryCode: seed.industryCode ?? null,
+    yearsExp: seed.yearsExp ?? null,
+    skillTags: seed.skillTags ?? [],
+    goalTags: seed.goalTags ?? [],
+    schools: seed.schools ?? [],
+    companies: seed.companies ?? [],
+    communities: seed.communities ?? [],
+  };
+  return testPrisma.userProfile.upsert({
+    where:  { userId },
+    create: { userId, ...data },
+    update: data,
+  });
 }
 
 export async function createMentor(tenantId: string, overrides: Partial<UserSeed> = {}) {

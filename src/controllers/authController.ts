@@ -11,6 +11,7 @@ import { GoogleOAuthProvider, OAuthProviderError } from '../services/oauth/googl
 import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
 import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthStateService.js';
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
+import { ensureUserProfile } from '../services/userProfile.service.js';
 import { config } from '../config.js';
 
 
@@ -165,6 +166,10 @@ export async function register(req: Request, res: Response) {
       approvalStatus: true,
     },
   });
+
+  // Her kullanıcı için UserProfile yaşam döngüsünü başlat (idempotent).
+  // Skorlama alanları onboarding'de doldurulur; burada yalnızca satırın varlığı garanti edilir.
+  await ensureUserProfile(user.id);
 
   // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
   const tenantAdmins = await prisma.user.findMany({
