@@ -6,7 +6,11 @@ import { computeAndStoreProfile, rankMentorsForMenti, type CertData } from '../s
 import { computeSectorScore } from '../services/scoring.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { scoreSjtAnswers, type SjtAnswer } from '../services/sjt-scorer.js';
-import { evaluateCertification } from '../services/certification.service.js';
+import {
+  evaluateCertification,
+  getCertificationQuestions,
+  revealOption,
+} from '../services/certification.service.js';
 
 const SjtAnswerSchema = z.object({
   questionCode: z.string().min(1),
@@ -122,31 +126,52 @@ export async function rankMentorsHandler(req: RequestWithTenant, res: Response) 
   return res.json({ mentiId, totalEligible: ranked.length, results });
 }
 
+// Not: userId body'den ALINMAZ — IDOR önlemek için kimliği doğrulanmış kullanıcı
+// (req.auth) kendi sertifikasını değerlendirir. answers = konu-bazında ilk seçimler.
 const CertifySchema = z.object({
-  userId:  z.string().min(1),
   answers: z.array(z.object({
     questionCode: z.string().min(1),
     optionKey:    z.string().min(1),
   })).min(1),
 });
 
+const RevealAnswerSchema = z.object({
+  questionCode: z.string().min(1),
+  optionKey:    z.string().min(1),
+});
+
+// GET /api/scoring/certification/questions — öğrenme akışı senaryoları (cevap sızdırmaz)
+export async function certQuestionsHandler(_req: RequestWithTenant, res: Response) {
+  const questions = await getCertificationQuestions();
+  return res.status(200).json({ questions });
+}
+
+// POST /api/scoring/certification/answer — seçim sonrası açıklama (öğrenme anı)
+export async function certRevealHandler(req: RequestWithTenant, res: Response) {
+  const parsed = RevealAnswerSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+  try {
+    const reveal = await revealOption(parsed.data.questionCode, parsed.data.optionKey);
+    return res.status(200).json(reveal);
+  } catch {
+    return res.status(404).json({ error: 'BULUNAMADI', message: 'Soru veya seçenek bulunamadı.' });
+  }
+}
+
 // POST /api/scoring/certify
 export async function certifyHandler(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
+  }
   const parsed = CertifySchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const result = await evaluateCertification(parsed.data.userId, req.tenant.tenantId, parsed.data.answers);
-
-  if (result.failReason === 'COOLDOWN_ACTIVE') {
-    return res.status(429).json({
-      error:         'COOLDOWN_ACTIVE',
-      cooldownUntil: result.cooldownUntil,
-      attempts:      result.attempts,
-    });
-  }
-
+  // IDOR koruması: yalnızca kimliği doğrulanmış kullanıcının kendi sertifikası.
+  const result = await evaluateCertification(req.auth.userId, req.tenant.tenantId, parsed.data.answers);
   return res.status(200).json(result);
 }
 

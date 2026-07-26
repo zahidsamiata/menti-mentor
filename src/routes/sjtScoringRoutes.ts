@@ -6,6 +6,8 @@ import {
   rankMentorsHandler,
   feedbackHandler,
   certifyHandler,
+  certQuestionsHandler,
+  certRevealHandler,
 } from '../controllers/sjtScoringController.js';
 
 const router = Router();
@@ -32,7 +34,21 @@ router.post(
   feedbackHandler as unknown as RequestHandler,
 );
 
-// POST /api/scoring/certify → yalnızca MENTOR rolü sertifika sınavına girebilir
+// GET /api/scoring/certification/questions → öğrenme akışı senaryoları (yalnızca MENTOR)
+router.get(
+  '/certification/questions',
+  requireRole('MENTOR'),
+  certQuestionsHandler as unknown as RequestHandler,
+);
+
+// POST /api/scoring/certification/answer → seçim sonrası açıklama (öğrenme anı, yalnızca MENTOR)
+router.post(
+  '/certification/answer',
+  requireRole('MENTOR'),
+  certRevealHandler as unknown as RequestHandler,
+);
+
+// POST /api/scoring/certify → yalnızca MENTOR; kendi ilk-deneme sonucunu değerlendirir
 router.post(
   '/certify',
   requireRole('MENTOR'),
