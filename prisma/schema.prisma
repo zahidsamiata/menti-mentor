@@ -943,6 +943,8 @@ model CertificationQuestion {
   id        String                @id @default(cuid())
   code      String                @unique
   dimension String
+  topic     String?               // Konu grubu (ör. "cevabi-verme-buldur") — aynı konunun varyantlarını bağlar
+  variant   String?               // Konu içindeki varyant etiketi (ör. "A", "B")
   scenario  String
   isRedLine Boolean               @default(false)
   isActive  Boolean               @default(true)
@@ -960,6 +962,8 @@ model CertificationOption {
   key             String
   label           String
   competencyScore Int
+  explanation     String?               // Seçim sonrası gösterilen "neden doğru/yanlış" öğrenme metni
+  outcome         String?               // "correct" | "acceptable" | "wrong" — UI rozeti / ilk-deneme değerlendirmesi
 
   @@unique([questionId, key])
   @@index([questionId])
