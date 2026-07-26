@@ -14,12 +14,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
-import { createTenant, createMentor } from './helpers/factories.js';
+import { createTenant, createMentor, createAdminUser } from './helpers/factories.js';
 import {
   evaluateCertification,
   getCertificationQuestions,
   revealOption,
   isFirstAttemptPass,
+  listCertificationTopics,
+  setCertificationTopic,
 } from '../src/services/certification.service.js';
 import type { Tenant } from '@prisma/client';
 
@@ -152,7 +154,7 @@ describe('Sertifika motoru', () => {
 
   // ── Okuma yardımcıları ───────────────────────────────────────────────────────
   it('getCertificationQuestions doğru cevabı SIZDIRMAZ', async () => {
-    const qs = await getCertificationQuestions();
+    const qs = await getCertificationQuestions(tenant.id);
     expect(qs.length).toBe(5);
     const opt = qs[0]!.options[0]! as Record<string, unknown>;
     expect(opt).toHaveProperty('key');
@@ -206,5 +208,69 @@ describe('Sertifika motoru', () => {
     // Sadece giriş yapan mentörün üyeliği sertifikalı olmalı.
     const m = await testPrisma.tenantMembership.findUnique({ where: { userId_tenantId: { userId: mentorId, tenantId: tenant.id } } });
     expect(m!.isCertified).toBe(true);
+  });
+
+  // ── Paket E: STK konu aç/kapat ───────────────────────────────────────────────
+  it('kapatılan konu havuzdan çıkar ve totalTopics azalır', async () => {
+    await setCertificationTopic(tenant.id, 'topic1', false);
+
+    const list = await listCertificationTopics(tenant.id);
+    expect(list.find((t) => t.topic === 'topic1')!.enabled).toBe(false);
+    expect(list.find((t) => t.topic === 'topic2')!.enabled).toBe(true);
+
+    const qs = await getCertificationQuestions(tenant.id);
+    expect(qs.some((q) => q.topic === 'topic1')).toBe(false); // kapalı konu gösterilmez
+    expect(qs.length).toBe(4);
+
+    // Kalan 4 konuyu ilk-denemede geç → totalTopics 4 üzerinden %100
+    const r = await evaluateCertification(mentorId, tenant.id, [
+      { questionCode: 'Q_T2', optionKey: 'A' },
+      { questionCode: 'Q_T3', optionKey: 'A' },
+      { questionCode: 'Q_T4', optionKey: 'A' },
+      { questionCode: 'Q_T5', optionKey: 'A' },
+    ]);
+    expect(r.totalTopics).toBe(4);
+    expect(r.passed).toBe(true);
+  });
+
+  it('konu kapatma tenant izolasyonludur (başka tenant etkilenmez)', async () => {
+    const tenantB = await createTenant();
+    await setCertificationTopic(tenant.id, 'topic1', false);
+
+    const listA = await listCertificationTopics(tenant.id);
+    const listB = await listCertificationTopics(tenantB.id);
+    expect(listA.find((t) => t.topic === 'topic1')!.enabled).toBe(false);
+    expect(listB.find((t) => t.topic === 'topic1')!.enabled).toBe(true); // B etkilenmedi
+  });
+
+  it('setCertificationTopic bilinmeyen konuyu reddeder', async () => {
+    await expect(setCertificationTopic(tenant.id, 'olmayan-konu', false)).rejects.toThrow();
+  });
+
+  it('GET /certification/topics ADMIN gerektirir (MENTOR → 403)', async () => {
+    await http
+      .get('/api/scoring/certification/topics')
+      .set(tenantHeaders(tenant.id, token)) // mentor token
+      .expect(403);
+  });
+
+  it('ADMIN /certification/topics listeler ve PATCH ile aç/kapat yapar', async () => {
+    const admin = await createAdminUser(tenant.id);
+    const adminTokens = await loginAs(http, admin.email, admin.rawPassword);
+    const adminToken = adminTokens.accessToken;
+
+    const listRes = await http
+      .get('/api/scoring/certification/topics')
+      .set(tenantHeaders(tenant.id, adminToken))
+      .expect(200);
+    expect(listRes.body.topics.length).toBe(5);
+
+    const patchRes = await http
+      .patch('/api/scoring/certification/topics')
+      .set(tenantHeaders(tenant.id, adminToken))
+      .send({ topic: 'topic5', enabled: false })
+      .expect(200);
+    const t5 = patchRes.body.topics.find((t: { topic: string; enabled: boolean }) => t.topic === 'topic5');
+    expect(t5.enabled).toBe(false);
   });
 });

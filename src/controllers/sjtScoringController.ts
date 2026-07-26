@@ -10,6 +10,8 @@ import {
   evaluateCertification,
   getCertificationQuestions,
   revealOption,
+  listCertificationTopics,
+  setCertificationTopic,
 } from '../services/certification.service.js';
 
 const SjtAnswerSchema = z.object({
@@ -141,9 +143,34 @@ const RevealAnswerSchema = z.object({
 });
 
 // GET /api/scoring/certification/questions — öğrenme akışı senaryoları (cevap sızdırmaz)
-export async function certQuestionsHandler(_req: RequestWithTenant, res: Response) {
-  const questions = await getCertificationQuestions();
+export async function certQuestionsHandler(req: RequestWithTenant, res: Response) {
+  const questions = await getCertificationQuestions(req.tenant.tenantId);
   return res.status(200).json({ questions });
+}
+
+const SetTopicSchema = z.object({
+  topic:   z.string().min(1).max(100),
+  enabled: z.boolean(),
+});
+
+// GET /api/scoring/certification/topics — kurumun konu aç/kapat listesi (ADMIN)
+export async function certTopicsListHandler(req: RequestWithTenant, res: Response) {
+  const topics = await listCertificationTopics(req.tenant.tenantId);
+  return res.status(200).json({ topics });
+}
+
+// PATCH /api/scoring/certification/topics — konu aç/kapat (ADMIN, yalnızca kendi tenant'ı)
+export async function certTopicSetHandler(req: RequestWithTenant, res: Response) {
+  const parsed = SetTopicSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+  try {
+    const topics = await setCertificationTopic(req.tenant.tenantId, parsed.data.topic, parsed.data.enabled);
+    return res.status(200).json({ topics });
+  } catch {
+    return res.status(404).json({ error: 'BULUNAMADI', message: 'Konu bulunamadı.' });
+  }
 }
 
 // POST /api/scoring/certification/answer — seçim sonrası açıklama (öğrenme anı)

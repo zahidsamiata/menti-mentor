@@ -23,6 +23,15 @@ export function isFirstAttemptPass(competencyScore: number, isRedLine: boolean):
   return isRedLine ? competencyScore === 3 : competencyScore >= 2;
 }
 
+/** Kurumun kapattığı sertifika konusu slug'ları (per-tenant). Boş = tüm konular aktif. */
+async function getDisabledTopics(tenantId: string): Promise<Set<string>> {
+  const t = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { disabledCertTopics: true },
+  });
+  return new Set(t?.disabledCertTopics ?? []);
+}
+
 export interface CertAnswer {
   questionCode: string;
   optionKey: string;
@@ -81,9 +90,14 @@ export async function evaluateCertification(
   });
   const byCode = new Map(questions.map((q) => [q.code, q]));
 
-  // Toplam konu sayısı = aktif sorulardaki benzersiz (null olmayan) topic sayısı.
+  // Kurumun kapattığı konular değerlendirmeye girmez (per-tenant).
+  const disabled = await getDisabledTopics(tenantId);
+
+  // Toplam konu sayısı = aktif ve kurumca AÇIK benzersiz topic sayısı.
   const totalTopics = new Set(
-    questions.map((q) => q.topic).filter((t): t is string => !!t),
+    questions
+      .map((q) => q.topic)
+      .filter((t): t is string => !!t && !disabled.has(t)),
   ).size;
 
   // ── Konu bazında İLK-deneme değerlendirmesi ────────────────────────────────
@@ -91,7 +105,8 @@ export async function evaluateCertification(
   for (const ans of answers) {
     const q = byCode.get(ans.questionCode);
     if (!q || !q.topic) continue;
-    if (firstByTopic.has(q.topic)) continue; // yalnızca ilk-deneme
+    if (disabled.has(q.topic)) continue;      // kapalı konu sayılmaz
+    if (firstByTopic.has(q.topic)) continue;  // yalnızca ilk-deneme
     const opt = q.options.find((o) => o.key === ans.optionKey);
     if (!opt) continue;
     firstByTopic.set(q.topic, {
@@ -154,12 +169,13 @@ export interface CertQuestionPublic {
 }
 
 /**
- * Aktif sertifika sorularını öğrenme akışı için döndürür.
+ * Aktif sertifika sorularını öğrenme akışı için döndürür (kurumun kapattığı konular hariç).
  * GÜVENLİK: doğru cevabı sızdırmamak için explanation / outcome / competencyScore
  * DÖNMEZ — bunlar yalnızca bir seçim yapıldıktan sonra revealOption ile verilir.
  */
-export async function getCertificationQuestions(): Promise<CertQuestionPublic[]> {
-  return prisma.certificationQuestion.findMany({
+export async function getCertificationQuestions(tenantId: string): Promise<CertQuestionPublic[]> {
+  const disabled = await getDisabledTopics(tenantId);
+  const questions = await prisma.certificationQuestion.findMany({
     where:   { isActive: true },
     orderBy: [{ topic: 'asc' }, { variant: 'asc' }],
     select: {
@@ -174,6 +190,68 @@ export async function getCertificationQuestions(): Promise<CertQuestionPublic[]>
       },
     },
   });
+  return questions.filter((q) => !q.topic || !disabled.has(q.topic));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STK admin: konu aç/kapat (kurum senaryo ekleyemez/düzenleyemez, sadece seçer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CertTopicInfo {
+  topic: string;
+  isRedLine: boolean;
+  variantCount: number;
+  enabled: boolean;
+}
+
+/** Kurumun sertifika konularını (aç/kapat durumuyla) listeler. */
+export async function listCertificationTopics(tenantId: string): Promise<CertTopicInfo[]> {
+  const disabled = await getDisabledTopics(tenantId);
+  const qs = await prisma.certificationQuestion.findMany({
+    where:  { isActive: true },
+    select: { topic: true, isRedLine: true },
+  });
+  const map = new Map<string, { isRedLine: boolean; count: number }>();
+  for (const q of qs) {
+    if (!q.topic) continue;
+    const e = map.get(q.topic) ?? { isRedLine: false, count: 0 };
+    e.count += 1;
+    e.isRedLine = e.isRedLine || q.isRedLine;
+    map.set(q.topic, e);
+  }
+  return [...map.entries()]
+    .map(([topic, e]) => ({ topic, isRedLine: e.isRedLine, variantCount: e.count, enabled: !disabled.has(topic) }))
+    .sort((a, b) => a.topic.localeCompare(b.topic));
+}
+
+/**
+ * Bir konuyu kurum için açar/kapatır. Yalnızca MEVCUT (aktif) konular hedeflenebilir —
+ * kurum yeni konu/senaryo ekleyemez, yalnızca var olanı seçer/kaldırır.
+ */
+export async function setCertificationTopic(
+  tenantId: string,
+  topic: string,
+  enabled: boolean,
+): Promise<CertTopicInfo[]> {
+  const exists = await prisma.certificationQuestion.count({ where: { isActive: true, topic } });
+  if (exists === 0) {
+    throw new Error(`Bilinmeyen sertifika konusu: ${topic}`);
+  }
+  const t = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { disabledCertTopics: true },
+  });
+  if (!t) throw new Error(`Tenant bulunamadı: ${tenantId}`);
+
+  const set = new Set(t.disabledCertTopics);
+  if (enabled) set.delete(topic);
+  else set.add(topic);
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data:  { disabledCertTopics: [...set] },
+  });
+  return listCertificationTopics(tenantId);
 }
 
 export interface OptionReveal {

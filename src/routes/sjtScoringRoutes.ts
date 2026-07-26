@@ -8,6 +8,8 @@ import {
   certifyHandler,
   certQuestionsHandler,
   certRevealHandler,
+  certTopicsListHandler,
+  certTopicSetHandler,
 } from '../controllers/sjtScoringController.js';
 
 const router = Router();
@@ -53,6 +55,20 @@ router.post(
   '/certify',
   requireRole('MENTOR'),
   certifyHandler as unknown as RequestHandler,
+);
+
+// GET /api/scoring/certification/topics → kurumun konu aç/kapat listesi (ADMIN)
+router.get(
+  '/certification/topics',
+  requireRole('ADMIN'),
+  certTopicsListHandler as unknown as RequestHandler,
+);
+
+// PATCH /api/scoring/certification/topics → konu aç/kapat (ADMIN, kendi tenant'ı)
+router.patch(
+  '/certification/topics',
+  requireRole('ADMIN'),
+  certTopicSetHandler as unknown as RequestHandler,
 );
 
 export default router;
