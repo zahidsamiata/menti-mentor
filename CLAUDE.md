@@ -76,8 +76,8 @@ All data in this system is classified into two categories. Code must never mix t
 
 | Category | Fields | Rules |
 |---|---|---|
-| **PII (Personal Identifiable Information)** | `fullName`, `email`, `bioSummary`, `expertiseDetails`, `targetAudience`, `volunteerHistory`, `pastProjects`, `education`, `selfProfile`, `discVector`, `discType`, `temperamentJson`, `iceBreaker`, `requestMessage` | Never expose in aggregate analytics. Covered by KVKK Art.7 / GDPR Art.17. Subject to anonymization and hard-delete. |
-| **Analytical (Non-PII)** | `sectorTags`, `role`, `tenantId`, `createdAt`, `npsScore`, `starRating`, `isActive`, `rematchCount`, `expectationCategories`, `timeCommitment` | Safe for aggregate reporting. May appear in KPI dashboards. Must NOT be linked to specific user identity in any exported report. |
+| **PII (Personal Identifiable Information)** | `fullName`, `email`, `bioSummary`, `expertiseDetails`, `targetAudience`, `volunteerHistory`, `pastProjects`, `education`, `selfProfile`, `discVector`, `discType`, `temperamentJson`, `iceBreaker`, `requestMessage`, `UserProfile.schools`, `UserProfile.companies`, `UserProfile.communities`, `UserProfile.discD/I/S/C`, `UserProfile.oceanO..N`, `UserProfile.archetype` | Never expose in aggregate analytics. Covered by KVKK Art.7 / GDPR Art.17. Subject to anonymization and hard-delete. `schools/companies/communities` re-identify a person (school+company); keep out of KPI/aggregate/export. |
+| **Analytical (Non-PII)** | `sectorTags`, `role`, `tenantId`, `createdAt`, `npsScore`, `starRating`, `isActive`, `rematchCount`, `expectationCategories`, `timeCommitment`, `UserProfile.skillTags`, `UserProfile.goalTags`, `UserProfile.industryCode`, `UserProfile.yearsExp` | Safe for aggregate reporting. May appear in KPI dashboards. Must NOT be linked to specific user identity in any exported report. |
 
 ### Compliance Rules for Claude Code
 
@@ -87,7 +87,7 @@ All data in this system is classified into two categories. Code must never mix t
 4. **LLM calls** (`iceBreaker.ts`, `matchReason.ts`) must never receive raw email addresses, full names beyond what is needed for the prompt, or any field not explicitly listed in the service's argument type.
 5. **Logs** (`logger.ts`, `requestLogger.ts`) must not contain PII. Log `userId` and `tenantId` only — never `email`, `fullName`, or `discVector`.
 6. **Rate limiting**: `llmRateLimiter` middleware exists but is no longer applied (LLM removed). Keep it for future integrations but do not add it to any route.
-7. **sectorTags** input must always be sanitized: trim, lowercase, max 50 chars per tag, alphanumeric + limited special chars only.
+7. **sectorTags** input must always be sanitized: trim, lowercase, max 50 chars per tag, alphanumeric + limited special chars only. The same applies to `UserProfile` tag fields (`skillTags`, `goalTags`, `schools`, `companies`, `communities`) — sanitized via `sanitizeTags()` in `onboardingController.ts` (trim, lowercase, whitelist regex, length cap, dedupe) before persistence.
 
 ### Data Retention Policy (KVKK Art.7)
 

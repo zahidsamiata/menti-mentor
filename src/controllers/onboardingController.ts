@@ -14,6 +14,38 @@ const SECTOR_TAG_SCHEMA = z
   )
   .transform((t) => t.trim().toLowerCase());
 
+// ─── UserProfile etiket alanları için sanitizasyon (SECTOR_TAG_SCHEMA ile aynı ruh) ──
+// Poison prevention: trim + lowercase + whitelist regex + uzunluk + dedupe.
+// Non-throwing: geçersiz/uzun girdiler ELENİR (mevcut onboarding akışı 400 ile kırılmaz).
+const TAG_SAFE_REGEX = /^[a-zğüşıöç0-9\s\-&\/\.,'()]+$/;
+function sanitizeTags(raw: string[] | undefined, maxLen = 80): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out = raw
+    .map((t) => (typeof t === 'string' ? t.trim().toLowerCase() : ''))
+    .filter((t) => t.length > 0 && t.length <= maxLen && TAG_SAFE_REGEX.test(t));
+  return [...new Set(out)];
+}
+
+// Frontend SECTORS etiketleri → IndustryNode.code (taksonomi ağacı; seed.ts INDUSTRY_TREE).
+// Anahtarlar aynı JS .toLowerCase() ile üretilir → gelen (lowercase) sector ile birebir eşleşir.
+// 'diğer' ve eşlenmeyen değerler → null (taksonomi bileşeni nötr kalır).
+const SECTOR_TO_INDUSTRY_CODE = new Map<string, string>(
+  ([
+    ['Teknoloji', 'TEK'],
+    ['Finans', 'FIN'],
+    ['Sağlık', 'SAG'],
+    ['Eğitim', 'EGT'],
+    ['Pazarlama', 'FIN.MRK'],
+    ['Hukuk', 'HUK'],
+    ['Danışmanlık', 'INS'],
+    ['Girişimcilik', 'FIN.GRS'],
+    ['Mühendislik', 'TEK'],
+    ['Tasarım & UX', 'TEK.URN'],
+    ['İnsan Kaynakları', 'INS.IK'],
+    ['Akademi', 'EGT.AKD'],
+  ] as Array<[string, string]>).map(([label, code]) => [label.toLowerCase(), code]),
+);
+
 // ─── Türkçe Mizaç Arketip Kartları ───────────────────────────────────────────
 // "Aha Anı" verisi — DISC testi sonrası kullanıcıya anında gösterilir.
 // LinkedIn'de paylaşılabilir, kısa ve güçlü dil kullanılır.
@@ -235,6 +267,12 @@ const CompleteProfileSchema = z.object({
   expectationCategories: z.array(z.enum(EXPECTATION_CATEGORIES)).max(6).optional(),
   timeCommitment:        z.enum(TIME_COMMITMENTS).optional(),
   interactionStyle:      z.enum(INTERACTION_STYLES).optional(),
+  // ── UserProfile skorlama alanları için opsiyonel veri toplama (Aşama 1) ──────
+  // Ham diziler kabul edilir; kalıcılaştırmadan önce sanitizeTags ile temizlenir.
+  goals:                 z.array(z.string().max(100)).max(30).optional(), // → goalTags (Analytical)
+  schools:               z.array(z.string().max(120)).max(20).optional(), // → PII
+  companies:             z.array(z.string().max(120)).max(20).optional(), // → PII
+  communities:           z.array(z.string().max(120)).max(20).optional(), // → PII
 });
 
 export async function completeProfile(req: RequestWithTenant, res: Response) {
@@ -250,7 +288,10 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const { sector, skills, experienceYears, expectationCategories, timeCommitment, interactionStyle } = parsed.data;
+  const {
+    sector, skills, experienceYears, expectationCategories, timeCommitment, interactionStyle,
+    goals, schools, companies, communities,
+  } = parsed.data;
 
   const user = await prisma.user.findUnique({
     where:  { id: req.auth.userId },
@@ -289,6 +330,29 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
       interactionStyle:      true,
       updatedAt:             true,
     },
+  });
+
+  // ── UserProfile skorlama alanlarını doldur (Aşama 1 — yalnızca veri toplama) ──
+  // Canlı eşleştirme (matching.ts) bu alanları KULLANMAZ; buraya yazmak canlı davranışı
+  // değiştirmez. Yukarıdaki User.* yazımı olduğu gibi korunur.
+  // Eşlemeler: skills→skillTags, goals→goalTags, sector→industryCode,
+  //            experienceYears→yearsExp, schools/companies/communities→PII bağlam alanları.
+  const skillTags   = sanitizeTags(skills, 60);
+  const goalTags    = sanitizeTags(goals, 60);
+  const industryCode = SECTOR_TO_INDUSTRY_CODE.get(sector) ?? null;
+  const profileSectorData = {
+    skillTags,
+    goalTags,
+    industryCode,
+    yearsExp:    experienceYears,
+    schools:     sanitizeTags(schools, 120),
+    companies:   sanitizeTags(companies, 120),
+    communities: sanitizeTags(communities, 120),
+  };
+  await prisma.userProfile.upsert({
+    where:  { userId: user.id },
+    create: { userId: user.id, ...profileSectorData },
+    update: profileSectorData,
   });
 
   return res.json({
