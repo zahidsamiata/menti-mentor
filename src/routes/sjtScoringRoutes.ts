@@ -6,6 +6,10 @@ import {
   rankMentorsHandler,
   feedbackHandler,
   certifyHandler,
+  certQuestionsHandler,
+  certRevealHandler,
+  certTopicsListHandler,
+  certTopicSetHandler,
 } from '../controllers/sjtScoringController.js';
 
 const router = Router();
@@ -32,11 +36,39 @@ router.post(
   feedbackHandler as unknown as RequestHandler,
 );
 
-// POST /api/scoring/certify → yalnızca MENTOR rolü sertifika sınavına girebilir
+// GET /api/scoring/certification/questions → öğrenme akışı senaryoları (yalnızca MENTOR)
+router.get(
+  '/certification/questions',
+  requireRole('MENTOR'),
+  certQuestionsHandler as unknown as RequestHandler,
+);
+
+// POST /api/scoring/certification/answer → seçim sonrası açıklama (öğrenme anı, yalnızca MENTOR)
+router.post(
+  '/certification/answer',
+  requireRole('MENTOR'),
+  certRevealHandler as unknown as RequestHandler,
+);
+
+// POST /api/scoring/certify → yalnızca MENTOR; kendi ilk-deneme sonucunu değerlendirir
 router.post(
   '/certify',
   requireRole('MENTOR'),
   certifyHandler as unknown as RequestHandler,
+);
+
+// GET /api/scoring/certification/topics → kurumun konu aç/kapat listesi (ADMIN)
+router.get(
+  '/certification/topics',
+  requireRole('ADMIN'),
+  certTopicsListHandler as unknown as RequestHandler,
+);
+
+// PATCH /api/scoring/certification/topics → konu aç/kapat (ADMIN, kendi tenant'ı)
+router.patch(
+  '/certification/topics',
+  requireRole('ADMIN'),
+  certTopicSetHandler as unknown as RequestHandler,
 );
 
 export default router;

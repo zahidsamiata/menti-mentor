@@ -161,6 +161,10 @@ model Tenant {
   minMatchScoreThreshold Int   @default(50) // Eşleşme taban barajı (0-100)
   blockedPairs           Json? // Array<{ fromUserId, toUserId, blockedAt, blockedBy }>
 
+  // Sertifika: kurumun KAPATTIĞI konu slug'ları. Boş = tüm konular aktif.
+  // Kurum yalnızca açar/kapatır; senaryo ekleyemez/düzenleyemez.
+  disabledCertTopics String[] @default([])
+
   // AlgorithmTuner bildirim sıklığı — admin kendi tercihine göre ayarlar
   // WEEKLY (varsayılan) | BIWEEKLY | MONTHLY
   reportingFrequency String @default("WEEKLY")
@@ -928,6 +932,11 @@ model TenantMembership {
   certAttempts        Int                 @default(0)
   cooldownUntil       DateTime?
   qualityMultiplier   Float               @default(1.0)
+
+  // Sertifika deneme döngüsü + yönetici bildirimi (mentör; createdAt = "sertifika açıldı" anı)
+  certWrongTopics     String[]  @default([]) // Son denemede geçilemeyen konular — sonraki denemede ağırlıklandırılır
+  certAdminNotifiedAt DateTime?              // STK yöneticisine "mentör geride kaldı" bildirimi yapıldı mı (bir kez)
+
   isActive            Boolean             @default(true)
 
   createdAt DateTime @default(now())
@@ -943,6 +952,8 @@ model CertificationQuestion {
   id        String                @id @default(cuid())
   code      String                @unique
   dimension String
+  topic     String?               // Konu grubu (ör. "cevabi-verme-buldur") — aynı konunun varyantlarını bağlar
+  variant   String?               // Konu içindeki varyant etiketi (ör. "A", "B")
   scenario  String
   isRedLine Boolean               @default(false)
   isActive  Boolean               @default(true)
@@ -960,6 +971,8 @@ model CertificationOption {
   key             String
   label           String
   competencyScore Int
+  explanation     String?               // Seçim sonrası gösterilen "neden doğru/yanlış" öğrenme metni
+  outcome         String?               // "correct" | "acceptable" | "wrong" — UI rozeti / ilk-deneme değerlendirmesi
 
   @@unique([questionId, key])
   @@index([questionId])

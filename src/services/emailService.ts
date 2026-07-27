@@ -194,6 +194,10 @@ export async function sendAlreadyRegisteredEmail(args: {
   );
 }
 
+// Not: Mentöre otomatik sertifika hatırlatma maili KALDIRILDI (maliyet). Yerine STK
+// yöneticisine uygulama-içi bildirim kullanılıyor (notificationService.notifyAdminsMentorCertLapsed).
+// İleride kurum kendi mail hesabından göndermek isterse buraya bir e-posta fonksiyonu eklenebilir.
+
 export async function sendFeedbackReminderEmail(args: {
   toEmail: string;
   recipientName: string;

@@ -15,6 +15,8 @@ import { prisma } from '../db.js';
 import { tuneScoringWeights } from './algorithmTuner.js';
 import { purgeExpiredData } from './gdprService.js';
 import { sendDraftTenantReminderEmail, sendFeedbackReminderEmail } from './emailService.js';
+import { notifyAdminsMentorCertLapsed } from './notificationService.js';
+import { CERT_CONFIG } from './certification.service.js';
 import { logger } from './logger.js';
 
 /**
@@ -273,6 +275,63 @@ export async function runAgreementRenewalCron(): Promise<{ prompted: number }> {
   }
 }
 
+// ─── Görev: Mentör Sertifika — Yönetici Bildirimi ────────────────────────────
+//
+// Sertifika hazırlığında geride kalan mentör için STK yöneticisine BİR kez
+// uygulama-içi bildirim gönderir (mail DEĞİL — sıfır maliyet). Yönetici mentörü
+// kişisel olarak hatırlatır; mentör bu bildirimin gittiğini BİLMEZ.
+//
+// Tetik (CERT_CONFIG.adminNotifyAfterDays gün açılıştan sonra, henüz bildirilmemiş):
+//   - Hiç başlamamış (certAttempts = 0), VEYA
+//   - Verilen hakları tüketmiş (certAttempts >= attemptsBeforeCooldown) ama geçememiş.
+
+export async function runMentorCertAdminNotifyCron(): Promise<{ adminNotified: number }> {
+  void logger.info('SYSTEM', 'Cron: Mentör sertifika yönetici bildirimi başladı');
+  try {
+    const cutoff = new Date(Date.now() - CERT_CONFIG.adminNotifyAfterDays * 24 * 60 * 60 * 1000);
+
+    const laggards = await prisma.tenantMembership.findMany({
+      where: {
+        role:                'MENTOR',
+        isActive:            true,
+        isCertified:         false,
+        certAdminNotifiedAt: null,
+        createdAt:           { lt: cutoff },
+        OR: [
+          { certAttempts: 0 },
+          { certAttempts: { gte: CERT_CONFIG.attemptsBeforeCooldown } },
+        ],
+      },
+      select: {
+        id: true, tenantId: true,
+        user: { select: { fullName: true, isActive: true } },
+      },
+    });
+
+    let adminNotified = 0;
+    for (const m of laggards) {
+      if (!m.user?.isActive) continue;
+      try {
+        await notifyAdminsMentorCertLapsed({ tenantId: m.tenantId, mentorName: m.user.fullName });
+      } catch (err) {
+        void logger.error('SYSTEM', `STK yönetici bildirimi başarısız: ${m.id}`, { error: String(err) });
+      }
+      // Bildirim denendiyse tekrar denememek için işaretle (bir kez).
+      await prisma.tenantMembership.update({
+        where: { id: m.id },
+        data:  { certAdminNotifiedAt: new Date() },
+      });
+      adminNotified++;
+    }
+
+    void logger.info('SYSTEM', 'Cron: Mentör sertifika yönetici bildirimi tamamlandı', { adminNotified });
+    return { adminNotified };
+  } catch (err) {
+    void logger.error('SYSTEM', 'Cron: Mentör sertifika yönetici bildirimi başarısız', { error: String(err) });
+    return { adminNotified: 0 };
+  }
+}
+
 // ─── Scheduler başlatma ───────────────────────────────────────────────────────
 
 export function startCronScheduler(): void {
@@ -309,6 +368,11 @@ export function startCronScheduler(): void {
   // Her gün 10:00 UTC — Anlaşma yenileme kontrolü (7 gün önceden bildirim)
   cron.schedule('0 10 * * *', () => {
     void runAgreementRenewalCron();
+  }, { timezone: 'UTC' });
+
+  // Her gün 11:00 UTC — Mentör sertifika yönetici bildirimi (geride kalan mentörler)
+  cron.schedule('0 11 * * *', () => {
+    void runMentorCertAdminNotifyCron();
   }, { timezone: 'UTC' });
 
   console.log('[CRON] Haftalık görevler zamanlandı: Pazar 02:00 (tuning) + 03:00 (purge) UTC');
