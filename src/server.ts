@@ -27,6 +27,8 @@ import { startCronScheduler } from './services/cronScheduler.js';
 import sjtScoringRoutes from './routes/sjtScoringRoutes.js';
 import suspicionRoutes from './routes/suspicionRoutes.js';
 import agreementRoutes from './routes/agreementRoutes.js';
+import learningJourneyRoutes from './routes/learningJourneyRoutes.js';
+import learningJourneyAdminRoutes from './routes/learningJourneyAdminRoutes.js';
 import type { RequestHandler } from 'express';
 
 const app = express();
@@ -98,9 +100,13 @@ app.use('/api/clubs', clubRoutes);
 app.use('/api/system-logs', systemLogRoutes);
 app.use('/api/questions', questionRoutes);
 app.use('/api/analytics', analyticsRoutes);
+// Öğrenme Yolculuğu STK paneli — /api/admin (adminRoutes) ÖNCESİNE mount edilir ki
+// daha spesifik prefix ilk eşleşsin (adminRoutes'ta gereksiz middleware'e düşmesin).
+app.use('/api/admin/learning-journey', learningJourneyAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/scoring', sjtScoringRoutes);
 app.use('/api/agreements', agreementRoutes);
+app.use('/api/learning-journey', learningJourneyRoutes);
 // Kullanıcı etiket önerisi (authenticated, tenant-scoped)
 app.post('/api/tags/suggest', generalRateLimiter, suggestTag as unknown as RequestHandler);
 
