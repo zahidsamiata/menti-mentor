@@ -19,6 +19,7 @@ export function globalErrorHandler(
 
   if (res.headersSent) return;
 
-  const message = err instanceof Error ? err.message : 'Beklenmedik bir hata oluştu.';
-  res.status(500).json({ error: 'INTERNAL', message });
+  // Güvenlik: iç hata detayını (DB hatası, dosya yolu, stack, kütüphane mesajı) client'a
+  // SIZDIRMA. Ayrıntı yalnızca sunucu log'unda kalır; client'a jenerik mesaj döner.
+  res.status(500).json({ error: 'INTERNAL', message: 'Beklenmedik bir sunucu hatası oluştu.' });
 }
