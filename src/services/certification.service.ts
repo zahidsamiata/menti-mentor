@@ -10,17 +10,32 @@ import { prisma } from '../db.js';
 //   - Normal konu:  ilk seçim 3 veya 2 → geçer.
 //   - Red-line konu: ilk seçim SADECE 3 → geçer.
 // Sertifika eşiği: aktif konuların en az %80'inde ilk-denemede geçmek.
-// Ceza/cooldown YOK — yanlışta UI aynı konunun farklı varyantını sunar (öğret, eleme).
+//
+// İki farklı "tekrar" seviyesi (karıştırma):
+//   - Konu içi (tek sınav oturumunda): yanlışta ceza YOK — UI aynı konunun farklı
+//     varyantını sunar (öğret, eleme). İlk-deneme sonucu değişmez.
+//   - Sınav seviyesi (deneme döngüsü): 2 sınav hakkı; 2.de kalınırsa 24s bekleme;
+//     sonraki denemede yanlış konulara ağırlık verilir.
 //
 // Tüm sertifika durumu TenantMembership'te saklanır (per-tenant).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Tek kaynak yapılandırma (eşik + min konu) — hem motor hem panel bunu kullanır ──
+// ── Tek kaynak yapılandırma — motor, panel, deneme döngüsü ve hatırlatma bunu kullanır ──
 export const CERT_CONFIG = {
   /** Aktif konuların en az bu oranı ilk-denemede geçmeli (yukarı yuvarlanır). */
   passRateThreshold: 0.8,
   /** Kurum, toplam aktif konu sayısını bu değerin altına düşüremez. */
   minActiveTopics: 5,
+  /** Kaç başarısız sınav denemesinden sonra bekleme başlar. */
+  attemptsBeforeCooldown: 2,
+  /** Bekleme süresi (saat). */
+  cooldownHours: 24,
+  /** Sertifika açıldıktan (üyelik oluşumundan) kaç gün sonra hatırlatma başlar. */
+  reminderStartDays: 3,
+  /** En fazla kaç hatırlatma gönderilir (günde 1) — sonra STK yöneticisine bildirim. */
+  reminderMaxCount: 3,
+  /** İki hatırlatma arasında en az bu kadar saat geçmeli (günde 1 koruması). */
+  reminderMinHoursBetween: 20,
 } as const;
 
 // Geriye dönük uyum (eski import'lar için).
@@ -71,6 +86,7 @@ export type CertFailReason =
   | 'BELOW_THRESHOLD'   // aktif konuların %80'i geçilemedi
   | 'RED_LINE_FAILED'   // en az bir açık red-line konu ilk-denemede 3 ile geçilemedi
   | 'NO_ACTIVE_TOPICS'  // kurumda açık konu yok (değerlendirilemez)
+  | 'COOLDOWN_ACTIVE'   // bekleme süresi dolmadan yeni deneme yapılamaz
   | null;
 
 export interface CertTopicResult {
@@ -92,6 +108,7 @@ export interface CertResult {
   qualityMultiplier: number;
   failReason: CertFailReason;
   attempts: number;
+  cooldownUntil: Date | null; // bekleme süresi bitiş anı (varsa)
   topicResults: CertTopicResult[];
 }
 
@@ -119,6 +136,17 @@ export async function evaluateCertification(
     throw new Error(`TenantMembership bulunamadı: userId=${userId} tenantId=${tenantId}`);
   }
 
+  // ── Bekleme (cooldown) kapısı: süre dolmadan yeni deneme değerlendirilmez ────
+  // (Deneme sayacı artmaz, membership'e yazılmaz — sadece reddedilir.)
+  if (membership.cooldownUntil && membership.cooldownUntil.getTime() > Date.now()) {
+    return {
+      certScore: membership.certScore ?? 0, passRate: 0, totalTopics: 0, passedTopics: 0,
+      required: 0, redLineOk: false, passed: false, status: membership.certificationStatus,
+      qualityMultiplier: membership.qualityMultiplier, failReason: 'COOLDOWN_ACTIVE',
+      attempts: membership.certAttempts, cooldownUntil: membership.cooldownUntil, topicResults: [],
+    };
+  }
+
   // Aktif soru havuzu (seçenek puanları + konu/kritiklik).
   const questions = await prisma.certificationQuestion.findMany({
     where:   { isActive: true },
@@ -144,7 +172,7 @@ export async function evaluateCertification(
       certScore: 0, passRate: 0, totalTopics: 0, passedTopics: 0, required: 0,
       redLineOk: false, passed: false, status: CertificationStatus.FAILED,
       qualityMultiplier: membership.qualityMultiplier, failReason: 'NO_ACTIVE_TOPICS',
-      attempts: membership.certAttempts, topicResults: [],
+      attempts: membership.certAttempts, cooldownUntil: null, topicResults: [],
     };
   }
 
@@ -185,10 +213,21 @@ export async function evaluateCertification(
     : !redLineOk
       ? 'RED_LINE_FAILED'
       : 'BELOW_THRESHOLD';
-  const newAttempts = membership.certAttempts + 1; // yalnızca kayıt — ceza yok
+  const newAttempts = membership.certAttempts + 1;
   const status = passed ? CertificationStatus.CERTIFIED : CertificationStatus.FAILED;
 
-  // ── TenantMembership'e yaz (cooldown YOK — her zaman temizlenir) ────────────
+  // ── Sınav-seviyesi deneme döngüsü (konu-içi öğrenme akışından AYRI) ──────────
+  // Her `attemptsBeforeCooldown` başarısız denemede bir bekleme süresi başlar.
+  const cooldownTriggered =
+    !passed && newAttempts % CERT_CONFIG.attemptsBeforeCooldown === 0;
+  const cooldownUntil = cooldownTriggered
+    ? new Date(Date.now() + CERT_CONFIG.cooldownHours * 60 * 60 * 1000)
+    : null;
+
+  // Sonraki denemede ağırlıklandırmak için bu denemede geçilemeyen konular.
+  // Geçince temizlenir; başarısızsa güncel yanlış liste yazılır.
+  const wrongTopics = passed ? [] : topicResults.filter((t) => !t.passed).map((t) => t.topic);
+
   await prisma.tenantMembership.update({
     where: { userId_tenantId: { userId, tenantId } },
     data: {
@@ -197,7 +236,8 @@ export async function evaluateCertification(
       certificationStatus: status,
       certifiedAt:         passed ? new Date() : null,
       certAttempts:        newAttempts,
-      cooldownUntil:       null,
+      cooldownUntil,
+      certWrongTopics:     wrongTopics,
       ...(passed ? { qualityMultiplier: STARTING_MULTIPLIER } : {}),
     },
   });
@@ -214,6 +254,7 @@ export async function evaluateCertification(
     qualityMultiplier: passed ? STARTING_MULTIPLIER : membership.qualityMultiplier,
     failReason,
     attempts: newAttempts,
+    cooldownUntil,
     topicResults,
   };
 }
@@ -235,8 +276,14 @@ export interface CertQuestionPublic {
  * Aktif sertifika sorularını öğrenme akışı için döndürür (kurumun kapattığı konular hariç).
  * GÜVENLİK: doğru cevabı sızdırmamak için explanation / outcome / competencyScore
  * DÖNMEZ — bunlar yalnızca bir seçim yapıldıktan sonra revealOption ile verilir.
+ *
+ * @param priorityTopics Önceki denemede geçilemeyen konular. Verilirse bu konular
+ *   listenin BAŞINA alınır (ağırlıklı tekrar) — mentör önce zayıf olduğu konulara odaklanır.
  */
-export async function getCertificationQuestions(tenantId: string): Promise<CertQuestionPublic[]> {
+export async function getCertificationQuestions(
+  tenantId: string,
+  priorityTopics: string[] = [],
+): Promise<CertQuestionPublic[]> {
   const disabled = await getDisabledTopics(tenantId);
   const questions = await prisma.certificationQuestion.findMany({
     where:   { isActive: true },
@@ -253,7 +300,14 @@ export async function getCertificationQuestions(tenantId: string): Promise<CertQ
       },
     },
   });
-  return questions.filter((q) => !q.topic || !disabled.has(q.topic));
+  const active = questions.filter((q) => !q.topic || !disabled.has(q.topic));
+
+  if (priorityTopics.length === 0) return active;
+
+  // Ağırlıklı tekrar: yanlış konular başa (stabil — konu-içi mevcut sıra korunur).
+  const priority = new Set(priorityTopics);
+  const weight = (q: CertQuestionPublic) => (q.topic && priority.has(q.topic) ? 0 : 1);
+  return [...active].sort((a, b) => weight(a) - weight(b));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

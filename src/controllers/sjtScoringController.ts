@@ -144,8 +144,19 @@ const RevealAnswerSchema = z.object({
 });
 
 // GET /api/scoring/certification/questions — öğrenme akışı senaryoları (cevap sızdırmaz)
+// Önceki denemede geçilemeyen konular (certWrongTopics) varsa listenin başına alınır.
 export async function certQuestionsHandler(req: RequestWithTenant, res: Response) {
-  const questions = await getCertificationQuestions(req.tenant.tenantId);
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
+  }
+  const membership = await prisma.tenantMembership.findUnique({
+    where:  { userId_tenantId: { userId: req.auth.userId, tenantId: req.tenant.tenantId } },
+    select: { certWrongTopics: true },
+  });
+  const questions = await getCertificationQuestions(
+    req.tenant.tenantId,
+    membership?.certWrongTopics ?? [],
+  );
   return res.status(200).json({ questions });
 }
 
@@ -210,6 +221,13 @@ export async function certifyHandler(req: RequestWithTenant, res: Response) {
     return res.status(409).json({
       error: 'NO_ACTIVE_TOPICS',
       message: 'Bu kurumda açık sertifika konusu yok; değerlendirme yapılamaz.',
+    });
+  }
+  if (result.failReason === 'COOLDOWN_ACTIVE') {
+    return res.status(409).json({
+      error: 'COOLDOWN_ACTIVE',
+      message: 'Bekleme süresi henüz dolmadı; yeni deneme için lütfen bekleyin.',
+      cooldownUntil: result.cooldownUntil,
     });
   }
   return res.status(200).json(result);

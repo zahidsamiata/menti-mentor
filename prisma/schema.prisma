@@ -932,6 +932,13 @@ model TenantMembership {
   certAttempts        Int                 @default(0)
   cooldownUntil       DateTime?
   qualityMultiplier   Float               @default(1.0)
+
+  // Sertifika deneme döngüsü + hatırlatma (mentör; createdAt = "sertifika açıldı" anı)
+  certWrongTopics     String[]  @default([]) // Son denemede geçilemeyen konular — sonraki denemede ağırlıklandırılır
+  certReminderCount   Int       @default(0)  // Gönderilen "sınava başla" hatırlatma sayısı
+  certLastReminderAt  DateTime?              // Son hatırlatma zamanı (günde 1 koruması)
+  certAdminNotifiedAt DateTime?              // STK yöneticisine bildirim yapıldı mı (bir kez)
+
   isActive            Boolean             @default(true)
 
   createdAt DateTime @default(now())

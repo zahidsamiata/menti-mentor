@@ -194,6 +194,56 @@ export async function sendAlreadyRegisteredEmail(args: {
   );
 }
 
+/**
+ * Mentör sertifika hatırlatması — DESTEKLEYİCİ ton (düşük baskı).
+ * Normalleştir + küçük adım + anlam. "Son şans / geri sayım" YOK.
+ * reminderNo: kaçıncı hatırlatma (1..N) — ton hafifçe uyarlanır.
+ */
+export async function sendMentorCertReminderEmail(args: {
+  toEmail: string;
+  mentorName: string;
+  reminderNo: number;
+}): Promise<void> {
+  const frontendUrl = process.env['FRONTEND_URL'] ?? 'http://localhost:3001';
+  const startUrl = `${frontendUrl}/mentor/certification`;
+  const opener =
+    args.reminderNo <= 1
+      ? 'Hazır olduğunda kısa bir hazırlık akışımız seni bekliyor.'
+      : 'Acele yok — vaktin olduğunda birlikte tamamlayalım.';
+
+  await send(
+    args.toEmail,
+    'Mentörlük hazırlığın seni bekliyor 🌱',
+    `<p>Merhaba ${args.mentorName},</p>
+     <p>${opener} Bu, bir sınav değil; gerçek mentorluk durumlarında iyi kararların nasıl
+        verildiğini birlikte gözden geçirdiğimiz kısa, senaryo-bazlı bir hazırlık.</p>
+     <p>Çoğu mentör 15 dakikada tamamlıyor. İstediğin an ara verip devam edebilirsin.</p>
+     <p><a href="${startUrl}" style="background:#6366f1;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block">Hazırlığa başla →</a></p>
+     <p style="font-size:13px;color:#6b7280">Katkın, eşleştiğin menti için gerçek bir fark yaratıyor. Teşekkürler 🙏</p>`,
+  );
+}
+
+/**
+ * STK yöneticisine SESSİZ bildirim — mentör sertifikaya başlamadı.
+ * Mentöre bu bildirim GİTMEZ; yalnızca yönetici nazikçe hatırlatabilsin diye.
+ */
+export async function sendAdminMentorCertLapsedEmail(args: {
+  toEmail: string;
+  adminName: string;
+  mentorName: string;
+  tenantName: string;
+}): Promise<void> {
+  await send(
+    args.toEmail,
+    `[${args.tenantName}] Bir mentör sertifika hazırlığına henüz başlamadı`,
+    `<p>Merhaba ${args.adminName},</p>
+     <p><strong>${args.mentorName}</strong>, mentör sertifika hazırlığına birkaç gündür
+        başlamadı ve hatırlatma e-postalarımıza yanıt vermedi.</p>
+     <p>Uygun bir anda kişisel olarak hatırlatmanız, tamamlamasına yardımcı olabilir. Bir baskı
+        değil — sadece küçük bir dokunuş çoğu zaman yeterli oluyor.</p>`,
+  );
+}
+
 export async function sendFeedbackReminderEmail(args: {
   toEmail: string;
   recipientName: string;
