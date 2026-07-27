@@ -15,8 +15,38 @@ import { prisma } from '../db.js';
 // Tüm sertifika durumu TenantMembership'te saklanır (per-tenant).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const PASS_RATE_THRESHOLD  = 0.8;  // konuların en az %80'i ilk-denemede geçmeli (kalibre edilebilir)
-const STARTING_MULTIPLIER         = 1.0;  // sertifika alınınca kalite çarpanı sıfırlanır
+// ── Tek kaynak yapılandırma (eşik + min konu) — hem motor hem panel bunu kullanır ──
+export const CERT_CONFIG = {
+  /** Aktif konuların en az bu oranı ilk-denemede geçmeli (yukarı yuvarlanır). */
+  passRateThreshold: 0.8,
+  /** Kurum, toplam aktif konu sayısını bu değerin altına düşüremez. */
+  minActiveTopics: 5,
+} as const;
+
+// Geriye dönük uyum (eski import'lar için).
+export const PASS_RATE_THRESHOLD = CERT_CONFIG.passRateThreshold;
+
+const STARTING_MULTIPLIER = 1.0;  // sertifika alınınca kalite çarpanı sıfırlanır
+
+/**
+ * Verilen AKTİF konu sayısı için ilk-denemede geçilmesi gereken minimum konu sayısı.
+ * Payda ASLA sabit 10 değil — kurumda AÇIK olan konu sayısıdır. Küsurat YUKARI yuvarlanır.
+ * Örn. 4 konu × 0.8 = 3.2 → 4;  7 × 0.8 = 5.6 → 6;  5 × 0.8 = 4 → 4.
+ */
+export function requiredToPass(activeTopicCount: number): number {
+  return Math.ceil(activeTopicCount * CERT_CONFIG.passRateThreshold);
+}
+
+/** Konu aç/kapat kısıt hatası — controller HTTP durumuna map'ler. */
+export class CertTopicError extends Error {
+  constructor(
+    public code: 'UNKNOWN_TOPIC' | 'RED_LINE_LOCKED' | 'MIN_TOPICS' | 'TENANT_NOT_FOUND',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CertTopicError';
+  }
+}
 
 /** Bir seçeneğin ilk-denemede "geçer" olup olmadığı (konunun kritikliğine göre). */
 export function isFirstAttemptPass(competencyScore: number, isRedLine: boolean): boolean {
@@ -37,7 +67,11 @@ export interface CertAnswer {
   optionKey: string;
 }
 
-export type CertFailReason = 'BELOW_THRESHOLD' | null;
+export type CertFailReason =
+  | 'BELOW_THRESHOLD'   // aktif konuların %80'i geçilemedi
+  | 'RED_LINE_FAILED'   // en az bir açık red-line konu ilk-denemede 3 ile geçilemedi
+  | 'NO_ACTIVE_TOPICS'  // kurumda açık konu yok (değerlendirilemez)
+  | null;
 
 export interface CertTopicResult {
   topic: string;
@@ -49,8 +83,10 @@ export interface CertTopicResult {
 export interface CertResult {
   certScore: number;        // ilk-deneme geçme oranı (0-100)
   passRate: number;         // 0-1
-  totalTopics: number;
+  totalTopics: number;      // aktif (açık) konu sayısı = oransal eşik paydası
   passedTopics: number;
+  required: number;         // geçmek için gereken minimum konu (ceil(total × %80))
+  redLineOk: boolean;       // tüm açık red-line konular ilk-denemede geçildi mi
   passed: boolean;
   status: CertificationStatus;
   qualityMultiplier: number;
@@ -93,14 +129,26 @@ export async function evaluateCertification(
   // Kurumun kapattığı konular değerlendirmeye girmez (per-tenant).
   const disabled = await getDisabledTopics(tenantId);
 
-  // Toplam konu sayısı = aktif ve kurumca AÇIK benzersiz topic sayısı.
-  const totalTopics = new Set(
-    questions
-      .map((q) => q.topic)
-      .filter((t): t is string => !!t && !disabled.has(t)),
-  ).size;
+  // Açık konular + konu-bazında red-line türetimi (bir konunun herhangi bir sorusu
+  // red-line ise o konu red-line'dır). Payda = AÇIK konu sayısı (sabit değil).
+  const topicRedLine = new Map<string, boolean>();
+  for (const q of questions) {
+    if (!q.topic || disabled.has(q.topic)) continue;
+    topicRedLine.set(q.topic, (topicRedLine.get(q.topic) ?? false) || q.isRedLine);
+  }
+  const totalTopics = topicRedLine.size;
 
-  // ── Konu bazında İLK-deneme değerlendirmesi ────────────────────────────────
+  // ── Sıfır guard: açık konu yoksa değerlendirilemez (membership'e YAZMA) ──────
+  if (totalTopics === 0) {
+    return {
+      certScore: 0, passRate: 0, totalTopics: 0, passedTopics: 0, required: 0,
+      redLineOk: false, passed: false, status: CertificationStatus.FAILED,
+      qualityMultiplier: membership.qualityMultiplier, failReason: 'NO_ACTIVE_TOPICS',
+      attempts: membership.certAttempts, topicResults: [],
+    };
+  }
+
+  // ── Konu bazında İLK-deneme değerlendirmesi (yalnızca açık konular) ─────────
   const firstByTopic = new Map<string, CertTopicResult>();
   for (const ans of answers) {
     const q = byCode.get(ans.questionCode);
@@ -119,11 +167,24 @@ export async function evaluateCertification(
 
   const topicResults = [...firstByTopic.values()];
   const passedTopics = topicResults.filter((t) => t.passed).length;
-  const passRate     = totalTopics > 0 ? passedTopics / totalTopics : 0;
+  const passRate     = passedTopics / totalTopics;
   const certScore    = Math.round(passRate * 1000) / 10; // 0-100, 1 ondalık
-  const passed       = passRate >= PASS_RATE_THRESHOLD;
 
-  const failReason: CertFailReason = passed ? null : 'BELOW_THRESHOLD';
+  // Oransal eşik: geçen konu >= ceil(açık konu × %80).
+  const required   = requiredToPass(totalTopics);
+  const passRateOk = passedTopics >= required;
+
+  // Red-line MUTLAK kapı: her AÇIK red-line konu ilk-denemede geçilmiş olmalı (oran değil).
+  const openRedLineTopics = [...topicRedLine.entries()].filter(([, rl]) => rl).map(([t]) => t);
+  const redLineOk = openRedLineTopics.every((t) => firstByTopic.get(t)?.passed === true);
+
+  const passed = passRateOk && redLineOk;
+  // Red-line ihlali önceliklidir (mutlak kapı), sonra oransal eşik.
+  const failReason: CertFailReason = passed
+    ? null
+    : !redLineOk
+      ? 'RED_LINE_FAILED'
+      : 'BELOW_THRESHOLD';
   const newAttempts = membership.certAttempts + 1; // yalnızca kayıt — ceza yok
   const status = passed ? CertificationStatus.CERTIFIED : CertificationStatus.FAILED;
 
@@ -146,6 +207,8 @@ export async function evaluateCertification(
     passRate,
     totalTopics,
     passedTopics,
+    required,
+    redLineOk,
     passed,
     status,
     qualityMultiplier: passed ? STARTING_MULTIPLIER : membership.qualityMultiplier,
@@ -202,9 +265,10 @@ export interface CertTopicInfo {
   isRedLine: boolean;
   variantCount: number;
   enabled: boolean;
+  locked: boolean;   // red-line → kapatılamaz (UI kilitli gösterir, backend reddeder)
 }
 
-/** Kurumun sertifika konularını (aç/kapat durumuyla) listeler. */
+/** Kurumun sertifika konularını (aç/kapat + kilit durumuyla) listeler. */
 export async function listCertificationTopics(tenantId: string): Promise<CertTopicInfo[]> {
   const disabled = await getDisabledTopics(tenantId);
   const qs = await prisma.certificationQuestion.findMany({
@@ -220,28 +284,81 @@ export async function listCertificationTopics(tenantId: string): Promise<CertTop
     map.set(q.topic, e);
   }
   return [...map.entries()]
-    .map(([topic, e]) => ({ topic, isRedLine: e.isRedLine, variantCount: e.count, enabled: !disabled.has(topic) }))
+    .map(([topic, e]) => ({
+      topic,
+      isRedLine: e.isRedLine,
+      variantCount: e.count,
+      enabled: !disabled.has(topic),
+      locked: e.isRedLine,          // red-line konular kilitli (kapatılamaz)
+    }))
     .sort((a, b) => a.topic.localeCompare(b.topic));
+}
+
+export interface TopicsOverview {
+  topics: CertTopicInfo[];
+  activeCount: number;      // o an açık konu sayısı
+  requiredToPass: number;   // sertifika için geçilmesi gereken konu (ceil(activeCount × %80))
+  minActiveTopics: number;  // izin verilen en düşük açık konu sayısı
+  threshold: number;        // oransal eşik (0-1)
+}
+
+/** Panel için tek kaynak özet — UI kendi başına eşik HESAPLAMAZ, bunu gösterir. */
+export async function getTopicsOverview(tenantId: string): Promise<TopicsOverview> {
+  const topics = await listCertificationTopics(tenantId);
+  const activeCount = topics.filter((t) => t.enabled).length;
+  return {
+    topics,
+    activeCount,
+    requiredToPass: requiredToPass(activeCount),
+    minActiveTopics: CERT_CONFIG.minActiveTopics,
+    threshold: CERT_CONFIG.passRateThreshold,
+  };
 }
 
 /**
  * Bir konuyu kurum için açar/kapatır. Yalnızca MEVCUT (aktif) konular hedeflenebilir —
  * kurum yeni konu/senaryo ekleyemez, yalnızca var olanı seçer/kaldırır.
+ *
+ * Korumalar (backend son sözü söyler — frontend yalnızca görsel):
+ *   - Red-line konu KAPATILAMAZ (RED_LINE_LOCKED).
+ *   - Toplam açık konu CERT_CONFIG.minActiveTopics altına düşürülemez (MIN_TOPICS).
  */
 export async function setCertificationTopic(
   tenantId: string,
   topic: string,
   enabled: boolean,
 ): Promise<CertTopicInfo[]> {
-  const exists = await prisma.certificationQuestion.count({ where: { isActive: true, topic } });
-  if (exists === 0) {
-    throw new Error(`Bilinmeyen sertifika konusu: ${topic}`);
+  const topicQuestions = await prisma.certificationQuestion.findMany({
+    where:  { isActive: true, topic },
+    select: { isRedLine: true },
+  });
+  if (topicQuestions.length === 0) {
+    throw new CertTopicError('UNKNOWN_TOPIC', `Bilinmeyen sertifika konusu: ${topic}`);
   }
+  const isRedLineTopic = topicQuestions.some((q) => q.isRedLine);
+
   const t = await prisma.tenant.findUnique({
     where:  { id: tenantId },
     select: { disabledCertTopics: true },
   });
-  if (!t) throw new Error(`Tenant bulunamadı: ${tenantId}`);
+  if (!t) throw new CertTopicError('TENANT_NOT_FOUND', `Tenant bulunamadı: ${tenantId}`);
+
+  if (!enabled) {
+    // Red-line kapatılamaz.
+    if (isRedLineTopic) {
+      throw new CertTopicError('RED_LINE_LOCKED', 'Kritik (red-line) konular kapatılamaz.');
+    }
+    // Min konu sınırı: yalnızca hâlihazırda AÇIK bir konuyu kapatırken kontrol et.
+    const current = await listCertificationTopics(tenantId);
+    const activeCount = current.filter((c) => c.enabled).length;
+    const isCurrentlyOpen = current.find((c) => c.topic === topic)?.enabled ?? false;
+    if (isCurrentlyOpen && activeCount - 1 < CERT_CONFIG.minActiveTopics) {
+      throw new CertTopicError(
+        'MIN_TOPICS',
+        `En az ${CERT_CONFIG.minActiveTopics} konu açık kalmalı.`,
+      );
+    }
+  }
 
   const set = new Set(t.disabledCertTopics);
   if (enabled) set.delete(topic);

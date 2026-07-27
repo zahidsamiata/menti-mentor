@@ -10,8 +10,9 @@ import {
   evaluateCertification,
   getCertificationQuestions,
   revealOption,
-  listCertificationTopics,
   setCertificationTopic,
+  getTopicsOverview,
+  CertTopicError,
 } from '../services/certification.service.js';
 
 const SjtAnswerSchema = z.object({
@@ -153,10 +154,10 @@ const SetTopicSchema = z.object({
   enabled: z.boolean(),
 });
 
-// GET /api/scoring/certification/topics — kurumun konu aç/kapat listesi (ADMIN)
+// GET /api/scoring/certification/topics — kurumun konu aç/kapat + eşik özeti (ADMIN)
 export async function certTopicsListHandler(req: RequestWithTenant, res: Response) {
-  const topics = await listCertificationTopics(req.tenant.tenantId);
-  return res.status(200).json({ topics });
+  const overview = await getTopicsOverview(req.tenant.tenantId);
+  return res.status(200).json(overview);
 }
 
 // PATCH /api/scoring/certification/topics — konu aç/kapat (ADMIN, yalnızca kendi tenant'ı)
@@ -166,10 +167,16 @@ export async function certTopicSetHandler(req: RequestWithTenant, res: Response)
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
   try {
-    const topics = await setCertificationTopic(req.tenant.tenantId, parsed.data.topic, parsed.data.enabled);
-    return res.status(200).json({ topics });
-  } catch {
-    return res.status(404).json({ error: 'BULUNAMADI', message: 'Konu bulunamadı.' });
+    await setCertificationTopic(req.tenant.tenantId, parsed.data.topic, parsed.data.enabled);
+    const overview = await getTopicsOverview(req.tenant.tenantId);
+    return res.status(200).json(overview);
+  } catch (err) {
+    if (err instanceof CertTopicError) {
+      // UNKNOWN_TOPIC/TENANT_NOT_FOUND → 404; RED_LINE_LOCKED/MIN_TOPICS → 409 (kural ihlali)
+      const status = err.code === 'UNKNOWN_TOPIC' || err.code === 'TENANT_NOT_FOUND' ? 404 : 409;
+      return res.status(status).json({ error: err.code, message: err.message });
+    }
+    throw err;
   }
 }
 
@@ -199,6 +206,12 @@ export async function certifyHandler(req: RequestWithTenant, res: Response) {
 
   // IDOR koruması: yalnızca kimliği doğrulanmış kullanıcının kendi sertifikası.
   const result = await evaluateCertification(req.auth.userId, req.tenant.tenantId, parsed.data.answers);
+  if (result.failReason === 'NO_ACTIVE_TOPICS') {
+    return res.status(409).json({
+      error: 'NO_ACTIVE_TOPICS',
+      message: 'Bu kurumda açık sertifika konusu yok; değerlendirme yapılamaz.',
+    });
+  }
   return res.status(200).json(result);
 }
 
