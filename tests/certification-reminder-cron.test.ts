@@ -1,6 +1,7 @@
 /**
- * Mentör sertifika hatırlatma cron'u — zamanlama/tetikleme mantığı.
- * Gerçek e-posta gönderilmez (emailService mock'lanır); yalnızca tetik + DB durumu doğrulanır.
+ * Mentör sertifika — YÖNETİCİ BİLDİRİMİ cron'u (mentöre mail YOK — maliyet).
+ * Geride kalan mentör için STK yöneticisine uygulama-içi bildirim (notificationService).
+ * Gerçek gönderim yapılmaz (mock); yalnızca tetik + DB durumu doğrulanır.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -8,41 +9,30 @@ import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createMentor, createAdminUser } from './helpers/factories.js';
 import { CERT_CONFIG } from '../src/services/certification.service.js';
 
-const mocks = vi.hoisted(() => ({
-  reminder: vi.fn(),
-  adminLapsed: vi.fn(),
+const mocks = vi.hoisted(() => ({ notifyAdmins: vi.fn() }));
+
+// Yalnızca kullanılan fonksiyonu mock'la; diğer export'lar gerçek kalır (partial mock).
+vi.mock('../src/services/notificationService.js', async (orig) => ({
+  ...(await orig<typeof import('../src/services/notificationService.js')>()),
+  notifyAdminsMentorCertLapsed: mocks.notifyAdmins,
 }));
 
-vi.mock('../src/services/emailService.js', () => ({
-  sendDraftTenantReminderEmail: vi.fn(),
-  sendFeedbackReminderEmail: vi.fn(),
-  sendMentorCertReminderEmail: mocks.reminder,
-  sendAdminMentorCertLapsedEmail: mocks.adminLapsed,
-}));
-
-// Mock'tan SONRA import (vitest vi.mock'u hoist eder).
-const { runMentorCertReminderCron } = await import('../src/services/cronScheduler.js');
+const { runMentorCertAdminNotifyCron } = await import('../src/services/cronScheduler.js');
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 
-describe('runMentorCertReminderCron', () => {
+describe('runMentorCertAdminNotifyCron', () => {
   let tenantId: string;
   let mentorId: string;
 
-  async function setMembership(data: Record<string, unknown>) {
-    await testPrisma.tenantMembership.update({
-      where: { userId_tenantId: { userId: mentorId, tenantId } },
-      data,
-    });
-  }
-  async function getMembership() {
-    return testPrisma.tenantMembership.findUnique({ where: { userId_tenantId: { userId: mentorId, tenantId } } });
-  }
+  const setM = (data: Record<string, unknown>) =>
+    testPrisma.tenantMembership.update({ where: { userId_tenantId: { userId: mentorId, tenantId } }, data });
+  const getM = () =>
+    testPrisma.tenantMembership.findUnique({ where: { userId_tenantId: { userId: mentorId, tenantId } } });
 
   beforeEach(async () => {
     await cleanDb();
-    mocks.reminder.mockClear();
-    mocks.adminLapsed.mockClear();
+    mocks.notifyAdmins.mockClear();
     const tenant = await createTenant({ name: 'Test STK' });
     tenantId = tenant.id;
     await createAdminUser(tenantId);
@@ -50,64 +40,49 @@ describe('runMentorCertReminderCron', () => {
     mentorId = mentor.id;
   });
 
-  it('başlamamış + eski mentöre hatırlatma gönderir, sayacı artırır', async () => {
-    await setMembership({ createdAt: daysAgo(4) }); // reminderStartDays=3 aşıldı, certAttempts=0
+  it('hiç başlamamış + eski mentör için yöneticiye bildirir (mentöre mail yok)', async () => {
+    await setM({ createdAt: daysAgo(4) }); // certAttempts=0, adminNotifyAfterDays=3 aşıldı
 
-    const res = await runMentorCertReminderCron();
-
-    expect(res.reminded).toBe(1);
-    expect(mocks.reminder).toHaveBeenCalledTimes(1);
-    expect(mocks.adminLapsed).not.toHaveBeenCalled();
-    const m = await getMembership();
-    expect(m!.certReminderCount).toBe(1);
-    expect(m!.certLastReminderAt).not.toBeNull();
-  });
-
-  it('hatırlatma sınırı dolunca STK yöneticisine bir kez bildirir', async () => {
-    await setMembership({
-      createdAt: daysAgo(6),
-      certReminderCount: CERT_CONFIG.reminderMaxCount, // sınır doldu
-      certLastReminderAt: daysAgo(1),
-    });
-
-    const res = await runMentorCertReminderCron();
+    const res = await runMentorCertAdminNotifyCron();
 
     expect(res.adminNotified).toBe(1);
-    expect(mocks.adminLapsed).toHaveBeenCalledTimes(1);
-    expect(mocks.reminder).not.toHaveBeenCalled();
-    const m = await getMembership();
-    expect(m!.certAdminNotifiedAt).not.toBeNull();
+    expect(mocks.notifyAdmins).toHaveBeenCalledTimes(1);
+    expect(mocks.notifyAdmins).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId, mentorName: expect.any(String) }),
+    );
+    expect((await getM())!.certAdminNotifiedAt).not.toBeNull();
   });
 
-  it('admin zaten bildirildi ise tekrar bildirmez', async () => {
-    await setMembership({
-      createdAt: daysAgo(6),
-      certReminderCount: CERT_CONFIG.reminderMaxCount,
-      certAdminNotifiedAt: daysAgo(1),
-    });
-    const res = await runMentorCertReminderCron();
-    expect(res.reminded).toBe(0);
+  it('haklarını tüketip geçememiş mentör için de bildirir', async () => {
+    await setM({ createdAt: daysAgo(5), certAttempts: CERT_CONFIG.attemptsBeforeCooldown });
+    const res = await runMentorCertAdminNotifyCron();
+    expect(res.adminNotified).toBe(1);
+    expect(mocks.notifyAdmins).toHaveBeenCalledTimes(1);
+  });
+
+  it('bildirim bir kez yapılır (tekrar tetiklenmez)', async () => {
+    await setM({ createdAt: daysAgo(5), certAdminNotifiedAt: daysAgo(1) });
+    const res = await runMentorCertAdminNotifyCron();
     expect(res.adminNotified).toBe(0);
-    expect(mocks.adminLapsed).not.toHaveBeenCalled();
+    expect(mocks.notifyAdmins).not.toHaveBeenCalled();
   });
 
-  it('sertifikaya başlamış (certAttempts>0) mentöre hatırlatma gitmez', async () => {
-    await setMembership({ createdAt: daysAgo(5), certAttempts: 1 });
-    const res = await runMentorCertReminderCron();
-    expect(res.reminded).toBe(0);
-    expect(mocks.reminder).not.toHaveBeenCalled();
+  it('aktif deneme sürecindeki (1 hak kullanmış, henüz tükenmemiş) mentör bildirilmez', async () => {
+    await setM({ createdAt: daysAgo(5), certAttempts: 1 }); // 1 < attemptsBeforeCooldown(2)
+    const res = await runMentorCertAdminNotifyCron();
+    expect(res.adminNotified).toBe(0);
+    expect(mocks.notifyAdmins).not.toHaveBeenCalled();
   });
 
-  it('yeni üyelik (eşik gününe ulaşmamış) hatırlatma almaz', async () => {
-    await setMembership({ createdAt: new Date() }); // bugün → 3 günü doldurmadı
-    const res = await runMentorCertReminderCron();
-    expect(res.reminded).toBe(0);
+  it('sertifikalı mentör bildirilmez', async () => {
+    await setM({ createdAt: daysAgo(5), isCertified: true });
+    const res = await runMentorCertAdminNotifyCron();
+    expect(res.adminNotified).toBe(0);
   });
 
-  it('günde 1 koruması: son hatırlatma çok yeni ise atlar', async () => {
-    await setMembership({ createdAt: daysAgo(5), certReminderCount: 1, certLastReminderAt: new Date() });
-    const res = await runMentorCertReminderCron();
-    expect(res.reminded).toBe(0);
-    expect(mocks.reminder).not.toHaveBeenCalled();
+  it('yeni üyelik (eşik gününe ulaşmamış) bildirilmez', async () => {
+    await setM({ createdAt: new Date() });
+    const res = await runMentorCertAdminNotifyCron();
+    expect(res.adminNotified).toBe(0);
   });
 });

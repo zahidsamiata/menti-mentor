@@ -14,12 +14,8 @@ import cron from 'node-cron';
 import { prisma } from '../db.js';
 import { tuneScoringWeights } from './algorithmTuner.js';
 import { purgeExpiredData } from './gdprService.js';
-import {
-  sendDraftTenantReminderEmail,
-  sendFeedbackReminderEmail,
-  sendMentorCertReminderEmail,
-  sendAdminMentorCertLapsedEmail,
-} from './emailService.js';
+import { sendDraftTenantReminderEmail, sendFeedbackReminderEmail } from './emailService.js';
+import { notifyAdminsMentorCertLapsed } from './notificationService.js';
 import { CERT_CONFIG } from './certification.service.js';
 import { logger } from './logger.js';
 
@@ -279,94 +275,60 @@ export async function runAgreementRenewalCron(): Promise<{ prompted: number }> {
   }
 }
 
-// ─── Görev: Mentör Sertifika Hatırlatıcısı ───────────────────────────────────
+// ─── Görev: Mentör Sertifika — Yönetici Bildirimi ────────────────────────────
 //
-// Sertifika hazırlığına HİÇ başlamamış (certAttempts=0) mentörlere destekleyici
-// hatırlatma gönderir. Eşik/sayı/aralık CERT_CONFIG'te (tek kaynak).
-//   - Üyelik oluşumundan (createdAt) reminderStartDays gün sonra başlar.
-//   - Günde en fazla 1 (reminderMinHoursBetween), toplam reminderMaxCount kez.
-//   - Sınır dolunca STK yöneticisine BİR kez sessiz bildirim (mentöre gitmez).
+// Sertifika hazırlığında geride kalan mentör için STK yöneticisine BİR kez
+// uygulama-içi bildirim gönderir (mail DEĞİL — sıfır maliyet). Yönetici mentörü
+// kişisel olarak hatırlatır; mentör bu bildirimin gittiğini BİLMEZ.
+//
+// Tetik (CERT_CONFIG.adminNotifyAfterDays gün açılıştan sonra, henüz bildirilmemiş):
+//   - Hiç başlamamış (certAttempts = 0), VEYA
+//   - Verilen hakları tüketmiş (certAttempts >= attemptsBeforeCooldown) ama geçememiş.
 
-export async function runMentorCertReminderCron(): Promise<{ reminded: number; adminNotified: number }> {
-  void logger.info('SYSTEM', 'Cron: Mentör sertifika hatırlatıcısı başladı');
+export async function runMentorCertAdminNotifyCron(): Promise<{ adminNotified: number }> {
+  void logger.info('SYSTEM', 'Cron: Mentör sertifika yönetici bildirimi başladı');
   try {
-    const now = Date.now();
-    const startCutoff = new Date(now - CERT_CONFIG.reminderStartDays * 24 * 60 * 60 * 1000);
-    const sendCutoff  = new Date(now - CERT_CONFIG.reminderMinHoursBetween * 60 * 60 * 1000);
+    const cutoff = new Date(Date.now() - CERT_CONFIG.adminNotifyAfterDays * 24 * 60 * 60 * 1000);
 
-    // Aday üyelikler — hiç başlamamış, sertifikasız, admin bildirimi yapılmamış mentörler.
-    const candidates = await prisma.tenantMembership.findMany({
+    const laggards = await prisma.tenantMembership.findMany({
       where: {
         role:                'MENTOR',
         isActive:            true,
         isCertified:         false,
-        certAttempts:        0,
-        createdAt:           { lt: startCutoff },
         certAdminNotifiedAt: null,
+        createdAt:           { lt: cutoff },
+        OR: [
+          { certAttempts: 0 },
+          { certAttempts: { gte: CERT_CONFIG.attemptsBeforeCooldown } },
+        ],
       },
       select: {
-        id: true, userId: true, tenantId: true,
-        certReminderCount: true, certLastReminderAt: true,
-        user:   { select: { email: true, fullName: true, isActive: true } },
-        tenant: { select: { name: true, displayName: true } },
+        id: true, tenantId: true,
+        user: { select: { fullName: true, isActive: true } },
       },
     });
 
-    let reminded = 0;
     let adminNotified = 0;
-
-    for (const m of candidates) {
+    for (const m of laggards) {
       if (!m.user?.isActive) continue;
-
-      if (m.certReminderCount < CERT_CONFIG.reminderMaxCount) {
-        // Günde 1 koruması — son hatırlatma yeterince eskiyse gönder.
-        if (m.certLastReminderAt && m.certLastReminderAt > sendCutoff) continue;
-        try {
-          await sendMentorCertReminderEmail({
-            toEmail:    m.user.email,
-            mentorName: m.user.fullName,
-            reminderNo: m.certReminderCount + 1,
-          });
-          await prisma.tenantMembership.update({
-            where: { id: m.id },
-            data:  { certReminderCount: { increment: 1 }, certLastReminderAt: new Date() },
-          });
-          reminded++;
-        } catch (err) {
-          void logger.error('EMAIL', `Mentör sertifika hatırlatması başarısız: ${m.id}`, { error: String(err) });
-        }
-      } else {
-        // Hatırlatma sınırı doldu → STK yöneticisine bir kez sessiz bildirim.
-        const admin = await prisma.user.findFirst({
-          where:  { tenantId: m.tenantId, role: 'ADMIN', isActive: true },
-          select: { email: true, fullName: true },
-        });
-        if (admin) {
-          try {
-            await sendAdminMentorCertLapsedEmail({
-              toEmail:    admin.email,
-              adminName:  admin.fullName,
-              mentorName: m.user.fullName,
-              tenantName: m.tenant.displayName ?? m.tenant.name,
-            });
-          } catch (err) {
-            void logger.error('EMAIL', `STK yönetici bildirimi başarısız: ${m.id}`, { error: String(err) });
-          }
-        }
-        // Admin bulunsa da bulunmasa da tekrar denememek için işaretle.
-        await prisma.tenantMembership.update({
-          where: { id: m.id },
-          data:  { certAdminNotifiedAt: new Date() },
-        });
-        adminNotified++;
+      try {
+        await notifyAdminsMentorCertLapsed({ tenantId: m.tenantId, mentorName: m.user.fullName });
+      } catch (err) {
+        void logger.error('SYSTEM', `STK yönetici bildirimi başarısız: ${m.id}`, { error: String(err) });
       }
+      // Bildirim denendiyse tekrar denememek için işaretle (bir kez).
+      await prisma.tenantMembership.update({
+        where: { id: m.id },
+        data:  { certAdminNotifiedAt: new Date() },
+      });
+      adminNotified++;
     }
 
-    void logger.info('SYSTEM', 'Cron: Mentör sertifika hatırlatıcısı tamamlandı', { reminded, adminNotified });
-    return { reminded, adminNotified };
+    void logger.info('SYSTEM', 'Cron: Mentör sertifika yönetici bildirimi tamamlandı', { adminNotified });
+    return { adminNotified };
   } catch (err) {
-    void logger.error('SYSTEM', 'Cron: Mentör sertifika hatırlatıcısı başarısız', { error: String(err) });
-    return { reminded: 0, adminNotified: 0 };
+    void logger.error('SYSTEM', 'Cron: Mentör sertifika yönetici bildirimi başarısız', { error: String(err) });
+    return { adminNotified: 0 };
   }
 }
 
@@ -408,9 +370,9 @@ export function startCronScheduler(): void {
     void runAgreementRenewalCron();
   }, { timezone: 'UTC' });
 
-  // Her gün 11:00 UTC — Mentör sertifika hatırlatıcısı (başlamamış mentörler)
+  // Her gün 11:00 UTC — Mentör sertifika yönetici bildirimi (geride kalan mentörler)
   cron.schedule('0 11 * * *', () => {
-    void runMentorCertReminderCron();
+    void runMentorCertAdminNotifyCron();
   }, { timezone: 'UTC' });
 
   console.log('[CRON] Haftalık görevler zamanlandı: Pazar 02:00 (tuning) + 03:00 (purge) UTC');

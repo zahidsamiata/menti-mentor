@@ -105,6 +105,22 @@ export async function notifyAdminsPendingUser(args: {
   });
 }
 
+/**
+ * Mentör sertifika hazırlığında geciktiğinde STK yöneticilerine SESSİZ uygulama-içi
+ * bildirim (mail DEĞİL — sıfır maliyet). Yönetici mentörü kişisel olarak hatırlatır.
+ * Mentör bu bildirimin gönderildiğini BİLMEZ.
+ */
+export async function notifyAdminsMentorCertLapsed(args: {
+  tenantId: string;
+  mentorName: string;
+}): Promise<NotificationResult> {
+  return sendPushNotification(`ADMINS:${args.tenantId}`, {
+    title: 'Bir mentör sertifika hazırlığına başlamadı',
+    body: `${args.mentorName} mentör sertifika hazırlığını henüz tamamlamadı. Uygun bir anda kişisel olarak hatırlatmanız yardımcı olabilir.`,
+    data: { action: 'OPEN_MENTOR_LIST', tenantId: args.tenantId },
+  });
+}
+
 /** Rematch talebi oluşturulduğunda mentora bildirim gönderilir. */
 export async function notifyRematchRequested(
   targetId: string,

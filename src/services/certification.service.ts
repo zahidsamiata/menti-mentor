@@ -30,12 +30,11 @@ export const CERT_CONFIG = {
   attemptsBeforeCooldown: 2,
   /** Bekleme süresi (saat). */
   cooldownHours: 24,
-  /** Sertifika açıldıktan (üyelik oluşumundan) kaç gün sonra hatırlatma başlar. */
-  reminderStartDays: 3,
-  /** En fazla kaç hatırlatma gönderilir (günde 1) — sonra STK yöneticisine bildirim. */
-  reminderMaxCount: 3,
-  /** İki hatırlatma arasında en az bu kadar saat geçmeli (günde 1 koruması). */
-  reminderMinHoursBetween: 20,
+  /**
+   * Sertifika açıldıktan (üyelik oluşumundan) kaç gün sonra, geride kalan mentör için
+   * STK yöneticisine uygulama-içi bildirim gönderilir. (Mentöre otomatik mail YOK — maliyet.)
+   */
+  adminNotifyAfterDays: 3,
 } as const;
 
 // Geriye dönük uyum (eski import'lar için).
