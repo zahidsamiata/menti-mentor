@@ -3,9 +3,11 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
+import { canCrossTenantMatch } from '../services/tenantSharing.js';
 
+// Not: requesterUserId body'de ALINMAZ — talep sahibi kimliği doğrulanmış kullanıcıdır
+// (IDOR önleme). Aksi halde bir kullanıcı başkası adına talep oluşturabilirdi.
 const CreateRequestSchema = z.object({
-  requesterUserId: z.string().min(5),
   targetType: z.enum(['USER', 'JOB_LISTING']),
   targetId: z.string().min(5),
   // Menti kendi tanışma/talep mesajını yazar — AI üretimi yok.
@@ -15,26 +17,43 @@ const CreateRequestSchema = z.object({
 // Menti → Mentor doğrudan talep (VisibilityOptIn onay adımı kaldırıldı).
 // Polymorphic target: USER (mentor) veya JOB_LISTING.
 export async function createMatchRequest(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
+  }
   const parsed = CreateRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
+  // Talep sahibi = kimliği doğrulanmış kullanıcı (body'den değil), kendi tenant'ında aktif.
   const requester = await prisma.user.findFirst({
-    where: { id: parsed.data.requesterUserId, tenantId: req.tenant.tenantId, isActive: true },
-    select: { id: true, role: true },
+    where: { id: req.auth.userId, tenantId: req.tenant.tenantId, isActive: true },
+    select: { id: true },
   });
   if (!requester) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Requester kullanıcı bulunamadı.' });
   }
 
   if (parsed.data.targetType === 'USER') {
+    // Hedef mentör başka tenant'ta olabilir (shared pool). findUnique RLS'ten muaftır
+    // (bkz. db.ts) — cross-tenant bulur; ardından canCrossTenantMatch paylaşım iznini zorlar.
+    // Guard olmadan bu, herhangi bir tenant'ın mentörüne talep gönderilmesine izin verirdi.
     const target = await prisma.user.findUnique({
       where: { id: parsed.data.targetId },
-      select: { id: true, role: true },
+      select: { id: true, role: true, isActive: true, tenantId: true },
     });
-    if (!target || target.role !== 'MENTOR') {
+    if (!target || target.role !== 'MENTOR' || !target.isActive) {
       return res.status(400).json({ error: 'TARGET', message: 'Hedef USER mentor olmalıdır.' });
+    }
+    const crossAllowed = await canCrossTenantMatch({
+      requesterTenantId: req.tenant.tenantId,
+      targetTenantId: target.tenantId,
+    });
+    if (!crossAllowed) {
+      return res.status(403).json({
+        error: 'SHARED_POOL_KAPALI',
+        message: 'Bu mentorun tenant havuzu kapalı olduğu için talep gönderilemez.',
+      });
     }
   }
 
