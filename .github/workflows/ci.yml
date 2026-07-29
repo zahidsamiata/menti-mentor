@@ -28,8 +28,11 @@ jobs:
           --health-retries 5
 
     env:
-      # Service container URL — tests/globalSetup.ts bunu alır (dotenv .env'i override etmez).
+      # Service container URL — izole, ephemeral test DB (Neon DEĞİL).
+      # TEST_DATABASE_URL: fail-safe guard (tests/helpers/assertTestDatabase.ts) için
+      # açık işaret; testlerin canlı DB yerine bu container'ı kullandığını garantiler.
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/menti_mentor_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/menti_mentor_test
 
     steps:
       - uses: actions/checkout@v4

@@ -19,6 +19,7 @@
 import { execSync } from 'node:child_process';
 import { config as loadEnv } from 'dotenv';
 import { PrismaClient } from '@prisma/client';
+import { assertSafeTestDatabase } from './helpers/assertTestDatabase.js';
 
 // globalSetup setupFiles'tan önce çalışır; her iki env dosyası da yüklenmeli.
 // Önce .env (ana konfigürasyon), sonra .env.test (override) yükle.
@@ -84,14 +85,10 @@ async function migrateWithRetry(env: NodeJS.ProcessEnv): Promise<void> {
 }
 
 export async function setup(): Promise<void> {
-  // TEST_DATABASE_URL yoksa ana DATABASE_URL'i test için kullan (Neon cloud senaryosu)
-  const testDbUrl = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'];
-  if (!testDbUrl) {
-    throw new Error(
-      'TEST_DATABASE_URL veya DATABASE_URL tanımlı değil.\n' +
-      '.env.test dosyasına TEST_DATABASE_URL ekleyin veya .env içindeki DATABASE_URL\'i yapılandırın.',
-    );
-  }
+  // Fail-safe: TEST_DATABASE_URL yoksa ve DATABASE_URL canlı bir DB'ye (Neon/RDS)
+  // işaret ediyorsa, cleanDb'nin TRUNCATE ... CASCADE'i gerçek veriyi silmeden ÖNCE
+  // net bir hata ile dur. Bu, tüm suite'i başlamadan durdurur (migrate/truncate çalışmaz).
+  const testDbUrl = assertSafeTestDatabase(process.env, { requireDistinct: true });
 
   // DATABASE_URL'i erkenden set et — waitForDatabase yeni bir PrismaClient oluşturur
   process.env['DATABASE_URL'] = testDbUrl;
