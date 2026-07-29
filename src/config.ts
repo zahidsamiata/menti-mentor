@@ -1,7 +1,11 @@
 import { config as dotenvConfig } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-dotenvConfig({ path: resolve(dirname(fileURLToPath(import.meta.url)), '../../.env') });
+// .env, backend kökündedir (backend/.env). Bu dosya backend/src/config.ts olduğundan
+// doğru göreli yol '../.env' (bir üst); '../../.env' repo köküne çıkıp dosyayı bulamaz
+// ve tüm config sessizce varsayılanlara düşerdi. Prod'da (Docker) dosya yoktur, env
+// docker-compose'tan gelir — bu yüzden orada etki yok.
+dotenvConfig({ path: resolve(dirname(fileURLToPath(import.meta.url)), '../.env') });
 
 const isProd = process.env.NODE_ENV === 'production';
 
