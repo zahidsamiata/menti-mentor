@@ -2,20 +2,50 @@ import nodemailer from 'nodemailer';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 
+// Generic SMTP relay (Resend/Brevo vb.). service:'gmail' KALDIRILDI: Gmail App
+// Password kırılgan (Google periyodik iptal ediyor) ve gmail.com'dan sunucu gönderimi
+// deliverability düşük. Sağlayıcı değişimi artık yalnızca env değişikliğidir.
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: config.email.smtpHost,
+  port: config.email.smtpPort,
+  secure: config.email.smtpSecure,
   auth: {
     user: config.email.smtpUser,
     pass: config.email.smtpPass,
   },
 });
 
+// Teslim edilemeyen (sahte/test) domainler — bunlara gönderim kaçınılmaz bounce üretir.
+// Test/dev'de üretilen @test.local adresleri gerçek gönderen kutusunu bounce'la doldurur.
+const UNDELIVERABLE_TLDS = ['.local', '.test', '.invalid', '.example'];
+
+/** Alıcı adresi teslim edilemez bir domaine mi ait? Saf fonksiyon — birim testi kolay. */
+export function isUndeliverableRecipient(to: string): boolean {
+  const at = to.lastIndexOf('@');
+  if (at === -1) return true; // '@' yoksa geçersiz adres
+  const domain = to.slice(at + 1).trim().toLowerCase();
+  if (!domain) return true;
+  return UNDELIVERABLE_TLDS.some((tld) => domain.endsWith(tld));
+}
+
 async function send(to: string, subject: string, html: string): Promise<void> {
-  if (!config.email.smtpUser || !config.email.smtpPass) {
+  // Sahte/teslim edilemez alıcıya gönderme — bounce üretmesin (her ortamda).
+  // KVKK/log kuralı: e-posta adresi loglanmaz, yalnızca durum yazılır.
+  if (isUndeliverableRecipient(to)) {
+    void logger.info('EMAIL', 'Teslim edilemez/sahte alıcı — gönderim atlandı.');
+    return;
+  }
+  if (!config.email.smtpHost || !config.email.smtpUser || !config.email.smtpPass) {
     void logger.warn('EMAIL', 'SMTP yapılandırması eksik — e-posta gönderilmedi.');
     return;
   }
-  await transporter.sendMail({ from: config.email.from, to, subject, html });
+  // Sessiz başarısızlığı önle: SMTP/auth hataları (ör. 535) görünür olmalı.
+  try {
+    await transporter.sendMail({ from: config.email.from, to, subject, html });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    void logger.error('EMAIL', `E-posta gönderilemedi: ${reason}`);
+  }
 }
 
 export async function sendMeetingRequestEmail(args: {
