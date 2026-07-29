@@ -10,6 +10,7 @@ import {
   QuestionTier, AnswerFormat, UserRole,
 } from '@prisma/client';
 import { seedCertification } from './seed-certification.js';
+import { seedLearningJourney } from './seed-learning-journey.js';
 
 const prisma = new PrismaClient();
 
@@ -504,6 +505,7 @@ async function main() {
   await seedSjtQuestions();
   await seedIndustryNodes();
   await seedCertification();
+  await seedLearningJourney();
 }
 
 // ─── SJT Soru Havuzu ─────────────────────────────────────────────────────────
