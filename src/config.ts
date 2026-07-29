@@ -46,9 +46,19 @@ export const config = {
   },
 
   email: {
+    // Generic SMTP relay (öneri: Resend). service:'gmail' bırakıldı — sağlayıcı
+    // değişimi artık yalnızca env ile (host/port/user/pass).
+    smtpHost: process.env.SMTP_HOST ?? '',
+    smtpPort: Number(process.env.SMTP_PORT ?? 465),
+    // 465 → implicit TLS (secure); 587/2525 → STARTTLS. Override: SMTP_SECURE=true|false.
+    smtpSecure: process.env.SMTP_SECURE
+      ? process.env.SMTP_SECURE === 'true'
+      : Number(process.env.SMTP_PORT ?? 465) === 465,
     smtpUser: process.env.SMTP_USER ?? '',
     smtpPass: process.env.SMTP_PASS ?? '',
-    from: process.env.SMTP_FROM ?? process.env.SMTP_USER ?? 'noreply@example.com',
+    // Gönderen kurumsal, SPF/DKIM doğrulanmış domain olmalı. SMTP_USER'a DÜŞME —
+    // Resend'de SMTP_USER "resend" gibi bir kullanıcı adıdır, gönderen adresi değil.
+    from: process.env.SMTP_FROM ?? 'noreply@sivilkapasite.org',
   },
 
   // Frontend base URL — davet linkleri ve şifre sıfırlama URL'leri için kullanılır
