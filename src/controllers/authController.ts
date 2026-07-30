@@ -12,6 +12,7 @@ import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
 import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthStateService.js';
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
+import { ensureMembershipSafe } from '../services/membership.js';
 import { config } from '../config.js';
 
 
@@ -170,6 +171,10 @@ export async function register(req: Request, res: Response) {
   // Her kullanıcı için UserProfile yaşam döngüsünü başlat (idempotent).
   // Skorlama alanları onboarding'de doldurulur; burada yalnızca satırın varlığı garanti edilir.
   await ensureUserProfile(user.id);
+
+  // b3: Kurum üyeliğini garanti et (kurum-içi rol/sayım kaynağı TenantMembership.role).
+  // GÜVENLİK: non-fatal — membership yazımı kaydı ASLA bozmamalı (kullanıcı zaten oluştu).
+  await ensureMembershipSafe(prisma, user.id, user.tenantId, user.role);
 
   // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
   const tenantAdmins = await prisma.user.findMany({

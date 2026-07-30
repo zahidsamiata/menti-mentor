@@ -12,6 +12,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { runWeeklyTuning, runWeeklyPurge } from '../services/cronScheduler.js';
 import { logger } from '../services/logger.js';
+import { ensureMembershipSafe } from '../services/membership.js';
 import { notifyRematchRequested } from '../services/notificationService.js';
 import { sendUserApprovalNotification } from '../services/emailService.js';
 import { generateSuggestions } from '../services/coachingSuggestions.js';
@@ -498,6 +499,8 @@ export async function promoteToAdmin(req: RequestWithTenant, res: Response) {
   }
 
   await prisma.user.update({ where: { id: target.id }, data: { role: 'ADMIN' } });
+  // b3: rol değişince TenantMembership.role senkronla (yoksa panel yanlış sayar). Non-fatal.
+  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, 'ADMIN');
   void logger.info('AUTH', 'Admin yetkisi verildi', {
     actorId,
     targetId: target.id,
@@ -527,6 +530,8 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
   }
 
   await prisma.user.update({ where: { id: target.id }, data: { role: 'MENTOR' } });
+  // b3: rol değişince TenantMembership.role senkronla. Non-fatal.
+  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, 'MENTOR');
   void logger.info('AUTH', 'Admin yetkisi alındı', {
     actorId,
     targetId: target.id,

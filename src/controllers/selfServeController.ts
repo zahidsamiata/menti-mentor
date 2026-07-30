@@ -6,6 +6,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
+import { ensureMembership } from '../services/membership.js';
 import { config } from '../config.js';
 
 const BCRYPT_ROUNDS = 12;
@@ -303,15 +304,9 @@ export async function selfServeRegister(req: Request, res: Response) {
       },
     });
 
-    // requireTenant middleware'inin TenantMembership.isActive kontrolü için zorunlu
-    await tx.tenantMembership.create({
-      data: {
-        userId:   user.id,
-        tenantId: tenant.id,
-        role:     'ADMIN',
-        isActive: true,
-      },
-    });
+    // requireTenant middleware'inin TenantMembership.isActive kontrolü için zorunlu.
+    // b3: ortak helper (DRY) — tx İÇİNDE, atomik (kurucu admin için membership zorunlu).
+    await ensureMembership(tx, user.id, tenant.id, 'ADMIN');
 
     return { tenant, user };
   });

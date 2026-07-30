@@ -19,6 +19,7 @@ import { prisma } from '../../db.js';
 import { signToken } from '../../middleware/jwtAuth.js';
 import { sendAdminNewUserNotification } from '../emailService.js';
 import { notifyAdminsPendingUser } from '../notificationService.js';
+import { ensureMembershipSafe } from '../membership.js';
 import type { OAuthCallbackResult, OAuthStatePayload, OAuthUserProfile } from './oauthTypes.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
@@ -106,6 +107,9 @@ async function handleNewUser(
     },
     select: { id: true, tenantId: true, role: true, fullName: true },
   });
+
+  // b3: Kurum üyeliğini garanti et. GÜVENLİK: non-fatal — OAuth girişini ASLA bozmaz.
+  await ensureMembershipSafe(prisma, newUser.id, newUser.tenantId, newUser.role);
 
   // Admin bildirimlerini arka planda gönder — giriş akışını yavaşlatmamalı
   void notifyAdmins(tenant, newUser.fullName, state.role);

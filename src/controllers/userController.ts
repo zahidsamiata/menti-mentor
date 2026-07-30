@@ -4,6 +4,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { sendAdminNewUserNotification } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
+import { ensureMembershipSafe } from '../services/membership.js';
 
 // ─── Security: Tag Poisoning Prevention ───────────────────────────────────────
 // Etiketlerdeki XSS, injection ve kimlik gizleme girişimlerini önler.
@@ -369,6 +370,9 @@ export async function createUser(req: RequestWithTenant, res: Response) {
       targetAudience: parsed.data.targetAudience,
     },
   });
+
+  // b3: Kurum üyeliğini garanti et. GÜVENLİK: non-fatal — kullanıcı oluşturmayı bozmaz.
+  await ensureMembershipSafe(prisma, user.id, user.tenantId, user.role);
 
   // MENTOR/MENTI kayıtları PENDING başlar — tenant adminlerine bildirim gönder
   if (user.role === 'MENTOR' || user.role === 'MENTI') {
