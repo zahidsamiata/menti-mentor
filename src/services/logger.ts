@@ -2,7 +2,8 @@ import { prisma } from '../db.js';
 import type { LogLevel } from '@prisma/client';
 
 // Desteklenen log kategorileri
-type LogCategory = 'EMAIL' | 'ML' | 'AUTH' | 'DB' | 'HTTP' | 'SYSTEM';
+// AUDIT: KVKK Md.12 — platform admin'in hassas veri erişimini izlenebilir kılan denetim kaydı.
+type LogCategory = 'EMAIL' | 'ML' | 'AUTH' | 'DB' | 'HTTP' | 'SYSTEM' | 'AUDIT';
 
 /**
  * Her log girişini hem konsola hem de SystemLog tablosuna yazar.

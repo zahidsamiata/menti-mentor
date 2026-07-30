@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
-import { signToken } from '../middleware/jwtAuth.js';
+import { signToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
 import { logger } from '../services/logger.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
@@ -41,13 +41,16 @@ export async function platformLogin(req: Request, res: Response) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Geçersiz platform yönetici bilgileri.' });
   }
 
-  const token = signToken({
-    sub: 'platform-admin',
-    tenantId: '__platform__',
-    role: 'ADMIN',
-    fullName: 'Platform Yöneticisi',
-    isPlatformAdmin: true,
-  });
+  const token = signToken(
+    {
+      sub: 'platform-admin',
+      tenantId: '__platform__',
+      role: 'ADMIN',
+      fullName: 'Platform Yöneticisi',
+      isPlatformAdmin: true,
+    },
+    { audience: PLATFORM_AUDIENCE },
+  );
 
   res.cookie(PLATFORM_COOKIE, token, PLATFORM_COOKIE_OPTS);
   return res.json({ ok: true });

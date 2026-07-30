@@ -7,14 +7,24 @@ export interface JwtPayload {
   role: 'ADMIN' | 'MENTOR' | 'MENTI';
   fullName: string;
   isPlatformAdmin?: boolean;
+  // Token domain ayrımı (güvenlik): platform token'ları aud:'platform' taşır.
+  // Tenant/kullanıcı token'larında bu claim YOKTUR — böylece bir kullanıcı token'ı
+  // yanlışlıkla platform endpoint'inde geçerli sayılamaz (bkz. requirePlatformAdmin).
+  aud?: string;
   iat?: number;
   exp?: number;
 }
 
-export function signToken(payload: Omit<JwtPayload, 'iat' | 'exp'>): string {
-  return jwt.sign(payload, config.jwt.secret, {
-    expiresIn: config.jwt.expiresIn,
-  } as jwt.SignOptions);
+export const PLATFORM_AUDIENCE = 'platform';
+
+export function signToken(
+  payload: Omit<JwtPayload, 'iat' | 'exp' | 'aud'>,
+  options?: { audience?: string },
+): string {
+  // `as jwt.SignOptions`: config.jwt.expiresIn string'tir; ms-StringValue tipini karşılamak için cast.
+  const signOptions = { expiresIn: config.jwt.expiresIn } as jwt.SignOptions;
+  if (options?.audience) signOptions.audience = options.audience;
+  return jwt.sign(payload, config.jwt.secret, signOptions);
 }
 
 export function verifyToken(token: string): JwtPayload | null {
