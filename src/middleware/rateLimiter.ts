@@ -76,3 +76,30 @@ export function platformReadRateLimiter(req: Request, res: Response, next: NextF
   }
   return next();
 }
+
+// ─── Kullanıcı login brute-force koruması ─────────────────────────────────────
+// generalRateLimiter tenant-key'lidir (X-Tenant-Id). /api/auth/login public'tir
+// ve çoğu zaman tenant header taşımaz → 'anon' kovasına düşer; kimlik-bilgisi
+// deneme (credential stuffing / brute-force) için zayıf kalır. Platform login'de
+// olduğu gibi burada da IP-bazlı sıkı bir limit uyguluyoruz. Bu limiter
+// generalRateLimiter'a EK'tir; onu DEĞİŞTİRMEZ.
+//
+// Eşik call-time'da okunur (module const değil): böylece test kendi eşiğini
+// ayarlayabilir ve gerektiğinde env ile yeniden yapılandırılabilir.
+// Varsayılan: 10 deneme/dk/IP (config: LOGIN_RATE_RPM).
+export function loginRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['LOGIN_RATE_RPM'] ?? 10);
+  if (!checkLimit(`login:${clientIp(req)}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla giriş denemesi. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
+/** Test yardımcısı: in-memory sayaçları sıfırlar (yalnızca testlerde kullanılır). */
+export function resetRateLimiters(): void {
+  counters.clear();
+}

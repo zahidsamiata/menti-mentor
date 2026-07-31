@@ -17,3 +17,9 @@ if (testDbUrl) {
 process.env['NODE_ENV'] = 'test';
 process.env['JWT_SECRET'] = 'test-secret-min-32-chars-for-testing-only!!';
 process.env['PLATFORM_ADMIN_KEY'] = 'test-platform-key';
+
+// Login rate-limit'i test ortamında gevşet: suite genelinde çok sayıda meşru
+// login (aynı IP → localhost) default eşiği aşıp 429 almasın. Özel brute-force
+// testi kendi eşiğini düşürür (bkz. login-rate-limit.test.ts).
+// .env.test gitignored olduğundan bu değer committed setup'ta tutulur (CI'a ulaşsın).
+process.env['LOGIN_RATE_RPM'] = '1000';
