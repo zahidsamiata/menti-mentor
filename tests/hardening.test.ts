@@ -62,16 +62,19 @@ describe('Hardening: Cross-Tenant Penetrasyon Engeli', () => {
     expect((res.body as { error: string }).error).toBe('CROSS_TENANT_ERISIM_ENGELLENDI');
   });
 
-  it('Kullanıcı A, B tenant\'ın kaynak ID\'sini kendi headeri ile sorgularsa 404 alır', async () => {
-    // Bu senaryo: kendi tenant header'ı doğru ama başka tenant'taki bir user ID'si sorguluyor.
-    // RLS + tenantId filtresi: findFirst(id=B_user, tenantId=tenantA) → bulunamaz → 404
+  it('ADMIN, başka tenant\'taki kullanıcı ID\'sini kendi header\'ıyla sorgularsa 404 alır (RLS)', async () => {
+    // Ownership kapısını (requireSelfOrAdmin) yalnızca kaydın sahibi veya ADMIN geçer.
+    // ADMIN geçtikten SONRA RLS + tenantId filtresi devreye girer:
+    // findFirst(id=B_user, tenantId=tenantA) → bulunamaz → 404.
+    // (Mentör/menti aynı sorguyu yaparsa ownership nedeniyle 403 alır — bkz. idor-ownership.test.ts.)
+    const adminA = await createAdminUser(tenantA.id);
+    const { accessToken: adminToken } = await loginAs(http, adminA.email, adminA.rawPassword);
     const userB = await createMenti(tenantB.id);
 
     const res = await http
       .get(`/api/users/${userB.id}`)
-      .set(tenantHeaders(tenantA.id, tokenA));
+      .set(tenantHeaders(tenantA.id, adminToken));
 
-    // Kullanıcı farklı tenant'ta → RLS filtresi nedeniyle kendi scope'unda bulunamaz
     expect(res.status).toBe(404);
   });
 
