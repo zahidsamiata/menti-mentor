@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
-import { requireAuth, requireRole } from '../middleware/authorize.js';
+import { requireAuth, requireRole, requireSelfOrAdmin } from '../middleware/authorize.js';
 import { createUser, listUsers, getUser, updateUser, patchSelfProfile, countApprovedMentors, updateMyProfile } from '../controllers/userController.js';
 import { submitTemperamentTest } from '../controllers/temperamentController.js';
 import { getRankedMentisForMentor, setVisibilityOptIn } from '../controllers/matchingController.js';
@@ -29,8 +29,10 @@ router.get('/users/mentor-count', requireAuth(), countApprovedMentors as unknown
 // POST /users        → yalnızca ADMIN
 router.post('/users', requireRole('ADMIN'), createUser as unknown as RequestHandler);
 
-// GET  /users/:id    → kimlik doğrulaması zorunlu
-router.get('/users/:id', requireAuth(), getUser as unknown as RequestHandler);
+// GET  /users/:id    → yalnızca kaydın SAHİBİ veya ADMIN (IDOR koruması).
+// Not: mentör↔menti çapraz profil görüntüleme buradan DEĞİL, opt-in korumalı
+// /mentors/:mentorId/candidates üzerinden yapılır; bu endpoint self+admin'dir.
+router.get('/users/:id', requireSelfOrAdmin('id'), getUser as unknown as RequestHandler);
 
 // PATCH /users/me/profile → kullanıcı kendi profilini düzenler (whitelist korumalı)
 router.patch(
@@ -71,7 +73,8 @@ router.get('/requests/:id', requireAuth(), getRequest as unknown as RequestHandl
 router.post('/requests', requireAuth(), createMatchRequest as unknown as RequestHandler);
 
 // ─── Kullanıcının kulüpleri ───────────────────────────────────────────────────
-router.get('/users/:userId/clubs', requireAuth(), getUserClubs as unknown as RequestHandler);
+// Yalnızca kaydın SAHİBİ veya ADMIN (IDOR koruması) — başkasının kulüp üyelikleri sızmasın.
+router.get('/users/:userId/clubs', requireSelfOrAdmin('userId'), getUserClubs as unknown as RequestHandler);
 
 // ─── Serbest profil metadata ──────────────────────────────────────────────────
 // PATCH /users/:id/self-profile → kendi kaydını güncelleyebilir (ADMIN veya sahibi)

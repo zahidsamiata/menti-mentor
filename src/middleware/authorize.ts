@@ -58,3 +58,38 @@ export function requireRole(...roles: Array<'ADMIN' | 'MENTOR' | 'MENTI'>): Requ
     next();
   } as RequestHandler;
 }
+
+/**
+ * Kaynak sahibi (self) VEYA ADMIN erişimini zorunlu kılar — IDOR koruması.
+ *
+ * NEDEN middleware (satır-içi değil): "kendi kaydı mı?" kontrolü kod tabanında
+ * birçok controller'da (patchSelfProfile, gdprController, temperamentController,
+ * adaptiveTestController) tekrarlanıyordu. Route seviyesinde tek yerde toplanınca
+ * yeni `:id` endpoint'lerinin yetkilendirmesi tek satıra iner ve controller iş
+ * mantığına odaklanır — requireAuth/requireRole ile aynı katman.
+ *
+ * GÜVENLİK: yalnızca "giriş yapmış olmak" YETMEZ. Yoldaki kaynak id'si istek
+ * sahibininki değil ve rol ADMIN değilse 403. Böylece kullanıcı `:id`'yi
+ * başkasınınkiyle değiştirerek kaynağına (ör. PII profili) erişemez.
+ *
+ * requireTenant'tan SONRA kullanılmalıdır (req.auth set edilmiş olmalı).
+ */
+export function requireSelfOrAdmin(paramName = 'id'): RequestHandler {
+  return function selfOrAdminGuard(rawReq, res, next: NextFunction) {
+    const req = rawReq as unknown as RequestWithTenant;
+
+    if (!req.auth) {
+      sendUnauthorized(res);
+      return;
+    }
+
+    const isSelf = req.auth.userId === req.params[paramName];
+    const isAdmin = req.auth.role === 'ADMIN';
+    if (!isSelf && !isAdmin) {
+      sendForbidden(res);
+      return;
+    }
+
+    next();
+  } as RequestHandler;
+}
