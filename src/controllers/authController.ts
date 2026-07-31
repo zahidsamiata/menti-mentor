@@ -108,6 +108,18 @@ function hashToken(raw: string): string {
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
+// ─── Kayıt akışı kullanıcı mesajları ─────────────────────────────────────────
+// Tek yerde tutulur (dedupe + tutarlılık + çeviri kolaylığı). Enumeration-safe:
+// e-posta zaten kayıtlıysa da "başarılı" yanıtı döner (aşağıda); mesaj hiçbir
+// yerde hesabın var olup olmadığını sızdırmaz.
+const REGISTER_MESSAGES = {
+  TENANT_NOT_FOUND: 'Kuruluş bulunamadı. Davet bağlantınızı kontrol edin.',
+  TENANT_PENDING:
+    'Bu kurum henüz platform tarafından onaylanmamıştır. Onaylandığında kayıt olabilirsiniz.',
+  SUCCESS_PENDING_APPROVAL:
+    'Kaydınız alındı. Kurum yöneticiniz onayladıktan sonra giriş yapabilirsiniz.',
+} as const;
+
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
 export async function register(req: Request, res: Response) {
   const parsed = RegisterSchema.safeParse(req.body);
@@ -122,13 +134,13 @@ export async function register(req: Request, res: Response) {
     select: { id: true, name: true, displayName: true, verificationStatus: true },
   });
   if (!tenant) {
-    return res.status(400).json({ error: 'TENANT_BULUNAMADI', message: 'Kuruluş bulunamadı.' });
+    return res.status(400).json({ error: 'TENANT_BULUNAMADI', message: REGISTER_MESSAGES.TENANT_NOT_FOUND });
   }
 
   if (tenant.verificationStatus === 'PENDING_REVIEW') {
     return res.status(403).json({
       error: 'TENANT_ONAY_BEKLENIYOR',
-      message: 'Bu kurum henüz platform tarafından onaylanmamıştır.',
+      message: REGISTER_MESSAGES.TENANT_PENDING,
     });
   }
 
@@ -140,7 +152,7 @@ export async function register(req: Request, res: Response) {
     // E-posta numaralandırmasını önle: kayıtlı ve kayıtsız e-posta için aynı yanıt
     void sendAlreadyRegisteredEmail({ toEmail: email, userName: existing.fullName });
     return res.status(201).json({
-      message: 'Kayıt başarılı. Admin onayı bekleniyor.',
+      message: REGISTER_MESSAGES.SUCCESS_PENDING_APPROVAL,
       user: null,
     });
   }
