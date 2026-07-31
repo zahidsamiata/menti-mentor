@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, type TestAgent } from './helpers/request.js';
 import { cleanDb } from './helpers/db.js';
 import { createTenant } from './helpers/factories.js';
-import { signToken } from '../src/middleware/jwtAuth.js';
+import { signToken, PLATFORM_AUDIENCE } from '../src/middleware/jwtAuth.js';
 import type { Tenant } from '@prisma/client';
 
 // requirePlatformAdmin cookie okur (Bearer değil) — bu yardımcı doğru header kurar.
@@ -78,13 +78,16 @@ describe('KRİTİK-3a: tenantRoutes — platform admin zorunlu', () => {
   });
 
   it('platform admin ile GET /api/tenants/ → 200', async () => {
-    const platformToken = signToken({
-      sub: 'platform-admin',
-      tenantId: '__platform__',
-      role: 'ADMIN',
-      fullName: 'Platform Yöneticisi',
-      isPlatformAdmin: true,
-    });
+    const platformToken = signToken(
+      {
+        sub: 'platform-admin',
+        tenantId: '__platform__',
+        role: 'ADMIN',
+        fullName: 'Platform Yöneticisi',
+        isPlatformAdmin: true,
+      },
+      { audience: PLATFORM_AUDIENCE },
+    );
     const res = await http
       .get('/api/tenants/')
       .set(platformCookieHeader(platformToken));
@@ -93,13 +96,16 @@ describe('KRİTİK-3a: tenantRoutes — platform admin zorunlu', () => {
   });
 
   it('platform admin ile POST /api/tenants/ → 201', async () => {
-    const platformToken = signToken({
-      sub: 'platform-admin',
-      tenantId: '__platform__',
-      role: 'ADMIN',
-      fullName: 'Platform Yöneticisi',
-      isPlatformAdmin: true,
-    });
+    const platformToken = signToken(
+      {
+        sub: 'platform-admin',
+        tenantId: '__platform__',
+        role: 'ADMIN',
+        fullName: 'Platform Yöneticisi',
+        isPlatformAdmin: true,
+      },
+      { audience: PLATFORM_AUDIENCE },
+    );
     const slug = `test-tenant-${Date.now()}`;
     const res = await http
       .post('/api/tenants/')
