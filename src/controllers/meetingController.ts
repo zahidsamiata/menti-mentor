@@ -11,17 +11,46 @@ import { logger } from '../services/logger.js';
 const VALID_WEEKDAYS = Object.values(Weekday);
 const VALID_FORMATS  = Object.values(MeetingFormat);
 
-// JS getUTCDay() (0=Pazar) → Weekday enum
-const JS_DAY_TO_WEEKDAY: Record<number, Weekday> = {
-  0: Weekday.SUN, 1: Weekday.MON, 2: Weekday.TUE,
-  3: Weekday.WED, 4: Weekday.THU, 5: Weekday.FRI, 6: Weekday.SAT,
-};
-
 // "HH:MM" → günün dakikası
 function timeToMinutes(hhmm: string): number | null {
   const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(hhmm);
   if (!m) return null;
   return parseInt(m[1]!, 10) * 60 + parseInt(m[2]!, 10);
+}
+
+// Intl kısa-gün (en-US) → Weekday enum
+const PARTS_TO_WEEKDAY: Record<string, Weekday> = {
+  Mon: Weekday.MON, Tue: Weekday.TUE, Wed: Weekday.WED, Thu: Weekday.THU,
+  Fri: Weekday.FRI, Sat: Weekday.SAT, Sun: Weekday.SUN,
+};
+
+// Bir mutlak anı (UTC Date) verilen IANA saat diliminde DUVAR-SAATİ bileşenlerine çevirir.
+// Neden: availabilityBlock.startTime/endTime YEREL (blk.timezone, vars. Europe/Istanbul)
+// tanımlıdır; müsaitlik penceresi karşılaştırması aynı dilimde yapılmalı. Aksi halde slot'u
+// UTC'de projelemek (getUTCHours) İstanbul +03 farkıyla yanlış kabul/ret üretir ve gece
+// yarısına yakın günü bile kaydırır. hourCycle:'h23' → gece yarısı "24" sorunu olmaz.
+export function zonedWeekdayAndMinutes(
+  instant: Date,
+  timeZone: string,
+): { weekday: Weekday; minutes: number } | null {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(instant);
+
+  const wd = parts.find((p) => p.type === 'weekday')?.value;
+  const hh = parts.find((p) => p.type === 'hour')?.value;
+  const mm = parts.find((p) => p.type === 'minute')?.value;
+  if (!wd || hh === undefined || mm === undefined) return null;
+
+  const weekday = PARTS_TO_WEEKDAY[wd];
+  const hours   = parseInt(hh, 10);
+  const minutes = parseInt(mm, 10);
+  if (!weekday || Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  return { weekday, minutes: hours * 60 + minutes };
 }
 
 // [a,b) ∩ [c,d) boş mu?
@@ -345,20 +374,25 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     }
   }
 
-  // Müsaitlik şablonu kontrolü
-  const weekday  = JS_DAY_TO_WEEKDAY[start.getUTCDay()]!;
-  const startMin = start.getUTCHours() * 60 + start.getUTCMinutes();
-  const endMin   = end.getUTCHours()   * 60 + end.getUTCMinutes();
-
+  // Müsaitlik şablonu kontrolü — slot, mentörün YEREL (blok saat dilimi) müsaitliğine düşmeli.
+  // startsAt/endsAt DB'de mutlak UTC anı olarak saklanır (doğru); yalnızca pencere
+  // karşılaştırması blok saat dilimine çevrilir. Gün filtresini UTC'de yapmak da yanlış
+  // olurdu (gece yarısı gün kayması) → tüm aktif bloklar çekilir, gün+saat blok diliminde eşlenir.
   const availability = await prisma.availabilityBlock.findMany({
-    where: { tenantId, userId: mentorUserId, isActive: true, weekday },
+    where: { tenantId, userId: mentorUserId, isActive: true },
   });
 
   const fitsAvailability = availability.some((blk) => {
+    const tz = blk.timezone || 'Europe/Istanbul';
+    const s = zonedWeekdayAndMinutes(start, tz);
+    const e = zonedWeekdayAndMinutes(end, tz);
+    if (!s || !e) return false;
+    // Slot, bloğun günü içinde (tek gün) olmalı — yerel güne göre.
+    if (s.weekday !== blk.weekday || e.weekday !== blk.weekday) return false;
     const blkS = timeToMinutes(blk.startTime);
     const blkE = timeToMinutes(blk.endTime);
     if (blkS === null || blkE === null) return false;
-    return startMin >= blkS && endMin <= blkE;
+    return s.minutes >= blkS && e.minutes <= blkE;
   });
 
   if (!fitsAvailability) {
