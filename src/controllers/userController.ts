@@ -31,6 +31,9 @@ const ListUsersQuerySchema = z.object({
     .string()
     .optional()
     .transform((v) => (v === undefined ? undefined : v !== 'false')),
+  // Sayfalama (adminListUsers deseniyle aynı): sınırsız findMany ölçekte OOM/timeout riski.
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
 });
 
 export async function listUsers(req: RequestWithTenant, res: Response) {
@@ -55,31 +58,41 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const users = await prisma.user.findMany({
-    where: {
-      tenantId: req.tenant.tenantId,
-      ...(parsed.data.role !== undefined && { role: parsed.data.role }),
-      ...(parsed.data.isActive !== undefined && { isActive: parsed.data.isActive }),
-    },
-    select: {
-      id: true,
-      role: true,
-      email: true,
-      fullName: true,
-      isActive: true,
-      sectorTags: true,
-      discType: true,
-      skills: true,
-      bioSummary: true,
-      expertiseDetails: true,
-      targetAudience: true,
-      needsOrientation: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  const { role, isActive, page, pageSize } = parsed.data;
+  const skip = (page - 1) * pageSize;
 
-  return res.json({ items: users, total: users.length });
+  const where = {
+    tenantId: req.tenant.tenantId,
+    ...(role !== undefined && { role }),
+    ...(isActive !== undefined && { isActive }),
+  };
+
+  const [items, total] = await Promise.all([
+    prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        role: true,
+        email: true,
+        fullName: true,
+        isActive: true,
+        sectorTags: true,
+        discType: true,
+        skills: true,
+        bioSummary: true,
+        expertiseDetails: true,
+        targetAudience: true,
+        needsOrientation: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: pageSize,
+      skip,
+    }),
+    prisma.user.count({ where }),
+  ]);
+
+  return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
 }
 
 /**
