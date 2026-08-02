@@ -38,6 +38,19 @@ const RankQuerySchema = z.object({
 // Opsiyonel filtreler: ?minMatchScore=70&excludeDiscTypes=D,S
 export async function getRankedMentisForMentor(req: RequestWithTenant, res: Response) {
   const mentorId = req.params['mentorId'] as string;
+
+  // IDOR koruması: route ADMIN|MENTOR'a açık ama bir MENTOR yalnızca KENDİ aday
+  // listesini görebilmeli; başka bir mentörün mentorId'sini geçerek onun aday
+  // havuzunu (PII/skor) görmesi engellenir. ADMIN kendi tenant'ındaki her mentörü görür.
+  const isAdmin = req.auth?.role === 'ADMIN';
+  const isOwner = req.auth?.userId === mentorId;
+  if (!isAdmin && !isOwner) {
+    return res.status(403).json({
+      error: 'YETKISIZ',
+      message: 'Yalnızca kendi aday listenizi görüntüleyebilirsiniz.',
+    });
+  }
+
   const parsed = RankQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });

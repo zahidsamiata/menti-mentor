@@ -109,6 +109,17 @@ export async function getRequest(req: RequestWithTenant, res: Response) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'İstek bulunamadı.' });
   }
 
+  // IDOR koruması: bir eşleşme talebini yalnızca tarafları görebilir — talebi oluşturan
+  // menti (requesterUserId) veya hedef mentor (targetType=USER ise targetId) — ya da ADMIN.
+  // Yetkisiz erişimde 404 döneriz (403 "bu ID var ama senin değil" bilgisini sızdırır;
+  // requestMessage PII içerdiğinden varlık ifşası bile istenmez).
+  const isAdmin = req.auth?.role === 'ADMIN';
+  const isRequester = req.auth?.userId === request.requesterUserId;
+  const isTarget = request.targetType === 'USER' && req.auth?.userId === request.targetId;
+  if (!isAdmin && !isRequester && !isTarget) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'İstek bulunamadı.' });
+  }
+
   return res.json(request);
 }
 
