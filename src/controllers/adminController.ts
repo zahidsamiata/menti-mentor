@@ -169,6 +169,127 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
 }
 
+// ─── Eşleşme Listesi (Admin) — A1 ─────────────────────────────────────────────
+
+const AdminMatchListSchema = z.object({
+  status: z.enum(['ACTIVE', 'COMPLETED', 'EARLY_EXIT', 'DISSOLVED']).optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
+});
+
+/**
+ * GET /api/admin/matches — kurumdaki mentör-menti eşleşmeleri (persist edilmiş Match kayıtları).
+ * GÜVENLİK: tenant izolasyonu (where.tenantId), admin-only (adminRoutes). KVKK: yalnızca ad + arketip
+ * + skor gösterilir; ham discVector/email DÖNMEZ.
+ */
+export async function adminListMatches(req: RequestWithTenant, res: Response) {
+  const parsed = AdminMatchListSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+  const { status, page, pageSize } = parsed.data;
+  const skip = (page - 1) * pageSize;
+
+  const where = {
+    tenantId: req.tenant.tenantId, // KATMAN 3 — tenant izolasyonu
+    ...(status !== undefined && { status }),
+  };
+
+  const [rows, total] = await Promise.all([
+    prisma.match.findMany({
+      where,
+      select: {
+        id: true,
+        predictedScore: true, sectorScore: true, characterScore: true,
+        mentorArchetype: true, mentiArchetype: true, status: true, createdAt: true,
+        mentor: { select: { user: { select: { fullName: true } } } },
+        menti: { select: { user: { select: { fullName: true } } } },
+        _count: { select: { meetings: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: pageSize,
+      skip,
+    }),
+    prisma.match.count({ where }),
+  ]);
+
+  const items = rows.map((m) => ({
+    id: m.id,
+    mentorName: m.mentor.user.fullName,
+    mentiName: m.menti.user.fullName,
+    predictedScore: m.predictedScore,
+    sectorScore: m.sectorScore,
+    characterScore: m.characterScore,
+    mentorArchetype: m.mentorArchetype,
+    mentiArchetype: m.mentiArchetype,
+    status: m.status,
+    meetingCount: m._count.meetings,
+    createdAt: m.createdAt,
+  }));
+
+  void logger.info('SYSTEM', 'Admin: Eşleşme listesi görüntülendi', { tenantId: req.tenant.tenantId }); // KATMAN 9
+  return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+}
+
+// ─── Mentör Sertifika Sonuçları (Admin) — A4 ──────────────────────────────────
+
+const AdminCertResultsSchema = z.object({
+  status: z.enum(['NOT_STARTED', 'IN_PROGRESS', 'CERTIFIED', 'FAILED', 'COOLDOWN']).optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
+});
+
+/**
+ * GET /api/admin/mentors/certification-results — mentörlerin sertifika durumu/skoru/deneme sayısı.
+ * GÜVENLİK: tenant izolasyonu (where.tenantId), admin-only. certScore yalnızca admin görür.
+ * Kaynak: TenantMembership (kurum-içi rol/sertifika kaynağı).
+ */
+export async function adminListCertResults(req: RequestWithTenant, res: Response) {
+  const parsed = AdminCertResultsSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+  const { status, page, pageSize } = parsed.data;
+  const skip = (page - 1) * pageSize;
+
+  const where = {
+    tenantId: req.tenant.tenantId, // KATMAN 3 — tenant izolasyonu
+    role: 'MENTOR' as const,
+    isActive: true,
+    ...(status !== undefined && { certificationStatus: status }),
+  };
+
+  const [rows, total] = await Promise.all([
+    prisma.tenantMembership.findMany({
+      where,
+      select: {
+        userId: true,
+        isCertified: true, certificationStatus: true, certScore: true,
+        certAttempts: true, certifiedAt: true, cooldownUntil: true,
+        user: { select: { fullName: true } },
+      },
+      orderBy: [{ certifiedAt: 'desc' }],
+      take: pageSize,
+      skip,
+    }),
+    prisma.tenantMembership.count({ where }),
+  ]);
+
+  const items = rows.map((m) => ({
+    userId: m.userId,
+    fullName: m.user.fullName,
+    isCertified: m.isCertified,
+    certificationStatus: m.certificationStatus,
+    certScore: m.certScore,
+    certAttempts: m.certAttempts,
+    certifiedAt: m.certifiedAt,
+    cooldownUntil: m.cooldownUntil,
+  }));
+
+  void logger.info('SYSTEM', 'Admin: Sertifika sonuçları görüntülendi', { tenantId: req.tenant.tenantId }); // KATMAN 9
+  return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+}
+
 // ─── Rematch Talebi ───────────────────────────────────────────────────────────
 
 const RematchSchema = z.object({

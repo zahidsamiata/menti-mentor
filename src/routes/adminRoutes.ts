@@ -4,6 +4,8 @@ import { requireRole } from '../middleware/authorize.js';
 import {
   getKpiDashboard,
   adminListUsers,
+  adminListMatches,
+  adminListCertResults,
   triggerRematch,
   confirmDoubleOptIn,
   manualRunTuning,
@@ -37,6 +39,10 @@ router.get('/kpi', getKpiDashboard as unknown as RequestHandler);
 
 // ─── Kullanıcı Yönetimi ───────────────────────────────────────────────────────
 router.get('/users', adminListUsers as unknown as RequestHandler);
+
+// ─── Eşleşme + Sertifika panelleri (A1, A4) ───────────────────────────────────
+router.get('/matches', adminListMatches as unknown as RequestHandler);
+router.get('/mentors/certification-results', adminListCertResults as unknown as RequestHandler);
 router.post('/users/:id/approve', approveUser as unknown as RequestHandler);
 router.post('/users/:id/reject', rejectUser as unknown as RequestHandler);
 router.post('/users/:id/request-correction', requestCorrection as unknown as RequestHandler);
