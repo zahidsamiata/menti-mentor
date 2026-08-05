@@ -22,6 +22,7 @@ import {
   rejectPendingAdjustment,
 } from '../services/algorithmTuner.js';
 import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
+import { wasRecentlyNudged, sendNudge, NUDGE_COOLDOWN_HOURS } from '../services/nudgeService.js';
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────
 
@@ -148,6 +149,70 @@ export async function getHealthMetrics(req: RequestWithTenant, res: Response) {
     generatedAt: new Date().toISOString(),
     ...metrics,
   });
+}
+
+// ─── Dürtme (Nudge): yönetici pasif üye / ölü eşleşmeye elle hatırlatma ────────
+
+const NudgeSchema = z.object({
+  kind: z.enum(['PASSIVE', 'DEAD_MATCH', 'GENERIC']).optional().default('GENERIC'),
+  message: z.string().trim().max(300).optional(),
+});
+
+/**
+ * POST /api/admin/users/:id/nudge
+ * Yönetici, kendi tenant'ındaki bir üyeye (MENTOR/MENTI) re-engagement hatırlatması gönderir.
+ * Güvenlik: tenant-scoped + ADMIN (route middleware) + spam limiti (24s) + denetim logu.
+ * Ham PII log'a yazılmaz. Otomatik toplu dürtme KAPSAM DIŞI (KVKK/rıza — bkz. nudgeService notu).
+ */
+export async function nudgeUser(req: RequestWithTenant, res: Response) {
+  if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
+
+  const parsed = NudgeSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const targetId = req.params['id'] as string;
+  const tenantId = req.tenant.tenantId;
+
+  // Tenant izolasyonu: hedef bu tenant'ın üyesi olmalı.
+  const target = await prisma.user.findFirst({
+    where: { id: targetId, tenantId },
+    select: { id: true, email: true, fullName: true, role: true, isActive: true },
+  });
+  if (!target || !target.isActive) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Üye bulunamadı.' });
+  }
+  if (target.id === req.auth.userId) {
+    return res.status(400).json({ error: 'GECERSIZ_HEDEF', message: 'Kendinize hatırlatma gönderemezsiniz.' });
+  }
+  if (target.role === 'ADMIN') {
+    return res.status(400).json({ error: 'GECERSIZ_HEDEF', message: 'Yalnızca mentör/menti üyelere hatırlatma gönderilebilir.' });
+  }
+
+  // Spam limiti: aynı üyeye 24 saatte bir.
+  if (await wasRecentlyNudged(tenantId, target.id)) {
+    return res.status(429).json({
+      error: 'DURTME_LIMITI',
+      message: `Bu üyeye son ${NUDGE_COOLDOWN_HOURS} saatte zaten hatırlatma gönderildi.`,
+    });
+  }
+
+  const tenantRecord = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true, displayName: true } });
+  const tenantName = tenantRecord?.displayName ?? tenantRecord?.name ?? 'Mentörlük Programı';
+
+  await sendNudge({
+    tenantId,
+    targetUserId: target.id,
+    targetEmail: target.email,
+    targetName: target.fullName,
+    byUserId: req.auth.userId,
+    tenantName,
+    kind: parsed.data.kind,
+    message: parsed.data.message,
+  });
+
+  return res.json({ ok: true, targetUserId: target.id, sentAt: new Date().toISOString() });
 }
 
 // ─── Kullanıcı Listesi (Admin) ────────────────────────────────────────────────

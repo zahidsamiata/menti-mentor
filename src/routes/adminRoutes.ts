@@ -21,6 +21,7 @@ import {
   promoteToAdmin,
   demoteFromAdmin,
   getHealthMetrics,
+  nudgeUser,
 } from '../controllers/adminController.js';
 import {
   listPendingTags,
@@ -50,6 +51,8 @@ router.post('/users/:id/approve', approveUser as unknown as RequestHandler);
 router.post('/users/:id/reject', rejectUser as unknown as RequestHandler);
 router.post('/users/:id/request-correction', requestCorrection as unknown as RequestHandler);
 router.post('/users/:id/rematch', triggerRematch as unknown as RequestHandler);
+// Yönetici elle dürtme (pasif üye / ölü eşleşme re-engagement) — spam-limitli, loglu
+router.post('/users/:id/nudge', nudgeUser as unknown as RequestHandler);
 // GET /api/admin/users/:id/coaching-suggestions — kural bazlı aksiyon önerileri
 router.get('/users/:id/coaching-suggestions', getCoachingSuggestions as unknown as RequestHandler);
 
