@@ -12,6 +12,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { runWeeklyTuning, runWeeklyPurge } from '../services/cronScheduler.js';
 import { logger } from '../services/logger.js';
+import { ensureMembershipSafe } from '../services/membership.js';
 import { notifyRematchRequested } from '../services/notificationService.js';
 import { sendUserApprovalNotification } from '../services/emailService.js';
 import { generateSuggestions } from '../services/coachingSuggestions.js';
@@ -20,6 +21,8 @@ import {
   applyPendingAdjustment,
   rejectPendingAdjustment,
 } from '../services/algorithmTuner.js';
+import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
+import { wasRecentlyNudged, sendNudge, NUDGE_COOLDOWN_HOURS } from '../services/nudgeService.js';
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────
 
@@ -117,6 +120,101 @@ export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
   });
 }
 
+// ─── Sağlık / Retention Metrikleri (S2: "kimse kaynıyor mu") ──────────────────
+
+const HealthMetricsQuerySchema = z.object({
+  passiveDays: z.coerce.number().int().min(1).max(365).optional(),
+  staleDays: z.coerce.number().int().min(1).max(365).optional(),
+});
+
+/**
+ * GET /api/admin/health-metrics
+ * Mentörsüz menti + ölü eşleşme + pasif üye + arz-talep dengesi. Admin-only + tenant-scoped.
+ * Drill-down için sayı + sınırlı kişi listesi döner (ad/rol/zaman damgası). Ham DISC/email DÖNMEZ.
+ * Eşikler opsiyonel query ile ayarlanabilir (passiveDays, staleDays); makul default'lar serviste.
+ */
+export async function getHealthMetrics(req: RequestWithTenant, res: Response) {
+  const parsed = HealthMetricsQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const metrics = await computeHealthMetrics(req.tenant.tenantId, {
+    passiveDays: parsed.data.passiveDays,
+    staleMatchDays: parsed.data.staleDays,
+  });
+
+  return res.json({
+    tenantId: req.tenant.tenantId,
+    generatedAt: new Date().toISOString(),
+    ...metrics,
+  });
+}
+
+// ─── Dürtme (Nudge): yönetici pasif üye / ölü eşleşmeye elle hatırlatma ────────
+
+const NudgeSchema = z.object({
+  kind: z.enum(['PASSIVE', 'DEAD_MATCH', 'GENERIC']).optional().default('GENERIC'),
+  message: z.string().trim().max(300).optional(),
+});
+
+/**
+ * POST /api/admin/users/:id/nudge
+ * Yönetici, kendi tenant'ındaki bir üyeye (MENTOR/MENTI) re-engagement hatırlatması gönderir.
+ * Güvenlik: tenant-scoped + ADMIN (route middleware) + spam limiti (24s) + denetim logu.
+ * Ham PII log'a yazılmaz. Otomatik toplu dürtme KAPSAM DIŞI (KVKK/rıza — bkz. nudgeService notu).
+ */
+export async function nudgeUser(req: RequestWithTenant, res: Response) {
+  if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
+
+  const parsed = NudgeSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const targetId = req.params['id'] as string;
+  const tenantId = req.tenant.tenantId;
+
+  // Tenant izolasyonu: hedef bu tenant'ın üyesi olmalı.
+  const target = await prisma.user.findFirst({
+    where: { id: targetId, tenantId },
+    select: { id: true, email: true, fullName: true, role: true, isActive: true },
+  });
+  if (!target || !target.isActive) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Üye bulunamadı.' });
+  }
+  if (target.id === req.auth.userId) {
+    return res.status(400).json({ error: 'GECERSIZ_HEDEF', message: 'Kendinize hatırlatma gönderemezsiniz.' });
+  }
+  if (target.role === 'ADMIN') {
+    return res.status(400).json({ error: 'GECERSIZ_HEDEF', message: 'Yalnızca mentör/menti üyelere hatırlatma gönderilebilir.' });
+  }
+
+  // Spam limiti: aynı üyeye 24 saatte bir.
+  if (await wasRecentlyNudged(tenantId, target.id)) {
+    return res.status(429).json({
+      error: 'DURTME_LIMITI',
+      message: `Bu üyeye son ${NUDGE_COOLDOWN_HOURS} saatte zaten hatırlatma gönderildi.`,
+    });
+  }
+
+  const tenantRecord = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true, displayName: true } });
+  const tenantName = tenantRecord?.displayName ?? tenantRecord?.name ?? 'Mentörlük Programı';
+
+  await sendNudge({
+    tenantId,
+    targetUserId: target.id,
+    targetEmail: target.email,
+    targetName: target.fullName,
+    byUserId: req.auth.userId,
+    tenantName,
+    kind: parsed.data.kind,
+    message: parsed.data.message,
+  });
+
+  return res.json({ ok: true, targetUserId: target.id, sentAt: new Date().toISOString() });
+}
+
 // ─── Kullanıcı Listesi (Admin) ────────────────────────────────────────────────
 
 const AdminUserListSchema = z.object({
@@ -157,6 +255,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
         sectorTags: true, discType: true, skills: true,
         rematchPriority: true, rematchCount: true,
         needsOrientation: true, approvalStatus: true, createdAt: true,
+        avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
       },
       orderBy: { createdAt: 'desc' },
       take: pageSize,
@@ -165,6 +264,127 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     prisma.user.count({ where }),
   ]);
 
+  return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+}
+
+// ─── Eşleşme Listesi (Admin) — A1 ─────────────────────────────────────────────
+
+const AdminMatchListSchema = z.object({
+  status: z.enum(['ACTIVE', 'COMPLETED', 'EARLY_EXIT', 'DISSOLVED']).optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
+});
+
+/**
+ * GET /api/admin/matches — kurumdaki mentör-menti eşleşmeleri (persist edilmiş Match kayıtları).
+ * GÜVENLİK: tenant izolasyonu (where.tenantId), admin-only (adminRoutes). KVKK: yalnızca ad + arketip
+ * + skor gösterilir; ham discVector/email DÖNMEZ.
+ */
+export async function adminListMatches(req: RequestWithTenant, res: Response) {
+  const parsed = AdminMatchListSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+  const { status, page, pageSize } = parsed.data;
+  const skip = (page - 1) * pageSize;
+
+  const where = {
+    tenantId: req.tenant.tenantId, // KATMAN 3 — tenant izolasyonu
+    ...(status !== undefined && { status }),
+  };
+
+  const [rows, total] = await Promise.all([
+    prisma.match.findMany({
+      where,
+      select: {
+        id: true,
+        predictedScore: true, sectorScore: true, characterScore: true,
+        mentorArchetype: true, mentiArchetype: true, status: true, createdAt: true,
+        mentor: { select: { user: { select: { fullName: true } } } },
+        menti: { select: { user: { select: { fullName: true } } } },
+        _count: { select: { meetings: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: pageSize,
+      skip,
+    }),
+    prisma.match.count({ where }),
+  ]);
+
+  const items = rows.map((m) => ({
+    id: m.id,
+    mentorName: m.mentor.user.fullName,
+    mentiName: m.menti.user.fullName,
+    predictedScore: m.predictedScore,
+    sectorScore: m.sectorScore,
+    characterScore: m.characterScore,
+    mentorArchetype: m.mentorArchetype,
+    mentiArchetype: m.mentiArchetype,
+    status: m.status,
+    meetingCount: m._count.meetings,
+    createdAt: m.createdAt,
+  }));
+
+  void logger.info('SYSTEM', 'Admin: Eşleşme listesi görüntülendi', { tenantId: req.tenant.tenantId }); // KATMAN 9
+  return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+}
+
+// ─── Mentör Sertifika Sonuçları (Admin) — A4 ──────────────────────────────────
+
+const AdminCertResultsSchema = z.object({
+  status: z.enum(['NOT_STARTED', 'IN_PROGRESS', 'CERTIFIED', 'FAILED', 'COOLDOWN']).optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
+});
+
+/**
+ * GET /api/admin/mentors/certification-results — mentörlerin sertifika durumu/skoru/deneme sayısı.
+ * GÜVENLİK: tenant izolasyonu (where.tenantId), admin-only. certScore yalnızca admin görür.
+ * Kaynak: TenantMembership (kurum-içi rol/sertifika kaynağı).
+ */
+export async function adminListCertResults(req: RequestWithTenant, res: Response) {
+  const parsed = AdminCertResultsSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+  const { status, page, pageSize } = parsed.data;
+  const skip = (page - 1) * pageSize;
+
+  const where = {
+    tenantId: req.tenant.tenantId, // KATMAN 3 — tenant izolasyonu
+    role: 'MENTOR' as const,
+    isActive: true,
+    ...(status !== undefined && { certificationStatus: status }),
+  };
+
+  const [rows, total] = await Promise.all([
+    prisma.tenantMembership.findMany({
+      where,
+      select: {
+        userId: true,
+        isCertified: true, certificationStatus: true, certScore: true,
+        certAttempts: true, certifiedAt: true, cooldownUntil: true,
+        user: { select: { fullName: true } },
+      },
+      orderBy: [{ certifiedAt: 'desc' }],
+      take: pageSize,
+      skip,
+    }),
+    prisma.tenantMembership.count({ where }),
+  ]);
+
+  const items = rows.map((m) => ({
+    userId: m.userId,
+    fullName: m.user.fullName,
+    isCertified: m.isCertified,
+    certificationStatus: m.certificationStatus,
+    certScore: m.certScore,
+    certAttempts: m.certAttempts,
+    certifiedAt: m.certifiedAt,
+    cooldownUntil: m.cooldownUntil,
+  }));
+
+  void logger.info('SYSTEM', 'Admin: Sertifika sonuçları görüntülendi', { tenantId: req.tenant.tenantId }); // KATMAN 9
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
 }
 
@@ -498,6 +718,8 @@ export async function promoteToAdmin(req: RequestWithTenant, res: Response) {
   }
 
   await prisma.user.update({ where: { id: target.id }, data: { role: 'ADMIN' } });
+  // b3: rol değişince TenantMembership.role senkronla (yoksa panel yanlış sayar). Non-fatal.
+  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, 'ADMIN');
   void logger.info('AUTH', 'Admin yetkisi verildi', {
     actorId,
     targetId: target.id,
@@ -527,6 +749,8 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
   }
 
   await prisma.user.update({ where: { id: target.id }, data: { role: 'MENTOR' } });
+  // b3: rol değişince TenantMembership.role senkronla. Non-fatal.
+  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, 'MENTOR');
   void logger.info('AUTH', 'Admin yetkisi alındı', {
     actorId,
     targetId: target.id,

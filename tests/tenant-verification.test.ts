@@ -15,18 +15,21 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant } from './helpers/factories.js';
-import { signToken } from '../src/middleware/jwtAuth.js';
+import { signToken, PLATFORM_AUDIENCE } from '../src/middleware/jwtAuth.js';
 
 // Platform cookie'si path:'/api/platform' kısıtlıdır; super-admin isteklerine
 // agent otomatik göndermez. signToken() ile doğrudan token üretip set ediyoruz.
 function makePlatformCookie(): string {
-  const token = signToken({
-    sub: 'platform-admin',
-    tenantId: '__platform__',
-    role: 'ADMIN',
-    fullName: 'Platform Yöneticisi',
-    isPlatformAdmin: true,
-  });
+  const token = signToken(
+    {
+      sub: 'platform-admin',
+      tenantId: '__platform__',
+      role: 'ADMIN',
+      fullName: 'Platform Yöneticisi',
+      isPlatformAdmin: true,
+    },
+    { audience: PLATFORM_AUDIENCE },
+  );
   return `platform_token=${encodeURIComponent(token)}`;
 }
 

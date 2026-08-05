@@ -6,6 +6,10 @@ node_modules/
 # Derleme çıktıları
 dist/
 
+# Yüklenen kullanıcı avatarları (lokal geliştirme varsayılan UPLOAD_DIR).
+# Canlıda kalıcı disk (Dokploy volume) kullanılır; bu klasör repoya girmez.
+uploads/
+
 # ── Ortam değişkeni dosyaları (asla commit edilmemeli) ───────────────────────
 .env
 .env.*
@@ -40,3 +44,4 @@ Thumbs.db
 # Prisma — geliştirme SQLite (production PostgreSQL'i etkilemez)
 prisma/migrations/dev.db
 *.db
+.env.backup-*

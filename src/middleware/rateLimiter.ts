@@ -43,3 +43,54 @@ export function generalRateLimiter(req: Request, res: Response, next: NextFuncti
   }
   return next();
 }
+
+// Platform endpoint'leri X-Tenant-Id taşımaz → generalRateLimiter'ın 'anon' kovasına
+// düşer (paylaşımlı, zayıf). Bu yüzden platform trafiğine IP-bazlı ayrı limitler koyuyoruz.
+const PLATFORM_AUTH_RPM = Number(process.env.PLATFORM_AUTH_RPM ?? 10); // login brute-force koruması
+const PLATFORM_READ_RPM = Number(process.env.PLATFORM_READ_RPM ?? 120); // panel okuma limiti
+
+function clientIp(req: Request): string {
+  return (req.ip ?? req.socket?.remoteAddress ?? 'unknown').toString();
+}
+
+/** POST /api/platform/auth — kimlik-bilgisi deneme (credential stuffing) koruması. IP başına sıkı. */
+export function platformAuthRateLimiter(req: Request, res: Response, next: NextFunction) {
+  if (!checkLimit(`platform-auth:${clientIp(req)}`, PLATFORM_AUTH_RPM)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: `Çok fazla giriş denemesi. Dakikada en fazla ${PLATFORM_AUTH_RPM} deneme yapılabilir.`,
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
+/** Platform panel veri endpoint'leri — IP başına makul okuma limiti. */
+export function platformReadRateLimiter(req: Request, res: Response, next: NextFunction) {
+  if (!checkLimit(`platform-read:${clientIp(req)}`, PLATFORM_READ_RPM)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: `İstek limiti aşıldı. Dakikada en fazla ${PLATFORM_READ_RPM} istek gönderilebilir.`,
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
+// Avatar yükleme — dosya diske yazdığı için kullanıcı başına sıkı limit (disk doldurma
+// / spam koruması). requireAuth SONRASINDA mount edilmeli ki req.auth.userId hazır olsun.
+const AVATAR_UPLOAD_RPM = Number(process.env.AVATAR_UPLOAD_RPM ?? 5);
+
+/** POST /api/users/me/avatar — kullanıcı başına dakikada sınırlı yükleme. */
+export function avatarUploadRateLimiter(req: Request, res: Response, next: NextFunction) {
+  // req.auth tenant middleware'i tarafından set edilir; yoksa IP'ye düş (defensive).
+  const userId = (req as unknown as { auth?: { userId?: string } }).auth?.userId ?? clientIp(req);
+  if (!checkLimit(`avatar-upload:${userId}`, AVATAR_UPLOAD_RPM)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: `Çok fazla yükleme denemesi. Dakikada en fazla ${AVATAR_UPLOAD_RPM} fotoğraf yükleyebilirsiniz.`,
+      retryAfter: 60,
+    });
+  }
+  return next();
+}

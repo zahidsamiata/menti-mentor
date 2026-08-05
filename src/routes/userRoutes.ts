@@ -8,6 +8,10 @@ import { createMatchRequest, listRequests, getRequest } from '../controllers/req
 import { getUserClubs } from '../controllers/clubController.js';
 import { anonymizeUserHandler, hardDeleteUserHandler, exportUserDataHandler } from '../controllers/gdprController.js';
 import { completedOrientation } from '../controllers/userController.js';
+import { uploadMyAvatar } from '../controllers/avatarController.js';
+import { createReport } from '../controllers/reportController.js';
+import { avatarUploadMiddleware } from '../middleware/avatarUpload.js';
+import { avatarUploadRateLimiter } from '../middleware/rateLimiter.js';
 import { requestVisibilityFromMentor, getPendingVisibilityRequests, respondToVisibilityRequest } from '../controllers/mentiRequestController.js';
 import { getMentorFilter, upsertMentorFilter } from '../controllers/mentorFilterController.js';
 import { getNextAdaptiveQuestion, submitAdaptiveAnswer, previewAdaptiveResult } from '../controllers/adaptiveTestController.js';
@@ -39,6 +43,17 @@ router.patch(
   updateMyProfile as unknown as RequestHandler,
 );
 
+// POST /users/me/avatar → kullanıcı kendi profil fotoğrafını yükler.
+// Sıra önemli: requireAuth (req.auth) → rate limit (userId'ye ihtiyaç duyar) →
+// multer (dosyayı parse eder) → controller (magic-byte doğrular, diske yazar).
+router.post(
+  '/users/me/avatar',
+  requireAuth(),
+  avatarUploadRateLimiter,
+  avatarUploadMiddleware,
+  uploadMyAvatar as unknown as RequestHandler,
+);
+
 // PATCH /users/:id   → yalnızca ADMIN
 router.patch('/users/:id', requireRole('ADMIN'), updateUser as unknown as RequestHandler);
 
@@ -64,6 +79,9 @@ router.post(
   requireRole('ADMIN', 'MENTOR'),
   setVisibilityOptIn as unknown as RequestHandler,
 );
+
+// POST /users/:id/report → giriş yapmış kullanıcı başka bir üyeyi şikayet eder
+router.post('/users/:id/report', requireAuth(), createReport as unknown as RequestHandler);
 
 // ─── Eşleşme istekleri ───────────────────────────────────────────────────────
 router.get('/requests', requireAuth(), listRequests as unknown as RequestHandler);

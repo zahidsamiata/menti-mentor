@@ -3,8 +3,10 @@ import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
-import { signToken } from '../middleware/jwtAuth.js';
+import { signToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
 import { logger } from '../services/logger.js';
+import { auditPlatformAction } from '../services/platformAudit.js';
+import { detectAnomalies } from '../services/abuseDetection.service.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -41,13 +43,16 @@ export async function platformLogin(req: Request, res: Response) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Geçersiz platform yönetici bilgileri.' });
   }
 
-  const token = signToken({
-    sub: 'platform-admin',
-    tenantId: '__platform__',
-    role: 'ADMIN',
-    fullName: 'Platform Yöneticisi',
-    isPlatformAdmin: true,
-  });
+  const token = signToken(
+    {
+      sub: 'platform-admin',
+      tenantId: '__platform__',
+      role: 'ADMIN',
+      fullName: 'Platform Yöneticisi',
+      isPlatformAdmin: true,
+    },
+    { audience: PLATFORM_AUDIENCE },
+  );
 
   res.cookie(PLATFORM_COOKIE, token, PLATFORM_COOKIE_OPTS);
   return res.json({ ok: true });
@@ -127,9 +132,20 @@ export async function getPlatformHealth(_req: Request, res: Response) {
   try {
     await prisma.$queryRaw`SELECT 1`;
     const mem = process.memoryUsage();
+
+    // Mail: SMTP yapılandırması tam mı? Canlı gönderim testi YAPILMAZ (gerçek kullanıcıya
+    // bounce/spam riski) — yalnızca env yapılandırmasının varlığı kontrol edilir.
+    const mailConfigured = !!(config.email.smtpHost && config.email.smtpUser && config.email.smtpPass);
+
+    // Son 24 saatteki kritik hata sayısı (SystemLog ERROR) — "kırmızı" sinyali.
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentErrors = await prisma.systemLog.count({ where: { level: 'ERROR', createdAt: { gte: since } } });
+
     return res.json({
       status: 'ok',
       db: 'connected',
+      mail: mailConfigured ? 'configured' : 'not_configured',
+      recentErrors,
       env: config.nodeEnv,
       uptime: process.uptime(),
       memory: {
@@ -226,6 +242,7 @@ export async function approveTenant(req: Request, res: Response) {
     data: { verificationStatus: 'APPROVED', verifiedAt: new Date() },
   });
 
+  await auditPlatformAction('APPROVE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
 
@@ -248,6 +265,7 @@ export async function rejectTenant(req: Request, res: Response) {
     },
   });
 
+  await auditPlatformAction('REJECT_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
 
@@ -257,6 +275,7 @@ export async function freezeTenant(req: Request, res: Response) {
   if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
 
   await prisma.tenant.update({ where: { id: tenant.id }, data: { isActive: false } });
+  await auditPlatformAction('FREEZE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
 
@@ -266,6 +285,7 @@ export async function activateTenant(req: Request, res: Response) {
   if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
 
   await prisma.tenant.update({ where: { id: tenant.id }, data: { isActive: true } });
+  await auditPlatformAction('ACTIVATE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
 
@@ -295,5 +315,68 @@ export async function reviewSuspicionReport(req: Request, res: Response) {
     data: { reviewed: true, reviewNote: note },
   });
 
+  await auditPlatformAction('REVIEW_SUSPICION_REPORT', req, { targetType: 'SUSPICION_REPORT', targetId: report.id });
   return res.json({ ok: true });
+}
+
+// ─── Kullanıcı Şikayetleri (sistem-geneli) + Otomatik Tespit ──────────────────
+
+// GET /api/platform/user-reports?status=OPEN|REVIEWED|DISMISSED
+export async function listUserReports(req: Request, res: Response) {
+  const statusRaw = req.query['status'] as string | undefined;
+  const status = statusRaw && ['OPEN', 'REVIEWED', 'DISMISSED'].includes(statusRaw) ? statusRaw : undefined;
+
+  const reports = await prisma.userReport.findMany({
+    where: status ? { status } : {},
+    select: {
+      id: true, tenantId: true, reason: true, description: true, status: true, reviewNote: true, createdAt: true,
+      reporter: { select: { fullName: true } },
+      target: { select: { fullName: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+
+  // Kurum adlarını tek sorguda ekle (UserReport'ta Tenant ilişkisi yok — hafif join).
+  const tenantIds = [...new Set(reports.map((r) => r.tenantId))];
+  const tenants = await prisma.tenant.findMany({
+    where: { id: { in: tenantIds } },
+    select: { id: true, name: true, displayName: true },
+  });
+  const nameById = new Map(tenants.map((t) => [t.id, t.displayName ?? t.name]));
+  const items = reports.map((r) => ({ ...r, tenantName: nameById.get(r.tenantId) ?? r.tenantId }));
+
+  // KVKK: platform admin kullanıcı şikayetlerini (PII içerir) görüntüledi → denetim izi.
+  await auditPlatformAction('VIEW_USER_REPORTS', req, { count: items.length });
+
+  return res.json({ items, total: items.length });
+}
+
+// PATCH /api/platform/user-reports/:id
+const PlatformReviewReportSchema = z.object({
+  status: z.enum(['REVIEWED', 'DISMISSED']),
+  note: z.string().trim().max(1000).optional(),
+});
+
+export async function reviewUserReport(req: Request, res: Response) {
+  const parsed = PlatformReviewReportSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+
+  const report = await prisma.userReport.findUnique({ where: { id: req.params['id'] as string }, select: { id: true } });
+  if (!report) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  await prisma.userReport.update({
+    where: { id: report.id },
+    data: { status: parsed.data.status, reviewNote: parsed.data.note, reviewedBy: 'platform-admin' },
+  });
+
+  await auditPlatformAction('REVIEW_USER_REPORT', req, { targetType: 'USER_REPORT', targetId: report.id });
+  return res.json({ ok: true });
+}
+
+// GET /api/platform/anomalies — basit otomatik tespit (sistem-geneli işaretli kullanıcılar)
+export async function getAnomalies(req: Request, res: Response) {
+  const items = await detectAnomalies();
+  await auditPlatformAction('VIEW_ANOMALIES', req, { count: items.length });
+  return res.json({ items, total: items.length });
 }

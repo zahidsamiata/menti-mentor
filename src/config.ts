@@ -30,6 +30,10 @@ if (isProd && platformAdminKey === DEV_PLATFORM_KEY) {
 // Platform admin e-posta — /platform/login için ikinci faktör
 const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL ?? 'admin@platform.local';
 
+// Backend base URL — hem config.backendBaseUrl hem de yüklenen avatar'ın public
+// URL tabanı için kullanılır. Object içinde iki kez tekrar etmemek için üste alındı.
+const backendBaseUrl = process.env.BACKEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000';
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -71,10 +75,26 @@ export const config = {
   // Backend base URL — backend API route'larına doğrudan link üretirken kullanılır.
   // Tek-domain deploy'da FRONTEND_URL ile aynı olabilir; ayrı-domain deploy'da farklı set edilir.
   // Örnek: e-posta unsubscribe linki backend'in /api/tenants/unsubscribe endpoint'ine gitmeli.
-  backendBaseUrl: process.env.BACKEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000',
+  backendBaseUrl,
 
   // Davet token geçerlilik süresi — sosyal girişim kullanıcıları için uzun tutulur
   invitationTokenExpiry: process.env.INVITATION_TOKEN_EXPIRY ?? '90d',
+
+  /**
+   * Kullanıcı avatarı yükleme yapılandırması (kendi foto yükleme özelliği).
+   * dir: Yüklenen dosyaların yazıldığı klasör. Deploy'da SİLİNMEMESİ için kalıcı
+   *   disk (Dokploy persistent volume) olarak mount edilmeli — UPLOAD_DIR ile verilir.
+   *   Lokal geliştirmede varsayılan: backend/uploads (process.cwd() = backend kökü).
+   * publicBaseUrl: Yüklenen dosyanın erişileceği URL tabanı (avatarUrl bununla üretilir).
+   *   Ayrı-domain deploy'da CDN/statik host farklıysa UPLOAD_PUBLIC_BASE_URL ile override edilir;
+   *   varsayılan backend'in kendi origin'idir (/uploads express.static ile servis edilir).
+   * maxBytes: Kabul edilen azami dosya boyutu (varsayılan 5MB).
+   */
+  upload: {
+    dir: process.env.UPLOAD_DIR ?? resolve(process.cwd(), 'uploads'),
+    publicBaseUrl: (process.env.UPLOAD_PUBLIC_BASE_URL ?? backendBaseUrl).replace(/\/+$/, ''),
+    maxBytes: Number(process.env.UPLOAD_MAX_BYTES ?? 5 * 1024 * 1024),
+  },
 
   /**
    * OAuth provider yapılandırması.

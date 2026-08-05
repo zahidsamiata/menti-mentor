@@ -283,6 +283,11 @@ model User {
   linkedinUrl  String?
   instagramUrl String?
 
+  // Son kimlik-doğrulama aktivitesi (login VEYA token yenileme anı). Retention/pasiflik
+  // metriklerinin temel verisi — hem tenant admin paneli hem platform admin kullanır.
+  // NULL = bu alan eklenmeden önceki kayıt veya hiç giriş yapmamış kullanıcı.
+  lastLoginAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -313,6 +318,9 @@ model User {
   mentorFilter       MentorFilter?
   agreementsAsMentor MentorshipAgreement[] @relation("AgreementsAsMentor")
   agreementsAsMenti  MentorshipAgreement[] @relation("AgreementsAsMenti")
+
+  reportsMade     UserReport[] @relation("ReportsMade")
+  reportsReceived UserReport[] @relation("ReportsReceived")
 
   // email @unique ile global unique; ayrıca tenant bazlı sorgular için index
   @@index([tenantId, role, isActive])
@@ -1056,6 +1064,32 @@ model MatchFeedback {
   @@unique([matchId, checkpoint, fromUserId])
   @@index([matchId])
   @@index([checkpoint])
+}
+
+// ─── Kullanıcı Şikayeti ──────────────────────────────────────────────────────
+// Giriş yapmış bir kullanıcının başka bir kullanıcıyı/durumu şikayeti. SuspicionReport
+// (public davet-şüphesi, user ID yok) ile karışmaz: bu tenant-scoped + reporter/target User.
+// Tenant admin kendi kurumunun şikayetlerini, platform admin tümünü görür.
+model UserReport {
+  id             String   @id @default(cuid())
+  tenantId       String
+  reporterUserId String
+  targetUserId   String
+  reason         String // SPAM | HARASSMENT | INAPPROPRIATE | NO_SHOW | OTHER
+  description    String?  @db.VarChar(1000)
+  status         String   @default("OPEN") // OPEN | REVIEWED | DISMISSED
+  reviewNote     String?
+  reviewedBy     String? // denetleyen (platform-admin veya tenant admin userId)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  reporter User @relation("ReportsMade", fields: [reporterUserId], references: [id])
+  target   User @relation("ReportsReceived", fields: [targetUserId], references: [id])
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([targetUserId])
+  @@index([tenantId, status])
 }
 
 // ─── Şüphe Bildirimi ─────────────────────────────────────────────────────────

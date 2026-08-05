@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { verifyToken } from './jwtAuth.js';
+import { verifyToken, PLATFORM_AUDIENCE } from './jwtAuth.js';
 import { PLATFORM_COOKIE } from '../controllers/platformController.js';
 
 function parseCookieToken(cookieHeader: string | undefined): string | null {
@@ -20,7 +20,11 @@ export function requirePlatformAdmin(req: Request, res: Response, next: NextFunc
   }
 
   const payload = verifyToken(token);
-  if (!payload || !payload.isPlatformAdmin) {
+  // Çift kontrol (defense-in-depth): hem isPlatformAdmin claim'i hem de aud:'platform'.
+  // aud kontrolü, tenant/kullanıcı token'ının (aud taşımaz) platform endpoint'inde
+  // geçerli sayılmasını imkânsız kılar. Eski (aud'suz) platform token'ları geçersizdir
+  // → yeniden giriş gerekir (bilinçli güvenlik kesiti).
+  if (!payload || !payload.isPlatformAdmin || payload.aud !== PLATFORM_AUDIENCE) {
     return res.status(403).json({ error: 'YETKISIZ', message: 'Bu endpoint yalnızca platform yöneticisine açıktır.' });
   }
 

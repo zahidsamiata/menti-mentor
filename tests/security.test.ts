@@ -12,7 +12,7 @@ import cors from 'cors';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb } from './helpers/db.js';
 import { createTenant, createMentor } from './helpers/factories.js';
-import { signToken } from '../src/middleware/jwtAuth.js';
+import { signToken, PLATFORM_AUDIENCE } from '../src/middleware/jwtAuth.js';
 import systemLogRoutes from '../src/routes/systemLogRoutes.js';
 import { notFoundHandler, globalErrorHandler } from '../src/middleware/errorHandler.js';
 import type { Tenant, User } from '@prisma/client';
@@ -163,13 +163,16 @@ describe('KRİTİK-2: GET /api/system-logs — platform admin zorunlu', () => {
   });
 
   it('platform admin token ile → 200', async () => {
-    const platformToken = signToken({
-      sub: 'platform-admin',
-      tenantId: '__platform__',
-      role: 'ADMIN',
-      fullName: 'Platform Yöneticisi',
-      isPlatformAdmin: true,
-    });
+    const platformToken = signToken(
+      {
+        sub: 'platform-admin',
+        tenantId: '__platform__',
+        role: 'ADMIN',
+        fullName: 'Platform Yöneticisi',
+        isPlatformAdmin: true,
+      },
+      { audience: PLATFORM_AUDIENCE },
+    );
     const res = await sysHttp
       .get('/api/system-logs')
       .set('Cookie', sysCookie(platformToken));

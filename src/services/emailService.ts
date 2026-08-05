@@ -228,6 +228,30 @@ export async function sendAlreadyRegisteredEmail(args: {
 // yöneticisine uygulama-içi bildirim kullanılıyor (notificationService.notifyAdminsMentorCertLapsed).
 // İleride kurum kendi mail hesabından göndermek isterse buraya bir e-posta fonksiyonu eklenebilir.
 
+/**
+ * Yönetici "dürtme"si — pasif üyeye / hareketsiz eşleşmeye nazik re-engagement hatırlatması.
+ * İçerik kullanıcıyı geri dâvet eder; suçlayıcı/spam dili yok.
+ */
+export async function sendNudgeReminderEmail(args: {
+  toEmail: string;
+  recipientName: string;
+  tenantName: string;
+  message?: string; // yöneticinin eklediği kısa kişisel not (opsiyonel)
+}): Promise<void> {
+  const extra = args.message
+    ? `<p style="padding:12px;border-left:3px solid #ccc;color:#444;">${args.message}</p>`
+    : '';
+  await send(
+    args.toEmail,
+    `${args.tenantName} — seni aramızda görmek isteriz`,
+    `<p>Merhaba ${args.recipientName},</p>
+     <p><strong>${args.tenantName}</strong> mentörlük programında bir süredir seni göremedik.
+        Kaldığın yerden devam etmek için harika bir zaman!</p>
+     ${extra}
+     <p>Panele giriş yaparak eşleşmeni ilerletebilir, görüşme planlayabilirsin.</p>`,
+  );
+}
+
 export async function sendFeedbackReminderEmail(args: {
   toEmail: string;
   recipientName: string;

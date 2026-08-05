@@ -12,6 +12,8 @@ import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
 import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthStateService.js';
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
+import { ensureMembershipSafe } from '../services/membership.js';
+import { recordUserActivity } from '../services/activityService.js';
 import { config } from '../config.js';
 
 
@@ -171,6 +173,10 @@ export async function register(req: Request, res: Response) {
   // Skorlama alanları onboarding'de doldurulur; burada yalnızca satırın varlığı garanti edilir.
   await ensureUserProfile(user.id);
 
+  // b3: Kurum üyeliğini garanti et (kurum-içi rol/sayım kaynağı TenantMembership.role).
+  // GÜVENLİK: non-fatal — membership yazımı kaydı ASLA bozmamalı (kullanıcı zaten oluştu).
+  await ensureMembershipSafe(prisma, user.id, user.tenantId, user.role);
+
   // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
   const tenantAdmins = await prisma.user.findMany({
     where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
@@ -279,6 +285,9 @@ export async function login(req: Request, res: Response) {
 
   setRefreshCookie(res, refreshTokenValue);
 
+  // Retention: son aktivite anını kaydet (fire-and-forget, giriş akışını bloklamaz).
+  void recordUserActivity(user.id);
+
   return res.json({
     accessToken,
     expiresIn: 3600,
@@ -361,6 +370,9 @@ export async function refresh(req: Request, res: Response) {
     role: stored.user.role,
     fullName: stored.user.fullName,
   });
+
+  // Retention: token yenileme de aktif oturum sinyalidir → son aktiviteyi tazele.
+  void recordUserActivity(stored.user.id);
 
   setRefreshCookie(res, newRefreshTokenValue);
 

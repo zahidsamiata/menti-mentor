@@ -4,6 +4,8 @@ import { requireRole } from '../middleware/authorize.js';
 import {
   getKpiDashboard,
   adminListUsers,
+  adminListMatches,
+  adminListCertResults,
   triggerRematch,
   confirmDoubleOptIn,
   manualRunTuning,
@@ -18,6 +20,8 @@ import {
   listAdmins,
   promoteToAdmin,
   demoteFromAdmin,
+  getHealthMetrics,
+  nudgeUser,
 } from '../controllers/adminController.js';
 import {
   listPendingTags,
@@ -25,6 +29,7 @@ import {
   mergeTag,
   rejectTag,
 } from '../controllers/tagController.js';
+import { listTenantReports, reviewTenantReport } from '../controllers/reportController.js';
 
 const router = Router();
 
@@ -34,13 +39,21 @@ router.use(requireRole('ADMIN'));
 
 // ─── KPI & Raporlama ──────────────────────────────────────────────────────────
 router.get('/kpi', getKpiDashboard as unknown as RequestHandler);
+// "Kimse kaynıyor mu" — mentörsüz menti / ölü eşleşme / pasif üye + arz-talep dengesi (drill-down)
+router.get('/health-metrics', getHealthMetrics as unknown as RequestHandler);
 
 // ─── Kullanıcı Yönetimi ───────────────────────────────────────────────────────
 router.get('/users', adminListUsers as unknown as RequestHandler);
+
+// ─── Eşleşme + Sertifika panelleri (A1, A4) ───────────────────────────────────
+router.get('/matches', adminListMatches as unknown as RequestHandler);
+router.get('/mentors/certification-results', adminListCertResults as unknown as RequestHandler);
 router.post('/users/:id/approve', approveUser as unknown as RequestHandler);
 router.post('/users/:id/reject', rejectUser as unknown as RequestHandler);
 router.post('/users/:id/request-correction', requestCorrection as unknown as RequestHandler);
 router.post('/users/:id/rematch', triggerRematch as unknown as RequestHandler);
+// Yönetici elle dürtme (pasif üye / ölü eşleşme re-engagement) — spam-limitli, loglu
+router.post('/users/:id/nudge', nudgeUser as unknown as RequestHandler);
 // GET /api/admin/users/:id/coaching-suggestions — kural bazlı aksiyon önerileri
 router.get('/users/:id/coaching-suggestions', getCoachingSuggestions as unknown as RequestHandler);
 
@@ -61,6 +74,10 @@ router.post('/algorithm-tuner/reject',  rejectPendingTuning  as unknown as Reque
 // ─── Cron Manuel Tetikleme ────────────────────────────────────────────────────
 router.post('/cron/run-tuning', manualRunTuning as unknown as RequestHandler);
 router.post('/cron/run-purge', manualRunPurge as unknown as RequestHandler);
+
+// ─── Kullanıcı Şikayetleri (kendi kurumu) ─────────────────────────────────────
+router.get('/reports', listTenantReports as unknown as RequestHandler);
+router.patch('/reports/:id', reviewTenantReport as unknown as RequestHandler);
 
 // ─── Çoklu Admin Yönetimi ─────────────────────────────────────────────────────
 router.get('/managers', listAdmins as unknown as RequestHandler);

@@ -24,6 +24,7 @@ import { notFoundHandler, globalErrorHandler } from './middleware/errorHandler.j
 import { requestLogger } from './middleware/requestLogger.js';
 import { generalRateLimiter } from './middleware/rateLimiter.js';
 import { startCronScheduler } from './services/cronScheduler.js';
+import { ensureUploadDir } from './services/avatarStorage.js';
 import sjtScoringRoutes from './routes/sjtScoringRoutes.js';
 import suspicionRoutes from './routes/suspicionRoutes.js';
 import agreementRoutes from './routes/agreementRoutes.js';
@@ -55,6 +56,25 @@ app.get('/health', (_req, res) => res.json({
   version: process.env.npm_package_version ?? '0.1.0',
   uptime: Math.floor(process.uptime()),
 }));
+
+// ─── Yüklenen avatarların statik servisi ─────────────────────────────────────
+// /uploads → kalıcı disk (UPLOAD_DIR). Yalnızca görsel dosyalar bulunur; yine de
+// güvenlik başlıklarıyla script yürütme/aktif içerik render engellenir:
+//   - X-Content-Type-Options: nosniff → tarayıcı MIME tahmini yapmaz.
+//   - CSP sandbox + default-src 'none' → içerik aktif kaynak olarak yorumlanmaz.
+//   - index:false, dotfiles:deny → dizin listeleme ve gizli dosya erişimi kapalı.
+app.use(
+  '/uploads',
+  express.static(config.upload.dir, {
+    index: false,
+    dotfiles: 'deny',
+    setHeaders: (res) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    },
+  }),
+);
 
 // Rate limiter: /api/* endpoint'lerine uygula (health ve static hariç)
 app.use('/api', generalRateLimiter);
@@ -116,6 +136,10 @@ app.use(globalErrorHandler);
 
 const server = app.listen(config.port, () => {
   console.log(`API ayakta: http://localhost:${config.port} [${config.nodeEnv}]`);
+  // Avatar upload dizini (kalıcı disk) yoksa oluştur — statik servis boş dizinde de çalışır.
+  void ensureUploadDir().catch((err) => {
+    console.error('Upload dizini oluşturulamadı:', err instanceof Error ? err.message : err);
+  });
   startCronScheduler();
 });
 
