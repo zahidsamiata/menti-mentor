@@ -158,6 +158,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
         sectorTags: true, discType: true, skills: true,
         rematchPriority: true, rematchCount: true,
         needsOrientation: true, approvalStatus: true, createdAt: true,
+        avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
       },
       orderBy: { createdAt: 'desc' },
       take: pageSize,

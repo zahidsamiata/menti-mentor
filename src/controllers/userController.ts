@@ -83,6 +83,7 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
         expertiseDetails: true,
         targetAudience: true,
         needsOrientation: true,
+        avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
         createdAt: true,
       },
       orderBy: { createdAt: 'desc' },

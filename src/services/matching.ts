@@ -6,6 +6,7 @@ export type RankedMenti = {
   mentiId: string;
   mentiName: string;
   mentiTenantId: string;
+  mentiAvatarUrl: string | null; // Kart gösterimi için public profil görseli (yoksa null → baş-harf fallback)
   totalScore: number;
   sectorScore: number;
   discScore: number;
@@ -142,6 +143,7 @@ export async function rankMentisForMentor(args: {
       discType: true,
       discVector: true,   // progressive profiling vektörü
       skills: true,
+      avatarUrl: true,    // kart gösterimi — public profil görseli
       timeCommitment: true,
       interactionStyle: true,
       expectationCategories: true,
@@ -211,6 +213,7 @@ type Candidate = {
   discType: string | null;
   discVector: unknown;          // DB'den gelen JSON — DiscVector olarak cast edilir
   skills: string[];
+  avatarUrl: string | null;
   timeCommitment: string | null;
   interactionStyle: string | null;
   expectationCategories: string[];
@@ -281,6 +284,7 @@ function scoreAndFilter(
       mentiId: c.id,
       mentiName: c.fullName,
       mentiTenantId: c.tenantId,
+      mentiAvatarUrl: c.avatarUrl,
       totalScore,
       sectorScore: breakdown.sectorScore,
       discScore: breakdown.discScore,
