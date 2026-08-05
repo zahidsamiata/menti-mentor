@@ -20,6 +20,7 @@ import {
   listAdmins,
   promoteToAdmin,
   demoteFromAdmin,
+  getHealthMetrics,
 } from '../controllers/adminController.js';
 import {
   listPendingTags,
@@ -36,6 +37,8 @@ router.use(requireRole('ADMIN'));
 
 // ─── KPI & Raporlama ──────────────────────────────────────────────────────────
 router.get('/kpi', getKpiDashboard as unknown as RequestHandler);
+// "Kimse kaynıyor mu" — mentörsüz menti / ölü eşleşme / pasif üye + arz-talep dengesi (drill-down)
+router.get('/health-metrics', getHealthMetrics as unknown as RequestHandler);
 
 // ─── Kullanıcı Yönetimi ───────────────────────────────────────────────────────
 router.get('/users', adminListUsers as unknown as RequestHandler);

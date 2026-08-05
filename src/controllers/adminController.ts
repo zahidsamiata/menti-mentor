@@ -21,6 +21,7 @@ import {
   applyPendingAdjustment,
   rejectPendingAdjustment,
 } from '../services/algorithmTuner.js';
+import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────
 
@@ -115,6 +116,37 @@ export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
       },
       activeJobListings,
     },
+  });
+}
+
+// ─── Sağlık / Retention Metrikleri (S2: "kimse kaynıyor mu") ──────────────────
+
+const HealthMetricsQuerySchema = z.object({
+  passiveDays: z.coerce.number().int().min(1).max(365).optional(),
+  staleDays: z.coerce.number().int().min(1).max(365).optional(),
+});
+
+/**
+ * GET /api/admin/health-metrics
+ * Mentörsüz menti + ölü eşleşme + pasif üye + arz-talep dengesi. Admin-only + tenant-scoped.
+ * Drill-down için sayı + sınırlı kişi listesi döner (ad/rol/zaman damgası). Ham DISC/email DÖNMEZ.
+ * Eşikler opsiyonel query ile ayarlanabilir (passiveDays, staleDays); makul default'lar serviste.
+ */
+export async function getHealthMetrics(req: RequestWithTenant, res: Response) {
+  const parsed = HealthMetricsQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const metrics = await computeHealthMetrics(req.tenant.tenantId, {
+    passiveDays: parsed.data.passiveDays,
+    staleMatchDays: parsed.data.staleDays,
+  });
+
+  return res.json({
+    tenantId: req.tenant.tenantId,
+    generatedAt: new Date().toISOString(),
+    ...metrics,
   });
 }
 
