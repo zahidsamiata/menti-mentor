@@ -133,6 +133,7 @@ export async function getUser(req: RequestWithTenant, res: Response) {
       expertiseDetails: true,
       targetAudience: true,
       needsOrientation: true,
+      avatarUrl: true, // Profil sayfasında mevcut fotoğrafı göstermek için
       timeCommitment: true,
       expectationCategories: true,
       interactionStyle: true,
