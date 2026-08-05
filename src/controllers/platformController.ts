@@ -132,9 +132,20 @@ export async function getPlatformHealth(_req: Request, res: Response) {
   try {
     await prisma.$queryRaw`SELECT 1`;
     const mem = process.memoryUsage();
+
+    // Mail: SMTP yapılandırması tam mı? Canlı gönderim testi YAPILMAZ (gerçek kullanıcıya
+    // bounce/spam riski) — yalnızca env yapılandırmasının varlığı kontrol edilir.
+    const mailConfigured = !!(config.email.smtpHost && config.email.smtpUser && config.email.smtpPass);
+
+    // Son 24 saatteki kritik hata sayısı (SystemLog ERROR) — "kırmızı" sinyali.
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentErrors = await prisma.systemLog.count({ where: { level: 'ERROR', createdAt: { gte: since } } });
+
     return res.json({
       status: 'ok',
       db: 'connected',
+      mail: mailConfigured ? 'configured' : 'not_configured',
+      recentErrors,
       env: config.nodeEnv,
       uptime: process.uptime(),
       memory: {
