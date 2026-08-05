@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
-import { loginRateLimiter, passwordResetRateLimiter } from '../middleware/rateLimiter.js';
+import { loginRateLimiter, passwordResetRateLimiter, registerRateLimiter } from '../middleware/rateLimiter.js';
 import {
   register,
   login,
@@ -16,7 +16,8 @@ import {
 const router = Router();
 
 // POST /api/auth/register — yeni kullanıcı kaydı (tenant gerektirmez)
-router.post('/register', register as unknown as RequestHandler);
+// registerRateLimiter: IP-bazlı — sahte/spam kayıt koruması (generalRateLimiter'a ek).
+router.post('/register', registerRateLimiter, register as unknown as RequestHandler);
 
 // POST /api/auth/login — e-posta + şifre ile giriş.
 // loginRateLimiter: IP-bazlı brute-force koruması (generalRateLimiter'a ek).

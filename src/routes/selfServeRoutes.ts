@@ -10,6 +10,7 @@ import {
   getInvitationTemplates,
   saveInvitationTemplate,
 } from '../controllers/selfServeController.js';
+import { checkSlugRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
@@ -17,7 +18,8 @@ const router = Router();
 // - check-slug + register: herkese açık (onboarding wizard)
 // - onboarding / preview / invitations: JWT Bearer ile korunan (controller içinde doğrulanır)
 
-router.get('/self-serve/check-slug', checkSlugAvailability as RequestHandler);
+// checkSlugRateLimiter: IP-bazlı — slug numaralandırmasını yavaşlatır.
+router.get('/self-serve/check-slug', checkSlugRateLimiter, checkSlugAvailability as RequestHandler);
 router.post('/self-serve/register',  selfServeRegister     as RequestHandler);
 router.patch('/:id/onboarding',      updateOnboarding      as RequestHandler);
 router.get('/:slug/preview',         getTenantPreview      as RequestHandler);

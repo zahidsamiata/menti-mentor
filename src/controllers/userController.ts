@@ -70,18 +70,19 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
   const [items, total] = await Promise.all([
     prisma.user.findMany({
       where,
+      // KVKK/over-fetch: bu endpoint menti'nin mentör-tarama kartını besler
+      // (matchingApi.listMentors → /api/users?role=MENTOR). Kart yalnızca fullName,
+      // discType, sectorTags, avatarUrl gösterir. Doğrudan PII (email) ve serbest-metin
+      // alanlar (bioSummary/expertiseDetails/targetAudience) peer'a DÖNMEZ — profil
+      // detayı yalnızca getUser'da (self/admin) sunulur.
       select: {
         id: true,
         role: true,
-        email: true,
         fullName: true,
         isActive: true,
         sectorTags: true,
         discType: true,
         skills: true,
-        bioSummary: true,
-        expertiseDetails: true,
-        targetAudience: true,
         needsOrientation: true,
         avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
         createdAt: true,
@@ -185,14 +186,28 @@ const EXPECTATION_CATEGORY_VALUES = [
   'SEKTOR_TANIMA',
 ] as const;
 
+// Serbest-biçim JSON alanları (temperamentJson/volunteerHistory/pastProjects/education)
+// için boyut sınırı — JSON bomba (dev boyut / derin nesting) koruması. Bu alanlar admin-only
+// yollardan (createUser/updateUser) geliyor ama patchSelfProfile'daki 50-anahtar/100-char
+// guard'ıyla aynı ruhta sınırlanır. selfProfile düz obje olduğundan anahtar-sayımı yeterliydi;
+// bu alanlar nesne/dizi olabildiğinden serialize-boyut sınırı daha sağlam bir üst sınırdır.
+const MAX_JSON_BYTES = 20_000; // ~20KB — meşru CV/mizaç verisi için bol, bomba için dar.
+const boundedJson = z
+  .any()
+  .optional()
+  .refine(
+    (v) => v === undefined || v === null || JSON.stringify(v).length <= MAX_JSON_BYTES,
+    { message: `Alan çok büyük (maksimum ${MAX_JSON_BYTES} karakter).` },
+  );
+
 const UpdateUserSchema = z.object({
   fullName: z.string().min(2).max(200).optional(),
   sectorTags: SECTOR_TAGS_SCHEMA,
   discType: z.enum(['D', 'I', 'S', 'C']).nullable().optional(),
-  temperamentJson: z.any().optional(),
-  volunteerHistory: z.any().optional(),
-  pastProjects: z.any().optional(),
-  education: z.any().optional(),
+  temperamentJson: boundedJson,
+  volunteerHistory: boundedJson,
+  pastProjects: boundedJson,
+  education: boundedJson,
   skills: z.array(z.string().max(100)).max(30).optional(),
   isActive: z.boolean().optional(),
   timeCommitment: z.enum(TIME_COMMITMENT_VALUES).nullable().optional(),
@@ -235,7 +250,7 @@ const CreateUserSchema = z.object({
   fullName: z.string().min(2).max(200),
   sectorTags: SECTOR_TAGS_SCHEMA,
   discType: z.enum(['D', 'I', 'S', 'C']).optional(),
-  temperamentJson: z.any().optional(),
+  temperamentJson: boundedJson,
   timeCommitment: z.enum(TIME_COMMITMENT_VALUES).optional(),
   interactionStyle: z.enum(INTERACTION_STYLE_VALUES).optional(),
   expectationCategories: z
@@ -243,9 +258,9 @@ const CreateUserSchema = z.object({
     .max(2, 'Maksimum 2 beklenti kategorisi seçilebilir.')
     .optional(),
   // Menti CV
-  volunteerHistory: z.any().optional(),
-  pastProjects: z.any().optional(),
-  education: z.any().optional(),
+  volunteerHistory: boundedJson,
+  pastProjects: boundedJson,
+  education: boundedJson,
   skills: z.array(z.string().max(100)).max(30).optional(),
   // Zengin profil alanları
   bioSummary: z.string().max(2000).optional(),
@@ -401,6 +416,21 @@ export async function createUser(req: RequestWithTenant, res: Response) {
       bioSummary: parsed.data.bioSummary,
       expertiseDetails: parsed.data.expertiseDetails,
       targetAudience: parsed.data.targetAudience,
+    },
+    // Explicit select: ham create objesi password/discVector/selfProfile gibi hassas
+    // alanları da taşır. Response'ta ve iç mantıkta yalnızca gereken güvenli alanlar.
+    select: {
+      id: true,
+      tenantId: true,
+      role: true,
+      email: true,
+      fullName: true,
+      sectorTags: true,
+      discType: true,
+      isActive: true,
+      approvalStatus: true,
+      avatarUrl: true,
+      createdAt: true,
     },
   });
 
