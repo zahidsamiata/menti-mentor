@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
-import { loginRateLimiter } from '../middleware/rateLimiter.js';
+import { loginRateLimiter, passwordResetRateLimiter } from '../middleware/rateLimiter.js';
 import {
   register,
   login,
@@ -28,11 +28,13 @@ router.post('/refresh', refresh as unknown as RequestHandler);
 // POST /api/auth/logout — refresh token'ı iptal et (204)
 router.post('/logout', logout as unknown as RequestHandler);
 
-// POST /api/auth/forgot-password — şifre sıfırlama e-postası gönder
-router.post('/forgot-password', forgotPassword as unknown as RequestHandler);
+// POST /api/auth/forgot-password — şifre sıfırlama e-postası gönder.
+// passwordResetRateLimiter: IP-bazlı — kullanıcı-tarama + mail-DoS koruması.
+router.post('/forgot-password', passwordResetRateLimiter, forgotPassword as unknown as RequestHandler);
 
-// POST /api/auth/reset-password — token + yeni şifre ile şifre güncelle
-router.post('/reset-password', resetPassword as unknown as RequestHandler);
+// POST /api/auth/reset-password — token + yeni şifre ile şifre güncelle.
+// passwordResetRateLimiter: IP-bazlı — token brute-force koruması.
+router.post('/reset-password', passwordResetRateLimiter, resetPassword as unknown as RequestHandler);
 
 // GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir)
 router.get('/me', requireTenant as unknown as RequestHandler, getMe as unknown as RequestHandler);

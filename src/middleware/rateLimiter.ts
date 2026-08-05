@@ -114,6 +114,24 @@ export function loginRateLimiter(req: Request, res: Response, next: NextFunction
   return next();
 }
 
+// ─── Şifre sıfırlama brute-force / mail-DoS koruması ──────────────────────────
+// /auth/forgot-password + /auth/reset-password public'tir ve tenant header taşımaz →
+// generalRateLimiter'ın zayıf 'anon' kovasına düşer. forgot: kullanıcı-tarama + mail-DoS;
+// reset: token brute-force. Login'den DAHA SIKI eşik (varsayılan 5/dk/IP). Aynı in-memory
+// sayaçları kullanır → setup.ts'teki resetRateLimiters testler arası otomatik sıfırlar.
+/** POST /api/auth/forgot-password + /reset-password — IP başına sıkı limit (varsayılan 5/dk). */
+export function passwordResetRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['PASSWORD_RESET_RATE_RPM'] ?? 5);
+  if (!checkLimit(`pwreset:${clientIp(req)}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla şifre işlemi denemesi. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
 /** Test yardımcısı: in-memory sayaçları sıfırlar (yalnızca testlerde kullanılır). */
 export function resetRateLimiters(): void {
   counters.clear();
