@@ -20,6 +20,7 @@ import { signToken } from '../../middleware/jwtAuth.js';
 import { sendAdminNewUserNotification } from '../emailService.js';
 import { notifyAdminsPendingUser } from '../notificationService.js';
 import { ensureMembershipSafe } from '../membership.js';
+import { recordUserActivity } from '../activityService.js';
 import type { OAuthCallbackResult, OAuthStatePayload, OAuthUserProfile } from './oauthTypes.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
@@ -141,6 +142,9 @@ async function issueTokenPair(
   await prisma.refreshToken.create({
     data: { token: refreshTokenValue, userId, expiresAt },
   });
+
+  // Retention: OAuth girişi de bir kimlik-doğrulama aktivitesidir → son aktiviteyi kaydet.
+  void recordUserActivity(userId);
 
   return { accessToken, refreshToken: refreshTokenValue };
 }

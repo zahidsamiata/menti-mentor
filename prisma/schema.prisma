@@ -283,6 +283,11 @@ model User {
   linkedinUrl  String?
   instagramUrl String?
 
+  // Son kimlik-doğrulama aktivitesi (login VEYA token yenileme anı). Retention/pasiflik
+  // metriklerinin temel verisi — hem tenant admin paneli hem platform admin kullanır.
+  // NULL = bu alan eklenmeden önceki kayıt veya hiç giriş yapmamış kullanıcı.
+  lastLoginAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

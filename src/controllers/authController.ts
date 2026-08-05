@@ -13,6 +13,7 @@ import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthState
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
 import { ensureMembershipSafe } from '../services/membership.js';
+import { recordUserActivity } from '../services/activityService.js';
 import { config } from '../config.js';
 
 
@@ -284,6 +285,9 @@ export async function login(req: Request, res: Response) {
 
   setRefreshCookie(res, refreshTokenValue);
 
+  // Retention: son aktivite anını kaydet (fire-and-forget, giriş akışını bloklamaz).
+  void recordUserActivity(user.id);
+
   return res.json({
     accessToken,
     expiresIn: 3600,
@@ -366,6 +370,9 @@ export async function refresh(req: Request, res: Response) {
     role: stored.user.role,
     fullName: stored.user.fullName,
   });
+
+  // Retention: token yenileme de aktif oturum sinyalidir → son aktiviteyi tazele.
+  void recordUserActivity(stored.user.id);
 
   setRefreshCookie(res, newRefreshTokenValue);
 
