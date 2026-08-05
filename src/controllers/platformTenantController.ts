@@ -22,8 +22,8 @@
 
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
-import { logger } from '../services/logger.js';
 import { maskEmail } from '../services/mask.js';
+import { auditPlatformAction } from '../services/platformAudit.js';
 
 const ROLES = ['ADMIN', 'MENTOR', 'MENTI'] as const;
 const MEETING_STATUSES = [
@@ -40,22 +40,14 @@ type MeetingStatusStr = (typeof MEETING_STATUSES)[number];
 
 const PAGE_SIZE = 50;
 
-const ACTOR = 'platform-admin';
-
-/** Denetim kaydını veri gönderilmeden ÖNCE yaz (loglanmadan gösterme). */
+/** Denetim kaydını veri gönderilmeden ÖNCE yaz (loglanmadan gösterme). Ortak yardımcıya delege eder. */
 async function audit(
   action: string,
   targetTenantId: string,
   req: Request,
   extra?: Record<string, unknown>,
 ): Promise<void> {
-  await logger.info('AUDIT', action, {
-    actorId: ACTOR,
-    action,
-    targetTenantId,
-    ip: req.ip ?? 'unknown',
-    ...extra,
-  });
+  await auditPlatformAction(action, req, { targetType: 'TENANT', targetTenantId, ...extra });
 }
 
 function parsePage(raw: unknown): number {

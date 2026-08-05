@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { signToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
 import { logger } from '../services/logger.js';
+import { auditPlatformAction } from '../services/platformAudit.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -229,6 +230,7 @@ export async function approveTenant(req: Request, res: Response) {
     data: { verificationStatus: 'APPROVED', verifiedAt: new Date() },
   });
 
+  await auditPlatformAction('APPROVE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
 
@@ -251,6 +253,7 @@ export async function rejectTenant(req: Request, res: Response) {
     },
   });
 
+  await auditPlatformAction('REJECT_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
 
@@ -260,6 +263,7 @@ export async function freezeTenant(req: Request, res: Response) {
   if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
 
   await prisma.tenant.update({ where: { id: tenant.id }, data: { isActive: false } });
+  await auditPlatformAction('FREEZE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
 
@@ -269,6 +273,7 @@ export async function activateTenant(req: Request, res: Response) {
   if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
 
   await prisma.tenant.update({ where: { id: tenant.id }, data: { isActive: true } });
+  await auditPlatformAction('ACTIVATE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
 
@@ -298,5 +303,6 @@ export async function reviewSuspicionReport(req: Request, res: Response) {
     data: { reviewed: true, reviewNote: note },
   });
 
+  await auditPlatformAction('REVIEW_SUSPICION_REPORT', req, { targetType: 'SUSPICION_REPORT', targetId: report.id });
   return res.json({ ok: true });
 }
