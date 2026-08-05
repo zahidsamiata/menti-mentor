@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
-import { requireAuth, requireRole } from '../middleware/authorize.js';
+import { requireAuth, requireRole, requireSelfOrAdmin } from '../middleware/authorize.js';
 import { createUser, listUsers, getUser, updateUser, patchSelfProfile, countApprovedMentors, updateMyProfile } from '../controllers/userController.js';
 import { submitTemperamentTest } from '../controllers/temperamentController.js';
 import { getRankedMentisForMentor, setVisibilityOptIn } from '../controllers/matchingController.js';
@@ -89,7 +89,8 @@ router.get('/requests/:id', requireAuth(), getRequest as unknown as RequestHandl
 router.post('/requests', requireAuth(), createMatchRequest as unknown as RequestHandler);
 
 // ─── Kullanıcının kulüpleri ───────────────────────────────────────────────────
-router.get('/users/:userId/clubs', requireAuth(), getUserClubs as unknown as RequestHandler);
+// IDOR: yalnızca kendi kulüp üyeliklerini veya ADMIN görebilir (tenant-içi peer sızıntısı engeli).
+router.get('/users/:userId/clubs', requireAuth(), requireSelfOrAdmin('userId'), getUserClubs as unknown as RequestHandler);
 
 // ─── Serbest profil metadata ──────────────────────────────────────────────────
 // PATCH /users/:id/self-profile → kendi kaydını güncelleyebilir (ADMIN veya sahibi)

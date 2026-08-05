@@ -4,6 +4,8 @@
  */
 
 import { config as loadEnv } from 'dotenv';
+import { beforeEach } from 'vitest';
+import { resetRateLimiters } from '../src/middleware/rateLimiter.js';
 
 loadEnv({ path: '.env.test', override: true });
 
@@ -17,3 +19,10 @@ if (testDbUrl) {
 process.env['NODE_ENV'] = 'test';
 process.env['JWT_SECRET'] = 'test-secret-min-32-chars-for-testing-only!!';
 process.env['PLATFORM_ADMIN_KEY'] = 'test-platform-key';
+
+// Her testten önce in-memory rate-limit sayaçlarını sıfırla. Suite genelinde aynı IP
+// sayacına düşen çok sayıda login, loginRateLimiter'ı tetikleyip meşru testleri 429'la
+// bozmasın (.env.test'e/CI env'ine bağımlı olmadan çalışır).
+beforeEach(() => {
+  resetRateLimiters();
+});
