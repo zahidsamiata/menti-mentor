@@ -63,6 +63,12 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
 
   const where = {
     tenantId: req.tenant.tenantId,
+    // Peer havuzu kuralı: onaylanmamış (PENDING/REJECTED) üye başka üyelere GÖRÜNMEZ.
+    // "Yönetici onayına kadar havuzda görünmez" ilkesi — mentör→menti yönü zaten filtreli
+    // (matching.ts APPROVED); bu satır menti→mentör yönünü de aynı kurala bağlar (rol-bağımsız).
+    // Admin PENDING'i AYRI endpoint'ten görür (adminListUsers → /api/admin/users); bu endpoint
+    // yalnız peer taramasıdır, admin akışını etkilemez.
+    approvalStatus: 'APPROVED' as const,
     ...(role !== undefined && { role }),
     ...(isActive !== undefined && { isActive }),
   };
