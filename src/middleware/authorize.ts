@@ -58,3 +58,31 @@ export function requireRole(...roles: Array<'ADMIN' | 'MENTOR' | 'MENTI'>): Requ
     next();
   } as RequestHandler;
 }
+
+/**
+ * Kaynak sahibi (self) VEYA ADMIN erişimini zorunlu kılar — IDOR koruması.
+ *
+ * Yoldaki kaynak id'si (paramName) istek sahibininki değil ve rol ADMIN değilse 403.
+ * Böylece "yalnızca giriş yapmış olmak" yetmez; kullanıcı `:id`'yi başkasınınkiyle
+ * değiştirerek başkasının kaynağına (ör. kulüp üyelikleri) erişemez.
+ * requireTenant'tan SONRA kullanılmalıdır (req.auth set edilmiş olmalı).
+ */
+export function requireSelfOrAdmin(paramName = 'id'): RequestHandler {
+  return function selfOrAdminGuard(rawReq, res, next: NextFunction) {
+    const req = rawReq as unknown as RequestWithTenant;
+
+    if (!req.auth) {
+      sendUnauthorized(res);
+      return;
+    }
+
+    const isSelf = req.auth.userId === req.params[paramName];
+    const isAdmin = req.auth.role === 'ADMIN';
+    if (!isSelf && !isAdmin) {
+      sendForbidden(res);
+      return;
+    }
+
+    next();
+  } as RequestHandler;
+}

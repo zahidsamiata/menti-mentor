@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
+import { loginRateLimiter } from '../middleware/rateLimiter.js';
 import {
   register,
   login,
@@ -17,8 +18,9 @@ const router = Router();
 // POST /api/auth/register — yeni kullanıcı kaydı (tenant gerektirmez)
 router.post('/register', register as unknown as RequestHandler);
 
-// POST /api/auth/login — e-posta + şifre ile giriş
-router.post('/login', login as unknown as RequestHandler);
+// POST /api/auth/login — e-posta + şifre ile giriş.
+// loginRateLimiter: IP-bazlı brute-force koruması (generalRateLimiter'a ek).
+router.post('/login', loginRateLimiter, login as unknown as RequestHandler);
 
 // POST /api/auth/refresh — refresh token ile yeni access token al
 router.post('/refresh', refresh as unknown as RequestHandler);
