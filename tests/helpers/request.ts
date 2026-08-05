@@ -16,6 +16,7 @@ import userRoutes          from '../../src/routes/userRoutes.js';
 import onboardingRoutes    from '../../src/routes/onboardingRoutes.js';
 import adminRoutes         from '../../src/routes/adminRoutes.js';
 import questionRoutes      from '../../src/routes/questionRoutes.js';
+import analyticsRoutes     from '../../src/routes/analyticsRoutes.js';
 import platformRoutes      from '../../src/routes/platformRoutes.js';
 import superAdminRoutes    from '../../src/routes/superAdminRoutes.js';
 import agreementRoutes     from '../../src/routes/agreementRoutes.js';
@@ -53,6 +54,7 @@ export function createTestApp(): Express {
   app.use('/api/admin/learning-journey', learningJourneyAdminRoutes);
   app.use('/api/admin',        adminRoutes);
   app.use('/api/questions',    questionRoutes);
+  app.use('/api/analytics',    analyticsRoutes);
   app.use('/api/learning-journey', learningJourneyRoutes);
   app.use('/api/agreements',   agreementRoutes);
   app.use('/api/meetings',     meetingRoutes);
