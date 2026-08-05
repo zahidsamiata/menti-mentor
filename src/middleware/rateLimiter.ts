@@ -132,6 +132,68 @@ export function passwordResetRateLimiter(req: Request, res: Response, next: Next
   return next();
 }
 
+// ─── Public onboarding / kötüye-kullanım koruması ────────────────────────────
+// Aşağıdaki endpoint'ler kasıtlı public'tir ve çoğu X-Tenant-Id taşımaz → hepsi
+// generalRateLimiter'ın zayıf 'anon' kovasına düşer. Login/passwordReset deseniyle
+// aynı: IP-bazlı EK limit. Eşikler call-time'da okunur (test kendi eşiğini ayarlar;
+// .env.test'te yüksek tutularak suite'in meşru akışları bozulmaz).
+
+/** POST /api/auth/register — sahte/spam kayıt koruması (varsayılan 10/dk/IP). */
+export function registerRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['REGISTER_RATE_RPM'] ?? 10);
+  if (!checkLimit(`register:${clientIp(req)}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla kayıt denemesi. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
+/** POST /api/suspicion-reports — spam/kötüye-kullanım bildirimi koruması (varsayılan 5/dk/IP). */
+export function suspicionReportRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['SUSPICION_RATE_RPM'] ?? 5);
+  if (!checkLimit(`suspicion:${clientIp(req)}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla bildirim gönderdiniz. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
+// GET /api/invitations/:token/join — token imzalı JWT olduğundan brute-force kriptografik
+// olarak infeasible; bu limit token-deneme + DoS/kötüye-kullanım azaltmadır. Eşik, kampüs/
+// ofis NAT'ı ardından toplu katılımı (tek IP'den çok üye aynı anda) kilitlememek için makul
+// tutulur (varsayılan 20/dk); env ile sıkılaştırılabilir.
+/** GET /api/invitations/:token/join — davet token deneme + DoS koruması (varsayılan 20/dk/IP). */
+export function invitationJoinRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['INVITE_JOIN_RATE_RPM'] ?? 20);
+  if (!checkLimit(`invite-join:${clientIp(req)}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla deneme. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
+/** GET /api/tenants/self-serve/check-slug — slug numaralandırmasını yavaşlatma (varsayılan 30/dk/IP). */
+export function checkSlugRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['CHECK_SLUG_RATE_RPM'] ?? 30);
+  if (!checkLimit(`check-slug:${clientIp(req)}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla sorgu. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
 /** Test yardımcısı: in-memory sayaçları sıfırlar (yalnızca testlerde kullanılır). */
 export function resetRateLimiters(): void {
   counters.clear();
