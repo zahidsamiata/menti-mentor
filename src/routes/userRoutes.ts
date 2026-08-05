@@ -8,6 +8,9 @@ import { createMatchRequest, listRequests, getRequest } from '../controllers/req
 import { getUserClubs } from '../controllers/clubController.js';
 import { anonymizeUserHandler, hardDeleteUserHandler, exportUserDataHandler } from '../controllers/gdprController.js';
 import { completedOrientation } from '../controllers/userController.js';
+import { uploadMyAvatar } from '../controllers/avatarController.js';
+import { avatarUploadMiddleware } from '../middleware/avatarUpload.js';
+import { avatarUploadRateLimiter } from '../middleware/rateLimiter.js';
 import { requestVisibilityFromMentor, getPendingVisibilityRequests, respondToVisibilityRequest } from '../controllers/mentiRequestController.js';
 import { getMentorFilter, upsertMentorFilter } from '../controllers/mentorFilterController.js';
 import { getNextAdaptiveQuestion, submitAdaptiveAnswer, previewAdaptiveResult } from '../controllers/adaptiveTestController.js';
@@ -37,6 +40,17 @@ router.patch(
   '/users/me/profile',
   requireAuth(),
   updateMyProfile as unknown as RequestHandler,
+);
+
+// POST /users/me/avatar → kullanıcı kendi profil fotoğrafını yükler.
+// Sıra önemli: requireAuth (req.auth) → rate limit (userId'ye ihtiyaç duyar) →
+// multer (dosyayı parse eder) → controller (magic-byte doğrular, diske yazar).
+router.post(
+  '/users/me/avatar',
+  requireAuth(),
+  avatarUploadRateLimiter,
+  avatarUploadMiddleware,
+  uploadMyAvatar as unknown as RequestHandler,
 );
 
 // PATCH /users/:id   → yalnızca ADMIN

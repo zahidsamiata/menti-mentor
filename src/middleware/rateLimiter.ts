@@ -76,3 +76,21 @@ export function platformReadRateLimiter(req: Request, res: Response, next: NextF
   }
   return next();
 }
+
+// Avatar yükleme — dosya diske yazdığı için kullanıcı başına sıkı limit (disk doldurma
+// / spam koruması). requireAuth SONRASINDA mount edilmeli ki req.auth.userId hazır olsun.
+const AVATAR_UPLOAD_RPM = Number(process.env.AVATAR_UPLOAD_RPM ?? 5);
+
+/** POST /api/users/me/avatar — kullanıcı başına dakikada sınırlı yükleme. */
+export function avatarUploadRateLimiter(req: Request, res: Response, next: NextFunction) {
+  // req.auth tenant middleware'i tarafından set edilir; yoksa IP'ye düş (defensive).
+  const userId = (req as unknown as { auth?: { userId?: string } }).auth?.userId ?? clientIp(req);
+  if (!checkLimit(`avatar-upload:${userId}`, AVATAR_UPLOAD_RPM)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: `Çok fazla yükleme denemesi. Dakikada en fazla ${AVATAR_UPLOAD_RPM} fotoğraf yükleyebilirsiniz.`,
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
