@@ -196,6 +196,14 @@ export async function updateMeetingStatus(req: RequestWithTenant, res: Response)
   });
   if (!existing) return res.status(404).json({ error: 'NOT_FOUND', message: 'Toplantı bulunamadı.' });
 
+  // Yetki (IDOR): route ADMIN|MENTOR'a açık ama bir MENTÖR yalnızca KENDİ görüşmesinin
+  // statüsünü değiştirebilmeli. Aksi hâlde başka bir mentör, meetingId tahmin ederek
+  // başkasının görüşmesini sahte-tamamlar/iptal eder (ve APPROVED'da onay maili tetikler).
+  const isAdmin = req.auth?.role === 'ADMIN';
+  if (!isAdmin && req.auth?.userId !== existing.mentorUserId) {
+    return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca görüşmenin mentörü bu işlemi yapabilir.' });
+  }
+
   const updated = await prisma.meeting.update({
     where: { id: meetingId },
     data:  { status: parsed.data.status },
