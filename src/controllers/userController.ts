@@ -114,39 +114,57 @@ export async function countApprovedMentors(req: RequestWithTenant, res: Response
   return res.json({ count });
 }
 
+// GET /api/users/:id — profil detayı.
+// IDOR/KVKK: requireAuth tek başına yetmez. Ownership/rol kapısı olmadan aynı tenant'taki
+// herhangi bir üye, ID tahmin ederek başkasının HAM PII'sini (discVector, temperamentJson,
+// selfProfile, e-posta, CV alanları) çekebilirdi. Çözüm: yalnızca KENDİ kaydı veya ADMIN tam
+// veri alır; diğerleri kart/detay için GÜVENLİ minimal set alır (ham DISC vektörü ASLA sızmaz).
+// Tenant izolasyonu (where.tenantId) ikinci savunma katmanı olarak korunur (cross-tenant → 404).
+
+// Herkese açık minimal set — havuz kartı/detay için yeterli, ham psikometri/iletişim/CV içermez.
+const USER_PUBLIC_SELECT = {
+  id: true,
+  role: true,
+  fullName: true,
+  isActive: true,
+  sectorTags: true,
+  discType: true,            // gösterilebilir DISC tipi (rozet) — ham vektör değil
+  discResultCard: true,      // "Aha Anı" kartı (arketip) — public gösterim için tasarlandı
+  skills: true,
+  bioSummary: true,
+  expertiseDetails: true,
+  targetAudience: true,
+  avatarUrl: true,
+  createdAt: true,
+} as const;
+
+// Yalnızca kendi kaydı veya ADMIN — ham PII dahil tam profil.
+const USER_FULL_SELECT = {
+  ...USER_PUBLIC_SELECT,
+  tenantId: true,
+  email: true,
+  discVector: true,
+  temperamentJson: true,
+  selfProfile: true,
+  volunteerHistory: true,
+  pastProjects: true,
+  education: true,
+  needsOrientation: true,
+  timeCommitment: true,
+  expectationCategories: true,
+  interactionStyle: true,
+  approvalStatus: true,
+  mentorVisibilityEnabled: true,
+  updatedAt: true,
+} as const;
+
 export async function getUser(req: RequestWithTenant, res: Response) {
+  const targetId = req.params['id'] as string;
+  const fullAccess = req.auth?.userId === targetId || req.auth?.role === 'ADMIN';
+
   const user = await prisma.user.findFirst({
-    where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
-    select: {
-      id: true,
-      tenantId: true,
-      role: true,
-      email: true,
-      fullName: true,
-      isActive: true,
-      sectorTags: true,
-      discType: true,
-      discVector: true,
-      discResultCard: true,
-      skills: true,
-      bioSummary: true,
-      expertiseDetails: true,
-      targetAudience: true,
-      needsOrientation: true,
-      avatarUrl: true, // Profil sayfasında mevcut fotoğrafı göstermek için
-      timeCommitment: true,
-      expectationCategories: true,
-      interactionStyle: true,
-      approvalStatus: true,
-      mentorVisibilityEnabled: true,
-      temperamentJson: true,
-      volunteerHistory: true,
-      pastProjects: true,
-      education: true,
-      selfProfile: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    where: { id: targetId, tenantId: req.tenant.tenantId },
+    select: fullAccess ? USER_FULL_SELECT : USER_PUBLIC_SELECT,
   });
 
   if (!user) {
