@@ -9,6 +9,7 @@ import { getUserClubs } from '../controllers/clubController.js';
 import { anonymizeUserHandler, hardDeleteUserHandler, exportUserDataHandler } from '../controllers/gdprController.js';
 import { completedOrientation } from '../controllers/userController.js';
 import { uploadMyAvatar } from '../controllers/avatarController.js';
+import { createReport } from '../controllers/reportController.js';
 import { avatarUploadMiddleware } from '../middleware/avatarUpload.js';
 import { avatarUploadRateLimiter } from '../middleware/rateLimiter.js';
 import { requestVisibilityFromMentor, getPendingVisibilityRequests, respondToVisibilityRequest } from '../controllers/mentiRequestController.js';
@@ -78,6 +79,9 @@ router.post(
   requireRole('ADMIN', 'MENTOR'),
   setVisibilityOptIn as unknown as RequestHandler,
 );
+
+// POST /users/:id/report → giriş yapmış kullanıcı başka bir üyeyi şikayet eder
+router.post('/users/:id/report', requireAuth(), createReport as unknown as RequestHandler);
 
 // ─── Eşleşme istekleri ───────────────────────────────────────────────────────
 router.get('/requests', requireAuth(), listRequests as unknown as RequestHandler);

@@ -29,6 +29,7 @@ import {
   mergeTag,
   rejectTag,
 } from '../controllers/tagController.js';
+import { listTenantReports, reviewTenantReport } from '../controllers/reportController.js';
 
 const router = Router();
 
@@ -73,6 +74,10 @@ router.post('/algorithm-tuner/reject',  rejectPendingTuning  as unknown as Reque
 // ─── Cron Manuel Tetikleme ────────────────────────────────────────────────────
 router.post('/cron/run-tuning', manualRunTuning as unknown as RequestHandler);
 router.post('/cron/run-purge', manualRunPurge as unknown as RequestHandler);
+
+// ─── Kullanıcı Şikayetleri (kendi kurumu) ─────────────────────────────────────
+router.get('/reports', listTenantReports as unknown as RequestHandler);
+router.patch('/reports/:id', reviewTenantReport as unknown as RequestHandler);
 
 // ─── Çoklu Admin Yönetimi ─────────────────────────────────────────────────────
 router.get('/managers', listAdmins as unknown as RequestHandler);

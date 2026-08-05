@@ -15,6 +15,9 @@ import {
   activateTenant,
   listSuspicionReports,
   reviewSuspicionReport,
+  listUserReports,
+  reviewUserReport,
+  getAnomalies,
 } from '../controllers/platformController.js';
 import {
   getTenantOverview,
@@ -57,5 +60,10 @@ router.get('/tenants/:id/analytics', getTenantAnalytics);
 // ─── Şüphe Bildirimleri ───────────────────────────────────────────────────────
 router.get('/suspicion-reports', listSuspicionReports);
 router.post('/suspicion-reports/:id/review', reviewSuspicionReport);
+
+// ─── Kullanıcı Şikayetleri (sistem-geneli) + Otomatik Tespit ──────────────────
+router.get('/user-reports', listUserReports);
+router.patch('/user-reports/:id', reviewUserReport);
+router.get('/anomalies', getAnomalies);
 
 export default router;
