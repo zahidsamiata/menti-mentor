@@ -26,6 +26,7 @@ import meetingRoutes       from '../../src/routes/meetingRoutes.js';
 import sjtScoringRoutes    from '../../src/routes/sjtScoringRoutes.js';
 import learningJourneyRoutes      from '../../src/routes/learningJourneyRoutes.js';
 import learningJourneyAdminRoutes from '../../src/routes/learningJourneyAdminRoutes.js';
+import conversationRoutes         from '../../src/routes/conversationRoutes.js';
 import { notFoundHandler, globalErrorHandler } from '../../src/middleware/errorHandler.js';
 import { generalRateLimiter } from '../../src/middleware/rateLimiter.js';
 import { suggestTag } from '../../src/controllers/tagController.js';
@@ -61,6 +62,7 @@ export function createTestApp(): Express {
   app.use('/api/analytics',    analyticsRoutes);
   app.use('/api/learning-journey', learningJourneyRoutes);
   app.use('/api/agreements',   agreementRoutes);
+  app.use('/api/conversations', conversationRoutes);
   app.use('/api/meetings',     meetingRoutes);
   app.use('/api/scoring',      sjtScoringRoutes);
   app.post('/api/tags/suggest', suggestTag as unknown as RequestHandler);

@@ -31,11 +31,11 @@ const TENANT_SCOPED = new Set([
   'TenantMembership',
   'Match',
   'AvailabilityBlock',
-  // Chat v1 — Conversation/Message tenant'a göre otomatik filtrelenir.
-  // DİKKAT: cross-tenant (shared-pool) konuşmada karşı taraf RLS ile elenebilir;
-  // erişim controller'da findUnique + participant kontrolüyle yapılmalı (findMany değil).
-  'Conversation',
-  'Message',
+  // NOT: Conversation/Message KASITLI olarak burada YOK. Chat, güvenlik sınırını
+  // tenant'a değil KATILIMCIYA dayar: shared-pool'da menti ile mentör farklı
+  // tenant'ta olabilir; tenantId RLS filtresi karşı tarafı eler (konuşmayı göremez).
+  // Yetki controller'da participant (mentorUserId/mentiUserId) + admin(aynı tenant)
+  // ile açıkça zorlanır. tenantId yalnızca kayıt/analitik amaçlı tutulur.
 ]);
 
 // findUnique kasıtlı olarak dışarıda bırakıldı:
