@@ -4,6 +4,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
+import { sendNewChatMessageEmail } from '../services/emailService.js';
 
 // Chat v1 — menti↔mentör talep mesajlaşma.
 // Güvenlik sınırı KATILIMCIDIR (tenant değil): shared-pool'da taraflar farklı
@@ -61,6 +62,44 @@ function preview(content: string): string {
 }
 
 const counterpartSelect = { id: true, fullName: true, avatarUrl: true, role: true } as const;
+
+const otherSide = (side: Side): Side => (side === 'mentor' ? 'menti' : 'mentor');
+
+/**
+ * Okundu-bazlı e-posta bildirimi. Alıcının bu konuşmada okunmamış mesajı YOKKEN
+ * (yani güncelken) gelen ilk yeni mesajda mail atılır; zaten okunmamışı varsa
+ * (mail zaten gitmiş) tekrar atılmaz. Alıcı okuyunca (lastReadAt güncellenince)
+ * sıfırlanır, sonraki mesajda tekrar atılır. Zaman-cooldown DEĞİL, okundu-bazlı.
+ *
+ * YENİ mesaj OLUŞTURULMADAN ÖNCE çağrılmalı — unread sayımı önceki durumu yansıtsın.
+ * PII: mail içeriğine mesaj METNİ konmaz (yalnızca gönderen adı + "yeni mesaj").
+ */
+async function emailRecipientIfCaughtUp(
+  convo: ConvoCore,
+  recipientSide: Side,
+  senderName: string,
+): Promise<void> {
+  const recipientId = recipientSide === 'mentor' ? convo.mentorUserId : convo.mentiUserId;
+  const recipientLastRead = lastReadForSide(convo, recipientSide);
+  const unreadBefore = await prisma.message.count({
+    where: {
+      conversationId: convo.id,
+      senderUserId: { not: recipientId },
+      ...(recipientLastRead ? { createdAt: { gt: recipientLastRead } } : {}),
+    },
+  });
+  if (unreadBefore > 0) return; // zaten okunmamış var → tekrar mail atma
+  const recipient = await prisma.user.findUnique({
+    where: { id: recipientId },
+    select: { email: true, fullName: true },
+  });
+  if (!recipient) return;
+  void sendNewChatMessageEmail({
+    toEmail: recipient.email,
+    recipientName: recipient.fullName,
+    senderName,
+  });
+}
 
 // ─── POST /api/conversations — menti konuşma başlatır (zorunlu ilk mesaj) ──────
 export async function startConversation(req: RequestWithTenant, res: Response) {
@@ -121,6 +160,9 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
     isNew = true;
   }
 
+  // Okundu-bazlı e-posta (mesaj oluşmadan ÖNCE): mentör güncelse ilk okunmamışta mail.
+  await emailRecipientIfCaughtUp(convo, 'mentor', req.auth.fullName);
+
   const msg = await prisma.message.create({
     data: { conversationId: convo.id, senderUserId: mentiId, content: parsed.data.message },
   });
@@ -159,6 +201,9 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Konuşma bulunamadı.' });
   }
 
+  // Okundu-bazlı e-posta (mesaj oluşmadan ÖNCE): alıcı güncelse ilk okunmamışta mail.
+  await emailRecipientIfCaughtUp(convo, otherSide(side), req.auth.fullName);
+
   const msg = await prisma.message.create({
     data: { conversationId: convo.id, senderUserId: req.auth.userId, content: parsed.data.message },
   });
@@ -169,8 +214,6 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
     where: { id: convo.id },
     data: { lastMessageAt: msg.createdAt, ...readField },
   });
-
-  // NOT: Okundu-bazlı e-posta tetiği Tur 3'te bu noktaya eklenir.
 
   return res.status(201).json({
     message: { id: msg.id, senderUserId: msg.senderUserId, content: msg.content, createdAt: msg.createdAt },
