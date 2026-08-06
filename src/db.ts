@@ -31,6 +31,11 @@ const TENANT_SCOPED = new Set([
   'TenantMembership',
   'Match',
   'AvailabilityBlock',
+  // Chat v1 — Conversation/Message tenant'a göre otomatik filtrelenir.
+  // DİKKAT: cross-tenant (shared-pool) konuşmada karşı taraf RLS ile elenebilir;
+  // erişim controller'da findUnique + participant kontrolüyle yapılmalı (findMany değil).
+  'Conversation',
+  'Message',
 ]);
 
 // findUnique kasıtlı olarak dışarıda bırakıldı:
