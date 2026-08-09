@@ -31,6 +31,11 @@ const TENANT_SCOPED = new Set([
   'TenantMembership',
   'Match',
   'AvailabilityBlock',
+  // NOT: Conversation/Message KASITLI olarak burada YOK. Chat, güvenlik sınırını
+  // tenant'a değil KATILIMCIYA dayar: shared-pool'da menti ile mentör farklı
+  // tenant'ta olabilir; tenantId RLS filtresi karşı tarafı eler (konuşmayı göremez).
+  // Yetki controller'da participant (mentorUserId/mentiUserId) + admin(aynı tenant)
+  // ile açıkça zorlanır. tenantId yalnızca kayıt/analitik amaçlı tutulur.
 ]);
 
 // findUnique kasıtlı olarak dışarıda bırakıldı:

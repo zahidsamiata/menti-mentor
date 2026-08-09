@@ -80,6 +80,22 @@ export async function sendMeetingApprovalEmail(args: {
   );
 }
 
+export async function sendNewChatMessageEmail(args: {
+  toEmail: string;
+  recipientName: string;
+  senderName: string;
+}): Promise<void> {
+  // Okundu-bazlı bildirim (alıcının okunmamışı yokken ilk yeni mesajda) tarafından çağrılır.
+  // PII: mesaj METNİ e-postaya KONMAZ — yalnızca "yeni mesaj var" + gönderen adı.
+  await send(
+    args.toEmail,
+    'Yeni mesajınız var',
+    `<p>Merhaba ${args.recipientName},</p>
+     <p><strong>${args.senderName}</strong> size yeni bir mesaj gönderdi.</p>
+     <p>Mesajı okumak için sisteme giriş yapıp Mesajlar bölümüne gidin.</p>`,
+  );
+}
+
 export async function sendAdminNewUserNotification(args: {
   toEmail: string;
   adminName: string;

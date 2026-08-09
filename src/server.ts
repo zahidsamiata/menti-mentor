@@ -30,6 +30,7 @@ import suspicionRoutes from './routes/suspicionRoutes.js';
 import agreementRoutes from './routes/agreementRoutes.js';
 import learningJourneyRoutes from './routes/learningJourneyRoutes.js';
 import learningJourneyAdminRoutes from './routes/learningJourneyAdminRoutes.js';
+import conversationRoutes from './routes/conversationRoutes.js';
 import type { RequestHandler } from 'express';
 
 const app = express();
@@ -126,6 +127,7 @@ app.use('/api/admin/learning-journey', learningJourneyAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/scoring', sjtScoringRoutes);
 app.use('/api/agreements', agreementRoutes);
+app.use('/api/conversations', conversationRoutes);
 app.use('/api/learning-journey', learningJourneyRoutes);
 // Kullanıcı etiket önerisi (authenticated, tenant-scoped)
 app.post('/api/tags/suggest', generalRateLimiter, suggestTag as unknown as RequestHandler);

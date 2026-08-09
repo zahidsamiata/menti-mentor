@@ -221,6 +221,7 @@ model Tenant {
   availabilityBlocks  AvailabilityBlock[]
   invitationTemplates InvitationTemplate[]
   agreements          MentorshipAgreement[]
+  conversations       Conversation[]
 }
 
 model User {
@@ -322,6 +323,11 @@ model User {
   reportsMade     UserReport[] @relation("ReportsMade")
   reportsReceived UserReport[] @relation("ReportsReceived")
 
+  // Chat v1 — menti↔mentör talep mesajlaşma
+  conversationsAsMentor Conversation[] @relation("ConversationsAsMentor")
+  conversationsAsMenti  Conversation[] @relation("ConversationsAsMenti")
+  messagesSent          Message[]      @relation("MessagesSent")
+
   // email @unique ile global unique; ayrıca tenant bazlı sorgular için index
   @@index([tenantId, role, isActive])
   // Auth: slug ile tenant bulunduktan sonra userId+tenantId sorgusu
@@ -391,6 +397,58 @@ model MatchRequest {
   @@index([targetType, targetId])
   // Job Board: belirli bir ilanı hedefleyen talepleri hızla bul
   @@index([tenantId, targetType, targetId])
+}
+
+// Chat v1 — menti↔mentör talep mesajlaşma.
+// Menti zorunlu ilk mesajla talep açar; konuşma HEMEN açılır (ayrı kabul kapısı yok).
+// Dağınık requestMessage alanlarının yerini alır (Meeting.requestMessage AYRI kalır).
+model Conversation {
+  id       String @id @default(cuid())
+  tenantId String
+
+  mentorUserId String
+  mentiUserId  String
+
+  // Köken izi — hangi talepten doğdu (yeni talep veya eski veri backfill'i)
+  matchRequestId String?
+
+  // Okundu-bazlı e-posta tetiği + unread türetme.
+  // Alıcı güncelken (xLastReadAt >= lastMessageAt) gelen ilk yeni mesajda mail atılır.
+  lastMessageAt    DateTime  @default(now())
+  mentorLastReadAt DateTime?
+  mentiLastReadAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mentor   User      @relation("ConversationsAsMentor", fields: [mentorUserId], references: [id])
+  menti    User      @relation("ConversationsAsMenti", fields: [mentiUserId], references: [id])
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  messages Message[]
+
+  // Bir menti↔mentör çifti için tek konuşma; tekrar talep mevcut konuşmaya mesaj ekler
+  @@unique([mentorUserId, mentiUserId])
+  @@index([tenantId])
+  @@index([mentorUserId])
+  @@index([mentiUserId])
+}
+
+model Message {
+  id             String @id @default(cuid())
+  conversationId String
+  senderUserId   String
+
+  // PII — düz metin içerik. Log'a yazılmaz; KVKK hard-delete kapsamındadır.
+  content String @db.Text
+
+  createdAt DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation("MessagesSent", fields: [senderUserId], references: [id])
+
+  // Thread'i kronolojik yükle (polling); gönderene göre de sorgulanabilir
+  @@index([conversationId, createdAt])
+  @@index([senderUserId])
 }
 
 model FeedbackLog {
