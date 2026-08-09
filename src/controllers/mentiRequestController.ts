@@ -23,7 +23,6 @@ import { canCrossTenantMatch } from '../services/tenantSharing.js';
 
 const RequestVisibilitySchema = z.object({
   mentorId: z.string().min(5),
-  requestMessage: z.string().max(500).optional(),
 });
 
 /**
@@ -113,7 +112,6 @@ export async function requestVisibilityFromMentor(req: RequestWithTenant, res: R
     update: {
       status: 'PENDING',
       initiatedBy: 'MENTI',
-      requestMessage: parsed.data.requestMessage ?? null,
     },
     create: {
       tenantId: req.tenant.tenantId,
@@ -121,7 +119,6 @@ export async function requestVisibilityFromMentor(req: RequestWithTenant, res: R
       mentiId: menti.id,
       status: 'PENDING',
       initiatedBy: 'MENTI',
-      requestMessage: parsed.data.requestMessage ?? null,
     },
   });
 
@@ -182,7 +179,6 @@ export async function getPendingVisibilityRequests(req: RequestWithTenant, res: 
         id: true,
         status: true,
         initiatedBy: true,
-        requestMessage: true,
         createdAt: true,
         menti: {
           select: {
