@@ -12,7 +12,6 @@ import { uploadMyAvatar } from '../controllers/avatarController.js';
 import { createReport } from '../controllers/reportController.js';
 import { avatarUploadMiddleware } from '../middleware/avatarUpload.js';
 import { avatarUploadRateLimiter } from '../middleware/rateLimiter.js';
-import { requestVisibilityFromMentor, getPendingVisibilityRequests, respondToVisibilityRequest } from '../controllers/mentiRequestController.js';
 import { getMentorFilter, upsertMentorFilter } from '../controllers/mentorFilterController.js';
 import { getNextAdaptiveQuestion, submitAdaptiveAnswer, previewAdaptiveResult } from '../controllers/adaptiveTestController.js';
 
@@ -132,23 +131,6 @@ router.put(
   '/mentors/:mentorId/filter',
   requireRole('ADMIN', 'MENTOR'),
   upsertMentorFilter as unknown as RequestHandler,
-);
-
-// ─── Hibrit Akış: Menti-driven görünürlük talebi ─────────────────────────────
-router.post(
-  '/mentis/:mentiId/request-visibility',
-  requireAuth(),
-  requestVisibilityFromMentor as unknown as RequestHandler,
-);
-router.get(
-  '/mentors/:mentorId/pending-visibility-requests',
-  requireRole('ADMIN', 'MENTOR'),
-  getPendingVisibilityRequests as unknown as RequestHandler,
-);
-router.patch(
-  '/mentors/:mentorId/visibility-optin/:optInId/respond',
-  requireRole('ADMIN', 'MENTOR'),
-  respondToVisibilityRequest as unknown as RequestHandler,
 );
 
 // ─── Oryantasyon kilidi — kullanıcı kendi kilidini kaldırır (rehber tamamlandı) ──
