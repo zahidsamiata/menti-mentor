@@ -13,6 +13,7 @@ import { createReport } from '../controllers/reportController.js';
 import { avatarUploadMiddleware } from '../middleware/avatarUpload.js';
 import { avatarUploadRateLimiter } from '../middleware/rateLimiter.js';
 import { getMentorFilter, upsertMentorFilter } from '../controllers/mentorFilterController.js';
+import { getMentorDashboardMetrics } from '../controllers/mentorMetricsController.js';
 import { getNextAdaptiveQuestion, submitAdaptiveAnswer, previewAdaptiveResult } from '../controllers/adaptiveTestController.js';
 
 const router = Router();
@@ -77,6 +78,15 @@ router.post(
   '/mentors/:mentorId/visibility-optin',
   requireRole('ADMIN', 'MENTOR'),
   setVisibilityOptIn as unknown as RequestHandler,
+);
+
+// GET /mentors/:mentorId/dashboard-metrics → panel özet kartları (salt-okuma)
+// IDOR: yalnızca kendi metriğini veya ADMIN görebilir (başka mentörün sayıları sızmasın).
+router.get(
+  '/mentors/:mentorId/dashboard-metrics',
+  requireRole('ADMIN', 'MENTOR'),
+  requireSelfOrAdmin('mentorId'),
+  getMentorDashboardMetrics as unknown as RequestHandler,
 );
 
 // POST /users/:id/report → giriş yapmış kullanıcı başka bir üyeyi şikayet eder
