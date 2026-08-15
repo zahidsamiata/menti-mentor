@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
-import { rankMentisForMentor, type RankedMenti } from '../services/matching.js';
+import { rankMentisForMentor, rankMentorsForMenti, type RankedMenti, type RankedMentor } from '../services/matching.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
 
 // KARAR 3: qualityMultiplier kullanıcıya gösterilmez (gizli yorumları dolaylı sızdırır).
@@ -68,6 +68,50 @@ export async function getRankedMentisForMentor(req: RequestWithTenant, res: Resp
     items: result.items.map(buildPublicItem),
     fallbackLevel: result.fallbackLevel,
   });
+}
+
+// ─── Menti → Mentör uyum kartı (menti-facing, KARAR 5 güvenli) ────────────────
+// KARAR 5: menti mentörün DISC tipini GÖRMEZ — yalnız uyum skorunu (yüzde) + jenerik
+// gerekçe görür. buildMentiFacingMentorItem çıktısında discType YOK, discScore YOK ve
+// compatibilityReason harf içermez ("İletişim tarzları uyumlu" — hangi DISC olduğu belli değil).
+function buildMentiFacingMentorItem(m: RankedMentor) {
+  const reasons: string[] = [];
+  if (m.sectorScore > 0) reasons.push('Ortak sektör ve ilgi alanları');
+  if (m.discScore > 0)   reasons.push('İletişim tarzları uyumlu'); // jenerik — DISC harfi/tipi sızmaz
+  return {
+    mentorId:        m.mentorId,
+    mentorName:      m.mentorName,
+    mentorAvatarUrl: m.mentorAvatarUrl,
+    sectorTags:      m.sectorTags,
+    skills:          m.skills,
+    matchScore:      Math.round(m.totalScore), // menti'ye yüzde olarak gösterilir
+    compatibilityReason: reasons.join(' · ') || 'Genel profil uyumu',
+  };
+}
+
+const MentorMatchQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+// GET /mentis/:mentiId/mentor-matches — menti, kendisine uygun mentörleri uyum skoruyla görür.
+// Route: requireRole('ADMIN','MENTI') + requireSelfOrAdmin('mentiId') (IDOR: başka menti'nin
+// listesi görülemez). SALT-OKUMA; canlı eşleştirme yolunu (rankMentisForMentor) değiştirmez.
+export async function getRankedMentorsForMenti(req: RequestWithTenant, res: Response) {
+  const mentiId = req.params['mentiId'] as string;
+
+  const parsed = MentorMatchQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const result = await rankMentorsForMenti({
+    mentiId,
+    mentiTenantId: req.tenant.tenantId,
+    limit: parsed.data.limit,
+  });
+
+  // GÜVENLİK: iç RankedMentor (discScore taşır) DOĞRUDAN dönmez — menti-safe DTO'ya map edilir.
+  return res.json({ items: result.items.map(buildMentiFacingMentorItem) });
 }
 
 const OptInSchema = z.object({

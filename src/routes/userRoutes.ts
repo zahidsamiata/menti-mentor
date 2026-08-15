@@ -3,7 +3,7 @@ import { requireTenant } from '../middleware/tenant.js';
 import { requireAuth, requireRole, requireSelfOrAdmin } from '../middleware/authorize.js';
 import { createUser, listUsers, getUser, updateUser, patchSelfProfile, countApprovedMentors, updateMyProfile } from '../controllers/userController.js';
 import { submitTemperamentTest } from '../controllers/temperamentController.js';
-import { getRankedMentisForMentor, setVisibilityOptIn } from '../controllers/matchingController.js';
+import { getRankedMentisForMentor, getRankedMentorsForMenti, setVisibilityOptIn } from '../controllers/matchingController.js';
 import { createMatchRequest, listRequests, getRequest } from '../controllers/requestController.js';
 import { getUserClubs } from '../controllers/clubController.js';
 import { anonymizeUserHandler, hardDeleteUserHandler, exportUserDataHandler } from '../controllers/gdprController.js';
@@ -71,6 +71,18 @@ router.get(
   '/mentors/:mentorId/candidates',
   requireRole('ADMIN', 'MENTOR'),
   getRankedMentisForMentor as unknown as RequestHandler,
+);
+
+// ─── Menti ekranı ────────────────────────────────────────────────────────────
+// GET /mentis/:mentiId/mentor-matches → menti kendisine uygun mentörleri uyum skoruyla görür.
+// IDOR: requireSelfOrAdmin — bir menti yalnız KENDİ uyum listesini görebilir (başka menti'nin
+// skor/aday havuzu sızmaz). SALT-OKUMA; canlı eşleştirmeyi değiştirmez. KARAR 5: response'ta
+// mentörün discType'ı YOK (controller menti-safe DTO'ya map eder).
+router.get(
+  '/mentis/:mentiId/mentor-matches',
+  requireRole('ADMIN', 'MENTI'),
+  requireSelfOrAdmin('mentiId'),
+  getRankedMentorsForMenti as unknown as RequestHandler,
 );
 
 // POST /mentors/:mentorId/visibility-optin → ADMIN veya MENTOR
