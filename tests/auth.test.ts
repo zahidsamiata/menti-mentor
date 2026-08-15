@@ -31,6 +31,7 @@ describe('Auth: Register', () => {
         role: 'MENTI',
         tenantSlug: tenant.slug,
         kvkkConsent: true,
+        ageConsent: true,
       })
       .expect(201);
 
@@ -58,7 +59,7 @@ describe('Auth: Register', () => {
     const user = await createUser({ tenantId: tenant.id, role: 'MENTI' });
     const res = await http
       .post('/api/auth/register')
-      .send({ email: user.email, password: 'Test1234!', fullName: 'Tekrar', role: 'MENTI', tenantSlug: tenant.slug, kvkkConsent: true })
+      .send({ email: user.email, password: 'Test1234!', fullName: 'Tekrar', role: 'MENTI', tenantSlug: tenant.slug, kvkkConsent: true, ageConsent: true })
       .expect(201);
     // Kayıtlı ve kayıtsız e-posta için aynı status + aynı mesaj yapısı
     expect(res.body.message).toBeDefined();

@@ -297,6 +297,10 @@ export async function selfServeRegister(req: Request, res: Response) {
         role:           'ADMIN',
         approvalStatus: 'APPROVED', // Kurumu kuran yönetici direkt onaylıdır
         isActive:       true,
+        // KVKK Md.5 (ispat yükü): SelfServeRegisterSchema kvkkConsent zorunlu; rıza
+        // TOPLANIYOR ama User'a anı yazılmıyordu (yalnız Tenant'a). Kurucu admin de
+        // birey — kendi User kaydında rıza anı kanıtlanmalı. Bkz. K2 (yol haritası v1-A).
+        kvkkConsentAt:  new Date(),
       },
       select: {
         id: true, email: true, fullName: true,
