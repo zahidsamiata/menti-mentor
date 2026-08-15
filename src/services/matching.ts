@@ -1,3 +1,4 @@
+import type { DiscType } from '@prisma/client';
 import { prisma } from '../db.js';
 import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, type DiscVector } from './scoring.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
@@ -298,4 +299,102 @@ function scoreAndFilter(
 
   filtered.sort((a, b) => b.totalScore - a.totalScore);
   return filtered;
+}
+
+// ─── Menti → Mentör sıralama (SALT-OKUMA — canlı eşleştirmeye dokunmaz) ────────
+//
+// GÜVENLİ YOL: mevcut skorlama motorunu (computeTotalScore) TERS yönde yeniden kullanır —
+// yeni algoritma YOK. rankMentisForMentor (mentör→menti, canlı eşleştirme) DEĞİŞMEZ; bu
+// yalnızca menti'nin "bana uygun mentörler" kartını beslemek için ayrı bir okuma yoludur.
+// Menti kendi profiliyle her mentöre karşı uyum skorunu görür (yüzde). KARAR 5 gereği
+// çıktı mentörün discType'ını İÇERMEZ; DTO (controller) yalnızca skor + jenerik gerekçe döndürür.
+
+export type RankedMentor = {
+  mentorId: string;
+  mentorName: string;
+  mentorAvatarUrl: string | null;
+  sectorTags: string[];
+  skills: string[];
+  totalScore: number;
+  sectorScore: number;
+  // discScore İÇ hesaptır — menti response'una (controller DTO'su) KOYULMAZ. Yalnızca
+  // "İletişim tarzları uyumlu" gibi jenerik (harfsiz) gerekçe üretmek için kullanılır.
+  discScore: number;
+  confidence: number;
+};
+
+export async function rankMentorsForMenti(args: {
+  mentiId: string;
+  mentiTenantId: string;
+  limit?: number;
+}): Promise<{ items: RankedMentor[] }> {
+  // Menti'nin KENDİ profili — MENTI membership doğrulaması (tenant-başına rol kaynağı).
+  const menti = await prisma.user.findFirst({
+    where: {
+      id: args.mentiId,
+      tenantId: args.mentiTenantId,
+      isActive: true,
+      memberships: { some: { tenantId: args.mentiTenantId, role: 'MENTI', isActive: true } },
+    },
+    select: { id: true, tenantId: true, sectorTags: true, discType: true, discVector: true },
+  });
+  if (!menti) return { items: [] };
+
+  // Eligible tenant listesi: kendi tenant'ı + her iki taraf da shared-pool ise diğerleri
+  // (rankMentisForMentor ile AYNI cross-tenant güvenlik deseni).
+  const sharedTenants = await prisma.tenant.findMany({
+    where: { isSharedPoolActive: true },
+    select: { id: true },
+  });
+  const sharedIds = new Set(sharedTenants.map((t) => t.id));
+  const eligibleTenantIds = [
+    args.mentiTenantId,
+    ...Array.from(sharedIds).filter(
+      (id) => id !== args.mentiTenantId && sharedIds.has(args.mentiTenantId),
+    ),
+  ];
+
+  const mentors = await prisma.user.findMany({
+    where: {
+      isActive: true,
+      approvalStatus: 'APPROVED',
+      tenantId: { in: eligibleTenantIds },
+      memberships: { some: { tenantId: { in: eligibleTenantIds }, role: 'MENTOR', isActive: true } },
+    },
+    select: {
+      id: true,
+      fullName: true,
+      avatarUrl: true,
+      sectorTags: true,
+      discType: true,
+      skills: true,
+    },
+    take: 500,
+  });
+
+  const mentiVector = menti.discVector as DiscVector | null;
+
+  const items: RankedMentor[] = mentors.map((m) => {
+    const breakdown = computeTotalScore({
+      mentiTags:   menti.sectorTags,
+      mentorTags:  m.sectorTags,
+      mentiDisc:   menti.discType as DiscType | null,
+      mentorDisc:  m.discType as DiscType | null,
+      mentiVector,
+    });
+    return {
+      mentorId:        m.id,
+      mentorName:      m.fullName,
+      mentorAvatarUrl: m.avatarUrl,
+      sectorTags:      m.sectorTags,
+      skills:          m.skills,
+      totalScore:      breakdown.totalScore,
+      sectorScore:     breakdown.sectorScore,
+      discScore:       breakdown.discScore,
+      confidence:      breakdown.confidence,
+    };
+  });
+
+  items.sort((a, b) => b.totalScore - a.totalScore);
+  return { items: args.limit ? items.slice(0, args.limit) : items };
 }
