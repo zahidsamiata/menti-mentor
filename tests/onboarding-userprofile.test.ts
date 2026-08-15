@@ -133,7 +133,6 @@ describe('Onboarding → UserProfile (Aşama 1)', () => {
         role: 'MENTI',
         tenantSlug: tenant.slug,
         kvkkConsent: true,
-        ageConsent: true,
       })
       .expect(201);
 

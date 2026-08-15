@@ -126,7 +126,6 @@ describe('Tenant Verification: PENDING_REVIEW Kısıtlamaları', () => {
         role: 'MENTI',
         tenantSlug: pendingTenant.slug,
         kvkkConsent: true,
-        ageConsent: true,
       })
       .expect(403);
 
