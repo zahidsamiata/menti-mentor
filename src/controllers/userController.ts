@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { sendAdminNewUserNotification } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { ensureMembershipSafe } from '../services/membership.js';
+import { canViewerSeeDiscType } from '../services/discVisibility.js';
 
 // ─── Security: Tag Poisoning Prevention ───────────────────────────────────────
 // Etiketlerdeki XSS, injection ve kimlik gizleme girişimlerini önler.
@@ -100,7 +101,18 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
     prisma.user.count({ where }),
   ]);
 
-  return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+  // KARAR 5 (PII/mahremiyet): discType bakan-rol + hedef-rol çiftine göre kısıtlanır.
+  // Menti→mentör yönünde mentörün DISC tipi response'ta HİÇ dönmez (alan tamamen çıkarılır),
+  // yalnızca uyum skoru kalır. Mentör→menti ve admin yönlerinde tip korunur. Merkezi kural:
+  // discVisibility.canViewerSeeDiscType. Frontend gizleme ek katmandır; asıl kapatma burada.
+  const viewerRole = req.auth?.role;
+  const safeItems = items.map((u) => {
+    if (canViewerSeeDiscType(viewerRole, u.role)) return u;
+    const { discType: _hiddenDisc, ...rest } = u;
+    return rest;
+  });
+
+  return res.json({ items: safeItems, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
 }
 
 /**
@@ -176,6 +188,14 @@ export async function getUser(req: RequestWithTenant, res: Response) {
 
   if (!user) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+  }
+
+  // KARAR 5: public (self/admin olmayan) bakışta discType + discResultCard bakan-rol/hedef-rol
+  // çiftine göre kısıtlanır. Menti→mentör detayında ikisi de response'tan çıkarılır (sızıntı yok).
+  // fullAccess yolunda (self/admin) USER_FULL_SELECT zaten hepsini içerir — dokunulmaz.
+  if (!fullAccess && !canViewerSeeDiscType(req.auth?.role, user.role)) {
+    const { discType: _hiddenDisc, discResultCard: _hiddenCard, ...rest } = user;
+    return res.json(rest);
   }
 
   return res.json(user);
