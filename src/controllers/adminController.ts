@@ -247,7 +247,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     ...(approvalStatus !== undefined && { approvalStatus }),
   };
 
-  const [items, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.user.findMany({
       where,
       select: {
@@ -256,6 +256,12 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
         rematchPriority: true, rematchCount: true,
         needsOrientation: true, approvalStatus: true, createdAt: true,
         avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
+        // Sertifika rozeti (KARAR 4). Kurum-içi sertifika kaynağı = TenantMembership
+        // (bkz. adminListCertResults). isCertified = kalite/güven göstergesi, Analytical/PII değil.
+        memberships: {
+          where: { tenantId: req.tenant.tenantId },
+          select: { isCertified: true },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: pageSize,
@@ -263,6 +269,12 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     }),
     prisma.user.count({ where }),
   ]);
+
+  // Nested membership'i düz `isCertified` alanına çıkar (response'ta üyelik dizisi sızmasın).
+  const items = rows.map(({ memberships, ...rest }) => ({
+    ...rest,
+    isCertified: memberships[0]?.isCertified ?? false,
+  }));
 
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
 }
