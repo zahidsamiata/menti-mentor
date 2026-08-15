@@ -256,11 +256,14 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
         rematchPriority: true, rematchCount: true,
         needsOrientation: true, approvalStatus: true, createdAt: true,
         avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
-        // Sertifika rozeti (KARAR 4). Kurum-içi sertifika kaynağı = TenantMembership
-        // (bkz. adminListCertResults). isCertified = kalite/güven göstergesi, Analytical/PII değil.
+        // Sertifika rozeti (KARAR 4, kişi-geneli — PO kararı). Sertifika kişi bazında geneldir:
+        // kişi HERHANGİ bir kurumda sertifikalıysa sertifikalı sayılır (kurum farkı gözetilmez).
+        // isCertified yalnız TenantMembership'te tutulur (UserProfile.isCertified bakımsız), bu
+        // yüzden tüm üyelikler üzerinden türetilir. Kalite/güven göstergesi — Analytical, PII değil.
         memberships: {
-          where: { tenantId: req.tenant.tenantId },
-          select: { isCertified: true },
+          where: { isCertified: true },
+          select: { id: true },
+          take: 1,
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -270,10 +273,10 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     prisma.user.count({ where }),
   ]);
 
-  // Nested membership'i düz `isCertified` alanına çıkar (response'ta üyelik dizisi sızmasın).
+  // Kişi-geneli sertifika: herhangi bir kurumda sertifikalıysa true (üyelik dizisi response'a sızmaz).
   const items = rows.map(({ memberships, ...rest }) => ({
     ...rest,
-    isCertified: memberships[0]?.isCertified ?? false,
+    isCertified: memberships.length > 0,
   }));
 
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
