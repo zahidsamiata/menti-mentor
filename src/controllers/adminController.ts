@@ -247,7 +247,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     ...(approvalStatus !== undefined && { approvalStatus }),
   };
 
-  const [items, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.user.findMany({
       where,
       select: {
@@ -256,6 +256,15 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
         rematchPriority: true, rematchCount: true,
         needsOrientation: true, approvalStatus: true, createdAt: true,
         avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
+        // Sertifika rozeti (KARAR 4, kişi-geneli — PO kararı). Sertifika kişi bazında geneldir:
+        // kişi HERHANGİ bir kurumda sertifikalıysa sertifikalı sayılır (kurum farkı gözetilmez).
+        // isCertified yalnız TenantMembership'te tutulur (UserProfile.isCertified bakımsız), bu
+        // yüzden tüm üyelikler üzerinden türetilir. Kalite/güven göstergesi — Analytical, PII değil.
+        memberships: {
+          where: { isCertified: true },
+          select: { id: true },
+          take: 1,
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: pageSize,
@@ -263,6 +272,12 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     }),
     prisma.user.count({ where }),
   ]);
+
+  // Kişi-geneli sertifika: herhangi bir kurumda sertifikalıysa true (üyelik dizisi response'a sızmaz).
+  const items = rows.map(({ memberships, ...rest }) => ({
+    ...rest,
+    isCertified: memberships.length > 0,
+  }));
 
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
 }
