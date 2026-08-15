@@ -105,6 +105,11 @@ async function handleNewUser(
       approvalStatus: 'PENDING',
       avatarUrl: profile.avatarUrl ?? null,
       // password null — OAuth kullanıcıları şifre kullanmaz
+      // KVKK Md.5 (ispat yükü): OAuth ile katılım da açık rıza anlamına gelir —
+      // kullanıcı OAuth başlatırken davet/kayıt bağlamında KVKK'yı kabul eder.
+      // Local register (authController) new Date() deseniyle aynı; NULL bırakılırsa
+      // rıza anı kanıtlanamaz. Bkz. K2 (yol haritası v1-A).
+      kvkkConsentAt: new Date(),
     },
     select: { id: true, tenantId: true, role: true, fullName: true },
   });

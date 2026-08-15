@@ -27,6 +27,8 @@ const RegisterSchema = z.object({
   tenantSlug: z.string().min(1, 'Kuruluş kodu zorunlu'),
   // KVKK Md.5 — bireysel kullanıcı açık rızası; frontend checkbox zorunlu,
   // backend de enforce eder (API doğrudan çağrılırsa da consent şart).
+  // K4 (18+ beyanı) bu onayın METNİNE gömülüdür (PO kararı: tek onay kutusu) —
+  // ayrı ageConsent alanı YOK. Kullanıcı bu rızayı verirken 18+ olduğunu da beyan eder.
   kvkkConsent: z.literal(true, { message: 'KVKK onayı zorunludur.' }),
 });
 
