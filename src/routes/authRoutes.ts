@@ -11,6 +11,7 @@ import {
   oauthRedirect,
   oauthCallback,
   getMe,
+  reapply,
 } from '../controllers/authController.js';
 
 const router = Router();
@@ -39,6 +40,10 @@ router.post('/reset-password', passwordResetRateLimiter, resetPassword as unknow
 
 // GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir)
 router.get('/me', requireTenant as unknown as RequestHandler, getMe as unknown as RequestHandler);
+
+// POST /api/auth/reapply — reddedilen kullanıcı tekrar başvurur (İş 3 P3).
+// loginRateLimiter: şifre doğrulaması içerdiğinden IP-bazlı brute-force koruması.
+router.post('/reapply', loginRateLimiter, reapply as unknown as RequestHandler);
 
 /**
  * OAuth akış route'ları — dinamik :provider parametresi ile iki provider'ı tek handler'da yönetir.

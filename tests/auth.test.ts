@@ -320,3 +320,68 @@ describe('Auth: Forgot/Reset Password', () => {
       .expect(400);
   });
 });
+
+// ─── İş 3 P2/P3: Reddedilen kullanıcı akışı (gerekçe görme + tekrar başvuru) ───
+describe('Auth: Reddedilen kullanıcı akışı (İş 3 P2/P3)', () => {
+  let http: TestAgent;
+  let tenant: Tenant;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http = agent();
+    tenant = await createTenant();
+  });
+
+  async function makeRejected(reason: string | null) {
+    const u = await createUser({ tenantId: tenant.id, password: 'Test1234!', approvalStatus: 'PENDING' });
+    await testPrisma.user.update({
+      where: { id: u.id },
+      data: { approvalStatus: 'REJECTED', isActive: false, rejectionReason: reason, rejectedAt: new Date() },
+    });
+    return u;
+  }
+
+  it('P2: doğru şifreyle giriş → 403 + gerekçe + canReapply (şifre sonrası açılır)', async () => {
+    const u = await makeRejected('Mezuniyet yılı eksik, lütfen güncelleyin.');
+    const res = await http.post('/api/auth/login').send({ email: u.email, password: u.rawPassword }).expect(403);
+    expect((res.body as { error: string }).error).toBe('HESAP_REDDEDILDI');
+    expect((res.body as { rejectionReason: string }).rejectionReason).toBe('Mezuniyet yılı eksik, lütfen güncelleyin.');
+    expect((res.body as { canReapply: boolean }).canReapply).toBe(true);
+  });
+
+  it('ENUMERATION: yanlış şifreyle giriş → generic 401, reddedilmiş bilgisi SIZMAZ', async () => {
+    const u = await makeRejected('Gizli gerekçe');
+    const res = await http.post('/api/auth/login').send({ email: u.email, password: 'YanlisSifre!' }).expect(401);
+    expect((res.body as { error: string }).error).toBe('KIMLIK_DOGRULANMADI');
+    expect((res.body as Record<string, unknown>)['rejectionReason']).toBeUndefined();
+  });
+
+  it('P3: reapply doğru şifreyle REJECTED→PENDING; red geçmişi KORUNUR (çok-yönetici)', async () => {
+    const u = await makeRejected('Bilgiler eksik.');
+    const res = await http.post('/api/auth/reapply').send({ email: u.email, password: u.rawPassword }).expect(200);
+    expect((res.body as { approvalStatus: string }).approvalStatus).toBe('PENDING');
+    const db = await testPrisma.user.findUnique({ where: { id: u.id } });
+    expect(db?.approvalStatus).toBe('PENDING');
+    expect(db?.isActive).toBe(true);
+    expect(db?.rejectionReason).toBe('Bilgiler eksik.'); // geçmiş SİLİNMEZ
+    expect(db?.rejectedAt).not.toBeNull();
+  });
+
+  it('ENUMERATION: reapply yanlış şifreyle → generic 401', async () => {
+    const u = await makeRejected(null);
+    await http.post('/api/auth/reapply').send({ email: u.email, password: 'Yanlis!' }).expect(401);
+  });
+
+  it('reapply reddedilmemiş (APPROVED) hesapta 409', async () => {
+    const u = await createUser({ tenantId: tenant.id, password: 'Test1234!', approvalStatus: 'APPROVED' });
+    await http.post('/api/auth/reapply').send({ email: u.email, password: u.rawPassword }).expect(409);
+  });
+
+  it('reapply kullanıcının DISC/test verisini KORUR (baştan çözdürmez)', async () => {
+    const u = await createUser({ tenantId: tenant.id, password: 'Test1234!', approvalStatus: 'PENDING', discType: 'D' });
+    await testPrisma.user.update({ where: { id: u.id }, data: { approvalStatus: 'REJECTED', isActive: false } });
+    await http.post('/api/auth/reapply').send({ email: u.email, password: u.rawPassword }).expect(200);
+    const db = await testPrisma.user.findUnique({ where: { id: u.id } });
+    expect(db?.discType).toBe('D'); // test verisi korundu
+  });
+});
