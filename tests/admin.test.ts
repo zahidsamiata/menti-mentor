@@ -104,6 +104,60 @@ describe('Admin: User Approval', () => {
       .set(tenantHeaders(tenant.id, adminToken))
       .expect(404);
   });
+
+  // ─── İş 2: onay/red denetim izi + İş 3 P1: red gerekçesi ─────────────────────
+  it('onay: approvedBy + approvedAt kaydeder, eski red izini temizler', async () => {
+    // Önce reddedilmiş bir kullanıcı (izli), sonra onaylanınca red izi temizlenmeli.
+    const u = await createUser({ tenantId: tenant.id, approvalStatus: 'PENDING' });
+    await http.post(`/api/admin/users/${u.id}/reject`).set(tenantHeaders(tenant.id, adminToken))
+      .send({ reason: 'Bilgiler eksik.' }).expect(200);
+    // reddedilen tekrar PENDING yapılıp onaylanabilsin diye doğrudan DB'den PENDING'e çekilir (test kurgusu)
+    await testPrisma.user.update({ where: { id: u.id }, data: { approvalStatus: 'PENDING', isActive: true } });
+
+    await http.post(`/api/admin/users/${u.id}/approve`).set(tenantHeaders(tenant.id, adminToken)).expect(200);
+
+    const db = await testPrisma.user.findUnique({ where: { id: u.id } });
+    expect(db?.approvedBy).toBeTruthy();
+    expect(db?.approvedAt).toBeInstanceOf(Date);
+    expect(db?.rejectedBy).toBeNull();
+    expect(db?.rejectedAt).toBeNull();
+    expect(db?.rejectionReason).toBeNull();
+  });
+
+  it('red: rejectedBy + rejectedAt + rejectionReason kaydeder', async () => {
+    const pending = await createUser({ tenantId: tenant.id, approvalStatus: 'PENDING' });
+    await http.post(`/api/admin/users/${pending.id}/reject`).set(tenantHeaders(tenant.id, adminToken))
+      .send({ reason: 'Mezuniyet yılı eksik, lütfen güncelleyin.' }).expect(200);
+
+    const db = await testPrisma.user.findUnique({ where: { id: pending.id } });
+    expect(db?.rejectedBy).toBeTruthy();
+    expect(db?.rejectedAt).toBeInstanceOf(Date);
+    expect(db?.rejectionReason).toBe('Mezuniyet yılı eksik, lütfen güncelleyin.');
+  });
+
+  it('red: gerekçesiz de çalışır (rejectionReason null)', async () => {
+    const pending = await createUser({ tenantId: tenant.id, approvalStatus: 'PENDING' });
+    await http.post(`/api/admin/users/${pending.id}/reject`).set(tenantHeaders(tenant.id, adminToken))
+      .expect(200);
+    const db = await testPrisma.user.findUnique({ where: { id: pending.id } });
+    expect(db?.rejectionReason).toBeNull();
+    expect(db?.rejectedBy).toBeTruthy();
+  });
+
+  it('red: 500 karakterden uzun gerekçe 400 döner', async () => {
+    const pending = await createUser({ tenantId: tenant.id, approvalStatus: 'PENDING' });
+    await http.post(`/api/admin/users/${pending.id}/reject`).set(tenantHeaders(tenant.id, adminToken))
+      .send({ reason: 'x'.repeat(501) }).expect(400);
+  });
+
+  it('düzeltme talebi: gerekçe kalıcı kaydedilir, kullanıcı PENDING kalır', async () => {
+    const pending = await createUser({ tenantId: tenant.id, approvalStatus: 'PENDING' });
+    await http.post(`/api/admin/users/${pending.id}/request-correction`).set(tenantHeaders(tenant.id, adminToken))
+      .send({ feedbackNote: 'Uzmanlık etiketleriniz çok genel, daha spesifik belirtiniz.' }).expect(200);
+    const db = await testPrisma.user.findUnique({ where: { id: pending.id } });
+    expect(db?.approvalStatus).toBe('PENDING');
+    expect(db?.rejectionReason).toBe('Uzmanlık etiketleriniz çok genel, daha spesifik belirtiniz.');
+  });
 });
 
 describe('Admin: Role Authorization', () => {

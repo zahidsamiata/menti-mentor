@@ -259,6 +259,15 @@ model User {
   // Onboarding onay durumu — yeni kayıtlar PENDING, admin onayı ile APPROVED olur
   approvalStatus UserApprovalStatus @default(PENDING)
 
+  // Onay/red denetim izi (İş 2) + red gerekçesi (İş 3). Hepsi nullable/additive.
+  // approvedBy/rejectedBy = işlemi yapan yöneticinin userId'si (yalnız admin görür, audit).
+  // rejectionReason = kullanıcıya gösterilen red/düzeltme gerekçesi (serbest metin, ≤500; PII yazılmamalı).
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+
   // KVKK — açık rıza kaydı (/api/auth/register sırasında alınır)
   // NULL = OAuth akışı veya migration öncesi kayıt.
   kvkkConsentAt DateTime?
