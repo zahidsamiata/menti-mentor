@@ -276,9 +276,29 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   ]);
 
   // Kişi-geneli sertifika: herhangi bir kurumda sertifikalıysa true (üyelik dizisi response'a sızmaz).
-  const items = rows.map(({ memberships, ...rest }) => ({
+  const base = rows.map(({ memberships, ...rest }) => ({
     ...rest,
     isCertified: memberships.length > 0,
+  }));
+
+  // İş 2: onaylayan/reddeden yönetici ADI. Tek sorgu (N+1 yok), TENANT-SCOPED (çapraz-tenant
+  // isim sızmaz), yalnız fullName (minimum PII). Çözülemezse null → FE "bir yönetici" fallback.
+  const adminIds = [
+    ...new Set(base.flatMap((u) => [u.approvedBy, u.rejectedBy]).filter((id): id is string => !!id)),
+  ];
+  const nameById = new Map<string, string>();
+  if (adminIds.length > 0) {
+    const admins = await prisma.user.findMany({
+      where: { id: { in: adminIds }, tenantId: req.tenant.tenantId },
+      select: { id: true, fullName: true },
+    });
+    for (const a of admins) nameById.set(a.id, a.fullName);
+  }
+
+  const items = base.map((u) => ({
+    ...u,
+    approvedByName: u.approvedBy ? nameById.get(u.approvedBy) ?? null : null,
+    rejectedByName: u.rejectedBy ? nameById.get(u.rejectedBy) ?? null : null,
   }));
 
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
