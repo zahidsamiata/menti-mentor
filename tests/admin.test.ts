@@ -17,12 +17,14 @@ describe('Admin: User Approval', () => {
   let http: TestAgent;
   let tenant: Tenant;
   let adminToken: string;
+  let adminFullName: string;
 
   beforeEach(async () => {
     await cleanDb();
     http = agent();
     tenant = await createTenant();
     const admin = await createAdminUser(tenant.id);
+    adminFullName = admin.fullName;
     const tokens = await loginAs(http, admin.email, admin.rawPassword);
     adminToken = tokens.accessToken;
   });
@@ -157,6 +159,30 @@ describe('Admin: User Approval', () => {
     const db = await testPrisma.user.findUnique({ where: { id: pending.id } });
     expect(db?.approvalStatus).toBe('PENDING');
     expect(db?.rejectionReason).toBe('Uzmanlık etiketleriniz çok genel, daha spesifik belirtiniz.');
+  });
+
+  // İş 2: adminListUsers onaylayan/reddeden yönetici ADINI döndürür (tenant-scoped)
+  it('kullanıcı listesi: onaylayan yöneticinin adını (approvedByName) döndürür', async () => {
+    const pending = await createUser({ tenantId: tenant.id, approvalStatus: 'PENDING', role: 'MENTOR' });
+    await http.post(`/api/admin/users/${pending.id}/approve`).set(tenantHeaders(tenant.id, adminToken)).expect(200);
+
+    const res = await http.get('/api/admin/users?role=MENTOR').set(tenantHeaders(tenant.id, adminToken)).expect(200);
+    const row = (res.body as { items: Array<Record<string, unknown>> }).items.find((u) => u['id'] === pending.id);
+    expect(row?.['approvedByName']).toBe(adminFullName);
+    expect(row?.['rejectedByName']).toBeNull();
+  });
+
+  it('yönetici-adı çözümü tenant-scoped: başka tenant yöneticisi ise isim null döner', async () => {
+    // Kullanıcı bu tenant'ta, ama approvedBy başka tenant'ın userId'si → isim çözülemez (null).
+    const otherTenant = await createTenant();
+    const otherAdmin = await createAdminUser(otherTenant.id);
+    const u = await createUser({ tenantId: tenant.id, approvalStatus: 'APPROVED', role: 'MENTOR' });
+    // Doğrudan DB: approvedBy = başka tenant admini (çapraz-tenant senaryosu simülasyonu)
+    await testPrisma.user.update({ where: { id: u.id }, data: { approvedBy: otherAdmin.id } });
+
+    const res = await http.get('/api/admin/users?role=MENTOR').set(tenantHeaders(tenant.id, adminToken)).expect(200);
+    const row = (res.body as { items: Array<Record<string, unknown>> }).items.find((r) => r['id'] === u.id);
+    expect(row?.['approvedByName']).toBeNull(); // çapraz-tenant isim SIZMAZ
   });
 });
 
