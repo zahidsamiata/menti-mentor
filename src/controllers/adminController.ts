@@ -695,7 +695,13 @@ export async function rejectUser(req: RequestWithTenant, res: Response) {
   });
 
   void logger.info('SYSTEM', 'Admin: Kullanıcı reddedildi', { userId, tenantId: req.tenant.tenantId });
-  void sendUserApprovalNotification({ toEmail: user.email, userName: user.fullName, approved: false });
+  // Kibar, tekrar-başvuruyu davet eden e-posta (best-effort; gönderilemezse red yine kayıtlı).
+  void sendUserApprovalNotification({
+    toEmail: user.email,
+    userName: user.fullName,
+    approved: false,
+    rejectionReason: parsed.data.reason && parsed.data.reason.length > 0 ? parsed.data.reason : null,
+  });
 
   return res.json({ message: 'Kullanıcı reddedildi.', userId, approvalStatus: 'REJECTED' });
 }

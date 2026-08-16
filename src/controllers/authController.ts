@@ -243,11 +243,14 @@ export async function login(req: Request, res: Response) {
       isActive: true,
       discType: true,
       needsOrientation: true,
+      rejectionReason: true,
     },
   });
 
-  // Hesap bulunamadı veya pasif — zamanlama saldırısını önlemek için generic hata — zamanlamalı saldırıyı önlemek için generic hata
-  if (!user || !user.isActive) {
+  // Hesap bulunamadı veya pasif — generic hata (zamanlama/enumeration koruması).
+  // İSTİSNA: REDDEDİLEN kullanıcı (isActive=false) buradan GEÇER — gerekçesini görüp tekrar
+  // başvurabilmesi için. Red bilgisi yine de ŞİFRE DOĞRULAMASINDAN SONRA açılır (aşağıda).
+  if (!user || (!user.isActive && user.approvalStatus !== 'REJECTED')) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
   }
 
@@ -258,12 +261,8 @@ export async function login(req: Request, res: Response) {
     });
   }
 
-  if (user.approvalStatus === 'REJECTED') {
-    return res.status(403).json({
-      error: 'HESAP_REDDEDILDI',
-      message: 'Hesabınız yönetici tarafından reddedilmiştir. Daha fazla bilgi için kurum yöneticinizle iletişime geçin.',
-    });
-  }
+  // NOT: REJECTED durumu ARTIK BURADA (şifre öncesi) ele ALINMAZ — enumeration'ı önlemek için
+  // şifre doğrulamasından SONRAya taşındı (İş 3 P2). Böylece reddedilme bilgisi doğru şifre olmadan sızmaz.
 
   if (user.authProvider !== 'LOCAL' || !user.password) {
     return res.status(401).json({
@@ -275,6 +274,18 @@ export async function login(req: Request, res: Response) {
   const passwordMatch = await bcrypt.compare(password, user.password);
   if (!passwordMatch) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
+  }
+
+  // İş 3 P2: reddedilen kullanıcı — ŞİFRE DOĞRULANDIKTAN SONRA gerekçesini görür (enumeration-safe:
+  // yanlış şifrede yukarıda generic 401 döndü). Token VERİLMEZ (Yol 1); FE red ekranını bu yanıttan besler.
+  // Tekrar başvuru: POST /api/auth/reapply (aynı kimlik doğrulamasıyla).
+  if (user.approvalStatus === 'REJECTED') {
+    return res.status(403).json({
+      error: 'HESAP_REDDEDILDI',
+      message: 'Başvurunuzu tamamlamak için birkaç güncelleme gerekiyor. Aşağıdaki gerekçeyi inceleyip tekrar başvurabilirsiniz.',
+      rejectionReason: user.rejectionReason ?? null,
+      canReapply: true,
+    });
   }
 
   const tenant = await prisma.tenant.findUnique({
@@ -325,6 +336,57 @@ export async function login(req: Request, res: Response) {
           primaryColor: tenant.primaryColor,
         }
       : null,
+  });
+}
+
+/**
+ * POST /api/auth/reapply — İş 3 P3: reddedilen kullanıcı tekrar başvurur.
+ *
+ * Güvenlik:
+ *  - Kimlik doğrulama e-posta+ŞİFRE ile (enumeration-safe: yanlış şifre → generic 401).
+ *  - IDOR: yalnızca kimliği doğrulanan KENDİ hesabını etkiler (param yok, token yok).
+ *  - Yalnızca REJECTED → PENDING geçişine izin verir; başka durum → 409.
+ *  - Geçmiş KORUNUR: rejectionReason/rejectedBy/rejectedAt SİLİNMEZ (çok-yönetici: yeni bakan
+ *    yönetici en son red gerekçesini görebilmeli). Test/DISC/profil verisine DOKUNULMAZ.
+ */
+export async function reapply(req: Request, res: Response) {
+  const parsed = LoginSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+  const { email, password } = parsed.data;
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, password: true, authProvider: true, approvalStatus: true, fullName: true },
+  });
+
+  // Enumeration koruması: kullanıcı yok / OAuth / şifre yanlış → hepsi aynı generic 401.
+  if (!user || user.authProvider !== 'LOCAL' || !user.password) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
+  }
+  const passwordMatch = await bcrypt.compare(password, user.password);
+  if (!passwordMatch) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
+  }
+
+  // Yalnızca reddedilmiş başvuru tekrar gönderilebilir (şifre doğrulandı → durum açıklanabilir).
+  if (user.approvalStatus !== 'REJECTED') {
+    return res.status(409).json({
+      error: 'GECERSIZ_DURUM',
+      message: 'Bu işlem yalnızca reddedilmiş başvurular için geçerlidir.',
+    });
+  }
+
+  // REJECTED → PENDING. isActive tekrar true (normal bekleyen başvuru gibi). Red geçmişi KORUNUR.
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { approvalStatus: 'PENDING', isActive: true },
+  });
+
+  return res.json({
+    message: 'Başvurunuz yeniden alındı ve değerlendirme için yöneticinize iletildi.',
+    approvalStatus: 'PENDING',
   });
 }
 

@@ -117,11 +117,20 @@ export async function sendUserApprovalNotification(args: {
   toEmail: string;
   userName: string;
   approved: boolean;
+  // Red/düzeltme gerekçesi (varsa) — kibar, destekleyici tonla eklenir.
+  rejectionReason?: string | null;
 }): Promise<void> {
-  const subject = args.approved ? 'Kaydınız Onaylandı' : 'Kaydınız Hakkında Bilgilendirme';
+  const subject = args.approved ? 'Kaydınız Onaylandı' : 'Başvurunuz Hakkında';
+  const reasonBlock =
+    !args.approved && args.rejectionReason
+      ? `<p><strong>Güncellenmesi gerekenler:</strong> ${args.rejectionReason}</p>`
+      : '';
   const body = args.approved
     ? `<p>Merhaba ${args.userName},</p><p>Kaydınız onaylandı. Artık mentorluk eşleşme havuzuna dahilsiniz. Sisteme giriş yapabilirsiniz.</p>`
-    : `<p>Merhaba ${args.userName},</p><p>Kaydınız incelendi ancak şu an topluluk kriterlerimizle tam örtüşmediğini gördük. Gösterdiğiniz ilgi için teşekkür ederiz.</p>`;
+    : `<p>Merhaba ${args.userName},</p>` +
+      `<p>Başvurunuzu tamamlamak için birkaç güncelleme gerekiyor. Sisteme giriş yapıp bilgilerinizi gözden geçirerek <strong>tekrar başvurabilirsiniz</strong> — daha önce doldurduğunuz test ve profil bilgileriniz korunur, baştan yapmanız gerekmez.</p>` +
+      reasonBlock +
+      `<p>İlginiz için teşekkür ederiz.</p>`;
   await send(args.toEmail, subject, body);
 }
 
