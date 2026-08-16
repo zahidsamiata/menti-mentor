@@ -282,7 +282,7 @@ export async function login(req: Request, res: Response) {
   if (user.approvalStatus === 'REJECTED') {
     return res.status(403).json({
       error: 'HESAP_REDDEDILDI',
-      message: 'Başvurunuzu tamamlamak için birkaç güncelleme gerekiyor. Aşağıdaki gerekçeyi inceleyip tekrar başvurabilirsiniz.',
+      message: 'Başvurunuz şu an onaylanmadı. Aşağıdaki notu inceleyip dilerseniz tekrar başvurabilirsiniz.',
       rejectionReason: user.rejectionReason ?? null,
       canReapply: true,
     });

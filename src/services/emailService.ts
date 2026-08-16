@@ -128,7 +128,7 @@ export async function sendUserApprovalNotification(args: {
   const body = args.approved
     ? `<p>Merhaba ${args.userName},</p><p>Kaydınız onaylandı. Artık mentorluk eşleşme havuzuna dahilsiniz. Sisteme giriş yapabilirsiniz.</p>`
     : `<p>Merhaba ${args.userName},</p>` +
-      `<p>Başvurunuzu tamamlamak için birkaç güncelleme gerekiyor. Sisteme giriş yapıp bilgilerinizi gözden geçirerek <strong>tekrar başvurabilirsiniz</strong> — daha önce doldurduğunuz test ve profil bilgileriniz korunur, baştan yapmanız gerekmez.</p>` +
+      `<p>Başvurunuz şu an onaylanmadı. Aşağıdaki notu dikkate alarak <strong>dilerseniz tekrar başvurabilirsiniz</strong> — daha önce doldurduğunuz test ve profil bilgileriniz korunur, baştan yapmanız gerekmez.</p>` +
       reasonBlock +
       `<p>İlginiz için teşekkür ederiz.</p>`;
   await send(args.toEmail, subject, body);
