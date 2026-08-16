@@ -256,6 +256,8 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
         rematchPriority: true, rematchCount: true,
         needsOrientation: true, approvalStatus: true, createdAt: true,
         avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
+        // İş 2/3: onay/red denetim izi + gerekçe (yalnız admin listesi; audit — meşru yönetim verisi).
+        approvedBy: true, approvedAt: true, rejectedBy: true, rejectedAt: true, rejectionReason: true,
         // Sertifika rozeti (KARAR 4, kişi-geneli — PO kararı). Sertifika kişi bazında geneldir:
         // kişi HERHANGİ bir kurumda sertifikalıysa sertifikalı sayılır (kurum farkı gözetilmez).
         // isCertified yalnız TenantMembership'te tutulur (UserProfile.isCertified bakımsız), bu
@@ -556,7 +558,15 @@ export async function approveUser(req: RequestWithTenant, res: Response) {
 
   await prisma.user.update({
     where: { id: userId },
-    data: { approvalStatus: 'APPROVED' },
+    // İş 2: onaylayan yönetici + zaman kaydı. Onay = temiz sayfa → eski red izi/gerekçesi temizlenir.
+    data: {
+      approvalStatus: 'APPROVED',
+      approvedBy: req.auth?.userId ?? null,
+      approvedAt: new Date(),
+      rejectedBy: null,
+      rejectedAt: null,
+      rejectionReason: null,
+    },
   });
 
   void logger.info('SYSTEM', 'Admin: Kullanıcı onaylandı', { userId, tenantId: req.tenant.tenantId });
@@ -595,6 +605,13 @@ export async function requestCorrection(req: RequestWithTenant, res: Response) {
     return res.status(409).json({ error: 'ZATEN_ONAYLANDI', message: 'Onaylanmış kullanıcıya düzeltme isteği gönderilemez.' });
   }
 
+  // İş 3 P1: gerekçe/düzeltme notunu kalıcı kaydet (önceden yalnız e-postayla gidiyordu).
+  // Kullanıcı PENDING kalır; rejectionReason "yöneticinin istediği düzeltme" olarak saklanır.
+  await prisma.user.update({
+    where: { id: userId },
+    data: { rejectionReason: parsed.data.feedbackNote },
+  });
+
   void logger.info('SYSTEM', 'Admin: Düzeltme talebi gönderildi', {
     userId,
     tenantId: req.tenant.tenantId,
@@ -616,12 +633,23 @@ export async function requestCorrection(req: RequestWithTenant, res: Response) {
   });
 }
 
+// Red gerekçesi opsiyonel; kullanıcıya gösterilebilir → serbest metin, ≤500 (PII yazılmamalı).
+const RejectSchema = z.object({
+  reason: z.string().trim().max(500, 'Gerekçe en fazla 500 karakter olabilir').optional(),
+});
+
 /**
  * POST /api/admin/users/:id/reject
  * PENDING kullanıcıyı reddeder; eşleşme havuzuna dahil edilmez.
+ * İş 3 P1: opsiyonel `reason` gerekçesi kaydedilir.
  */
 export async function rejectUser(req: RequestWithTenant, res: Response) {
   const userId = req.params['id'] as string;
+
+  const parsed = RejectSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },
@@ -636,7 +664,14 @@ export async function rejectUser(req: RequestWithTenant, res: Response) {
 
   await prisma.user.update({
     where: { id: userId },
-    data: { approvalStatus: 'REJECTED', isActive: false },
+    // İş 2: reddeden yönetici + zaman. İş 3 P1: red gerekçesi (varsa).
+    data: {
+      approvalStatus: 'REJECTED',
+      isActive: false,
+      rejectedBy: req.auth?.userId ?? null,
+      rejectedAt: new Date(),
+      rejectionReason: parsed.data.reason && parsed.data.reason.length > 0 ? parsed.data.reason : null,
+    },
   });
 
   void logger.info('SYSTEM', 'Admin: Kullanıcı reddedildi', { userId, tenantId: req.tenant.tenantId });
