@@ -638,12 +638,13 @@ export async function requestCorrection(req: RequestWithTenant, res: Response) {
     noteLength: parsed.data.feedbackNote.length,
   });
 
-  // Düzeltme notlu özel e-posta gönder; kullanıcı PENDING kalır
+  // Düzeltme notlu özel e-posta gönder; kullanıcı PENDING kalır.
+  // rejectionReason = istenen düzeltme notu → emailService "Güncellenmesi gerekenler" bloğunda gösterir.
   void sendUserApprovalNotification({
     toEmail: user.email,
     userName: user.fullName,
     approved: false,
-    // emailService bu alanı kullanarak düzeltme notu içerikli özel şablon gösterir
+    rejectionReason: parsed.data.feedbackNote,
   });
 
   return res.json({
