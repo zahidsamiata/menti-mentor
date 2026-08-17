@@ -247,28 +247,17 @@ export async function login(req: Request, res: Response) {
     },
   });
 
-  // Hesap bulunamadı veya pasif — generic hata (zamanlama/enumeration koruması).
-  // İSTİSNA: REDDEDİLEN kullanıcı (isActive=false) buradan GEÇER — gerekçesini görüp tekrar
-  // başvurabilmesi için. Red bilgisi yine de ŞİFRE DOĞRULAMASINDAN SONRA açılır (aşağıda).
-  if (!user || (!user.isActive && user.approvalStatus !== 'REJECTED')) {
+  // ─── #37 Enumeration sertleştirme: ÖNCE kimlik doğrula, SONRA duruma göre yönlendir ───────
+  // Güvenlik ilkesi: kimlik doğrulaması (doğru şifre) BAŞARISIZ olduğunda kullanıcıya HİÇBİR
+  // durum bilgisi sızmaz — herkese AYNI generic 401. Saldırgan şifre denemeden bir e-postanın
+  // DURUMUNU (kayıtlı mı / onay bekliyor / reddedildi / pasif / sosyal hesap) çıkaramaz.
+  //
+  // Doğrulanamayan hesap (yok / OAuth / şifresiz) → yanlış-şifreyle AYNI generic 401 döner: aynı
+  // error kodu + aynı mesaj, ayırt edilemez. Sosyal-hesap ipucu da artık sızmaz; meşru OAuth
+  // kullanıcı sosyal giriş düğmesini kullanır. NOT: zamanlama (timing) yan-kanalı kapsam dışı
+  // (üretim-öncesi, düşük risk — mesaj/response içeriği sızıntısına odaklanıldı).
+  if (!user || user.authProvider !== 'LOCAL' || !user.password) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
-  }
-
-  if (user.approvalStatus === 'PENDING') {
-    return res.status(403).json({
-      error: 'HESAP_ONAY_BEKLENIYOR',
-      message: 'Hesabınız henüz yönetici tarafından onaylanmamıştır. Onay sonrası giriş yapabilirsiniz.',
-    });
-  }
-
-  // NOT: REJECTED durumu ARTIK BURADA (şifre öncesi) ele ALINMAZ — enumeration'ı önlemek için
-  // şifre doğrulamasından SONRAya taşındı (İş 3 P2). Böylece reddedilme bilgisi doğru şifre olmadan sızmaz.
-
-  if (user.authProvider !== 'LOCAL' || !user.password) {
-    return res.status(401).json({
-      error: 'OAUTH_HESAP',
-      message: 'Bu hesap sosyal giriş ile oluşturulmuştur. Lütfen ilgili sağlayıcıyı kullanın.',
-    });
   }
 
   const passwordMatch = await bcrypt.compare(password, user.password);
@@ -276,15 +265,33 @@ export async function login(req: Request, res: Response) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
   }
 
-  // İş 3 P2: reddedilen kullanıcı — ŞİFRE DOĞRULANDIKTAN SONRA gerekçesini görür (enumeration-safe:
-  // yanlış şifrede yukarıda generic 401 döndü). Token VERİLMEZ (Yol 1); FE red ekranını bu yanıttan besler.
-  // Tekrar başvuru: POST /api/auth/reapply (aynı kimlik doğrulamasıyla).
+  // ─── Kimlik doğrulandı → durum bazlı yönlendirme (yalnız doğru şifreden SONRA — sızmaz) ────
+  // Sıra önemli: REJECTED hesapların isActive=false olabilir → pasif kontrolünden ÖNCE gelmeli.
+
+  // İş 3 P2: reddedilen kullanıcı gerekçesini görür + tekrar başvurabilir (POST /api/auth/reapply).
+  // Token VERİLMEZ (Yol 1); FE red ekranını bu yanıttan besler.
   if (user.approvalStatus === 'REJECTED') {
     return res.status(403).json({
       error: 'HESAP_REDDEDILDI',
       message: 'Başvurunuz şu an onaylanmadı. Aşağıdaki notu inceleyip dilerseniz tekrar başvurabilirsiniz.',
       rejectionReason: user.rejectionReason ?? null,
       canReapply: true,
+    });
+  }
+
+  // Pasif / sistemden çıkarılmış (reddedilmiş değil) hesap — durum yalnız şifre sonrası bildirilir.
+  if (!user.isActive) {
+    return res.status(403).json({
+      error: 'HESAP_PASIF',
+      message: 'Hesabınız aktif değil. Lütfen kurum yöneticinizle iletişime geçin.',
+    });
+  }
+
+  // Onay bekleyen hesap — bekleme ekranına yönlendirilir (FE: /pending-approval).
+  if (user.approvalStatus === 'PENDING') {
+    return res.status(403).json({
+      error: 'HESAP_ONAY_BEKLENIYOR',
+      message: 'Hesabınız henüz yönetici tarafından onaylanmamıştır. Onay sonrası giriş yapabilirsiniz.',
     });
   }
 
