@@ -18,7 +18,7 @@ type Choice = {
 };
 
 type StageSeed = {
-  // Deterministik id: idempotent upsert için (seed-questions.ts deseni).
+  // Deterministik id: idempotent upsert için (aynı id ile tekrar seed => güncelle, kopya yaratma).
   id: string;
   audience: LearningAudience;
   order: number;
