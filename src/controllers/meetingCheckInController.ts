@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { applyFeedbackSignal } from '../services/rewardPenalty.js';
+import { computePairSignalFromCheckIns, PAIR_SIGNAL_CONFIG } from '../services/pairSignal.service.js';
 import { logger } from '../services/logger.js';
 
 // ─── Katman 1: Zorunlu kısa değerlendirme ────────────────────────────────────
@@ -114,7 +115,7 @@ export async function getPairEfficiencySignal(req: RequestWithTenant, res: Respo
     return res.status(400).json({ error: 'mentorId ve mentiId gerekli.' });
   }
 
-  // Bu çiftin son 5 görüşmesindeki check-in'leri çek
+  // Bu çiftin son N görüşmesindeki check-in'leri çek (eşik: pairSignal.service).
   const recentMeetings = await prisma.meeting.findMany({
     where: {
       tenantId:    req.tenant.tenantId,
@@ -123,7 +124,7 @@ export async function getPairEfficiencySignal(req: RequestWithTenant, res: Respo
       status:      'COMPLETED',
     },
     orderBy: { startsAt: 'desc' },
-    take: 5,
+    take: PAIR_SIGNAL_CONFIG.recentMeetingsWindow,
     select: { id: true, startsAt: true },
   });
 
@@ -134,36 +135,14 @@ export async function getPairEfficiencySignal(req: RequestWithTenant, res: Respo
   const meetingIds = recentMeetings.map((m) => m.id);
   const checkIns = await prisma.meetingCheckIn.findMany({
     where: { meetingId: { in: meetingIds } },
+    select: { overallRating: true, continueIntent: true },
   });
 
-  const avgRating = checkIns.length > 0
-    ? checkIns.reduce((s: number, c) => s + c.overallRating, 0) / checkIns.length
-    : null;
-
-  const exitIntents = checkIns.filter((c) => c.continueIntent === 'HAYIR').length;
-
-  let signal: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
-  const reasons: string[] = [];
-
-  if (avgRating !== null && avgRating < 2.5) {
-    signal = 'RED';
-    reasons.push(`Ortalama puan düşük: ${avgRating.toFixed(1)}/5`);
-  } else if (avgRating !== null && avgRating < 3.5) {
-    signal = 'YELLOW';
-    reasons.push(`Ortalama puan orta: ${avgRating.toFixed(1)}/5`);
-  }
-
-  if (exitIntents >= 2) {
-    signal = 'RED';
-    reasons.push(`${exitIntents} kez "devam etmek istemiyorum" yanıtı`);
-  }
+  // Sinyal hesabı paylaşılan saf servise devredildi (eşik mantığı tek yerde — DRY).
+  const result = computePairSignalFromCheckIns(checkIns);
 
   return res.json({
-    signal,
-    reasons,
-    avgRating,
-    exitIntents,
+    ...result,
     meetingCount: recentMeetings.length,
-    checkInCount: checkIns.length,
   });
 }

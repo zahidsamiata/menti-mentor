@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { sendFeedbackReminderEmail } from '../services/emailService.js';
+import { persistMentorQualityMultiplier } from '../services/scoring.js';
 import { logger } from '../services/logger.js';
 
 const FeedbackSchema = z.object({
@@ -70,6 +71,22 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
       data: { hasFeedback: true },
     }),
   ]);
+
+  // Kalite katsayısını KALICI yaz (event-driven): menti→mentör puanları (guidance/
+  // resourceSharing/trust) geldiyse mentörün kalıcı kalite puanını yeniden hesaplayıp yaz.
+  // Non-fatal (best-effort): başarısız olsa da feedback kaydı ve response bozulmaz.
+  const hasMentorRating =
+    data.guidanceScore !== undefined ||
+    data.resourceSharingScore !== undefined ||
+    data.trustScore !== undefined;
+  if (hasMentorRating) {
+    void persistMentorQualityMultiplier(meeting.mentorUserId, req.tenant.tenantId).catch((err) =>
+      void logger.error('SYSTEM', 'Kalite katsayısı persist hatası', {
+        mentorId: meeting.mentorUserId,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
 
   // Oryantasyon kilidi: hazırlık puanı <= 2 ise kilitle
   if (data.preparednessScore !== undefined && data.preparednessScore <= 2) {

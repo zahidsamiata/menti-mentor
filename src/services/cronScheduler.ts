@@ -11,8 +11,10 @@
  */
 
 import cron from 'node-cron';
+import type { Checkpoint } from '@prisma/client';
 import { prisma } from '../db.js';
 import { tuneScoringWeights } from './algorithmTuner.js';
+import { findMatchesDueForCheckpoint } from './feedback.service.js';
 import { purgeExpiredData } from './gdprService.js';
 import { sendDraftTenantReminderEmail, sendFeedbackReminderEmail } from './emailService.js';
 import { notifyAdminsMentorCertLapsed } from './notificationService.js';
@@ -332,6 +334,51 @@ export async function runMentorCertAdminNotifyCron(): Promise<{ adminNotified: n
   }
 }
 
+// ─── Görev: Periyodik Değerlendirme Checkpoint Hatırlatması (#7 Aşama 1) ──────
+//
+// DAY_3/14/30 değerlendirme noktası dolan (ilgili checkpoint feedback'i henüz gelmemiş)
+// ACTIVE eşleşmeleri bulur → ölü `findMatchesDueForCheckpoint`'i cron'a bağlar.
+//
+// ⚠️ AŞAMA 1 = LOG-ONLY (yalnız görünürlük): gerçek mail/bildirim GÖNDERMEZ. Gerekçe:
+//   1) Canlıya istenmeyen mail geri-ALINAMAZ → PO onayı gerekir (mail mı, uygulama-içi mi?).
+//   2) Sağlam "tekrar-bildirme" guard'ı (ör. checkpointNotifiedAt) ŞEMA alanı ister = migration
+//      = Aşama 2. Mevcut dedup yalnızca 1-günlük pencere + feedbacks:{none:{checkpoint}} ile
+//      DOĞALDIR; günlük cron'da bir eşleşme her checkpoint için ~bir kez tetiklenir, ancak cron
+//      restart/iki-kez-çalışma senaryosunda garanti DEĞİLDİR.
+// AŞAMA 2'de: guard alanı eklenir + gerçek bildirim (mevcut sendFeedbackReminderEmail /
+// notificationService deseni) aktifleştirilir.
+export async function runCheckpointFeedbackReminderCron(): Promise<{
+  due: Record<Checkpoint, number>;
+  total: number;
+}> {
+  void logger.info('SYSTEM', 'Cron: Periyodik değerlendirme checkpoint kontrolü başladı');
+  const checkpoints: Checkpoint[] = ['DAY_3', 'DAY_14', 'DAY_30'];
+  const due: Record<Checkpoint, number> = { DAY_3: 0, DAY_14: 0, DAY_30: 0 };
+  try {
+    for (const cp of checkpoints) {
+      const matches = await findMatchesDueForCheckpoint(cp);
+      due[cp] = matches.length;
+      if (matches.length > 0) {
+        // LOG-ONLY: gerçek bildirim Aşama 2. Yönetici/geliştirici log'dan vadesi dolanları görür.
+        void logger.info('SYSTEM', `Checkpoint ${cp}: değerlendirme vadesi dolan eşleşme`, {
+          checkpoint: cp,
+          dueCount: matches.length,
+        });
+      }
+    }
+    const total = due.DAY_3 + due.DAY_14 + due.DAY_30;
+    void logger.info('SYSTEM', 'Cron: Periyodik değerlendirme checkpoint kontrolü tamamlandı', {
+      total, ...due,
+    });
+    return { due, total };
+  } catch (err) {
+    void logger.error('SYSTEM', 'Cron: Periyodik değerlendirme checkpoint kontrolü başarısız', {
+      error: String(err),
+    });
+    return { due, total: 0 };
+  }
+}
+
 // ─── Scheduler başlatma ───────────────────────────────────────────────────────
 
 export function startCronScheduler(): void {
@@ -358,6 +405,11 @@ export function startCronScheduler(): void {
   // Her gün 04:00 UTC — Taslak tenant temizliği (Faz 3)
   cron.schedule('0 4 * * *', () => {
     void runDraftTenantCleanup();
+  }, { timezone: 'UTC' });
+
+  // Her gün 08:00 UTC — Periyodik değerlendirme checkpoint kontrolü (#7 Aşama 1, LOG-ONLY)
+  cron.schedule('0 8 * * *', () => {
+    void runCheckpointFeedbackReminderCron();
   }, { timezone: 'UTC' });
 
   // Her gün 09:00 UTC — Feedback hatırlatıcısı (feedbackPrompted=false koruması)

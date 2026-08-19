@@ -140,3 +140,30 @@ export async function computeMentorQualityMultiplier(mentorId: string): Promise<
   return applyQualityMultiplier(avgScore, feedbacks.length);
 }
 
+// Hesaplanan kalite katsayısını mentörün TenantMembership kaydına KALICI yazar.
+// Event-driven: yeni menti→mentör feedback'i geldiğinde çağrılır (feedbackController).
+//
+// SERTİFİKA İLE BİRLİKTE YAŞAMA: certification.service STARTING_MULTIPLIER (1.0) yazar =
+// "sertifika alınınca nötr başlangıç". Bu fonksiyon feedback biriktikçe üstüne gerçek
+// kaliteyi (0.8–1.2) yazar. İki yazım FARKLI yaşam-döngüsü anındadır (sertifika = baştan
+// sıfırlama; feedback = süregelen güncelleme) → çakışmazlar.
+//
+// SIRALAMAYA ETKİ (kanıtlı): persist edilen alanı OKUYAN tek sıralama yolu
+// scoring.service.ts → /api/scoring/rank-mentors olup FE'de ÇAĞRILMIYOR. Canlı eşleştirme
+// (matching.ts) bu alanı OKUMAZ; katsayıyı her istekte CANLI hesaplar. Dolayısıyla persist,
+// canlı eşleştirme UI'ının sıralamasını DEĞİŞTİRMEZ (yalnız yöneticiye kalıcı puan görünürlüğü).
+//
+// updateMany (update değil): mentörün bu tenant'ta üyeliği yoksa no-op — hata fırlatmaz.
+export async function persistMentorQualityMultiplier(
+  mentorId: string,
+  tenantId: string,
+): Promise<number> {
+  const { prisma } = await import('../db.js');
+  const multiplier = await computeMentorQualityMultiplier(mentorId);
+  await prisma.tenantMembership.updateMany({
+    where: { userId: mentorId, tenantId },
+    data:  { qualityMultiplier: multiplier },
+  });
+  return multiplier;
+}
+
