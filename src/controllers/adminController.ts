@@ -22,6 +22,7 @@ import {
   rejectPendingAdjustment,
 } from '../services/algorithmTuner.js';
 import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
+import { discLettersFromVector } from '../services/discLetters.js';
 import { wasRecentlyNudged, sendNudge, NUDGE_COOLDOWN_HOURS } from '../services/nudgeService.js';
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────
@@ -253,6 +254,9 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
       select: {
         id: true, role: true, email: true, fullName: true, isActive: true,
         sectorTags: true, discType: true, skills: true,
+        // #12: DISC çoklu-harf gösterimi (KARAR 1) — vektör yalnız harfi TÜRETMEK için çekilir,
+        // ham vektör response'a KONMAZ (aşağıda base map'te çıkarılır). Admin havuz kartı harfi gösterir.
+        discVector: true,
         rematchPriority: true, rematchCount: true,
         needsOrientation: true, approvalStatus: true, createdAt: true,
         avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
@@ -276,9 +280,12 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   ]);
 
   // Kişi-geneli sertifika: herhangi bir kurumda sertifikalıysa true (üyelik dizisi response'a sızmaz).
-  const base = rows.map(({ memberships, ...rest }) => ({
+  // #12: discVector'dan DISC harf dizgesi türetilir; ham vektör response'tan ÇIKARILIR (destructure ile
+  // dışarıda bırakılır → yalnız türetilmiş discLetters gider, KARAR 5/PII ile uyumlu).
+  const base = rows.map(({ memberships, discVector, ...rest }) => ({
     ...rest,
     isCertified: memberships.length > 0,
+    discLetters: discLettersFromVector(discVector),
   }));
 
   // İş 2: onaylayan/reddeden yönetici ADI. Tek sorgu (N+1 yok), TENANT-SCOPED (çapraz-tenant

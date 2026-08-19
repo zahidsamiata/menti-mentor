@@ -257,6 +257,27 @@ describe('Admin: User List', () => {
       expect(u['temperamentJson']).toBeUndefined();
     });
   });
+
+  it('#12: admin listesi türetilmiş discLetters döner; ham discVector sızmaz', async () => {
+    // Bilinen vektör: D=0.40 baskın, I=0.28 orta çizgiyi geçer ama %75 eşiğinin (0.30) altında
+    // → beklenen "Di" (baskın D + destekleyici i). Harf backend'de vektörden türetilir.
+    const u = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'APPROVED' });
+    await testPrisma.user.update({
+      where: { id: u.id },
+      data: { discVector: { D: 0.4, I: 0.28, S: 0.2, C: 0.12, confidence: 1 } },
+    });
+
+    const res = await http
+      .get('/api/admin/users?role=MENTI')
+      .set(tenantHeaders(tenant.id, adminToken))
+      .expect(200);
+
+    const body = res.body as { items: Array<Record<string, unknown>> };
+    const item = body.items.find((x) => x['id'] === u.id);
+    expect(item).toBeDefined();
+    expect(item!['discLetters']).toBe('Di');
+    expect(item!['discVector']).toBeUndefined(); // ham vektör response'ta YOK (KARAR 5/PII)
+  });
 });
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauth
 import { ensureUserProfile } from '../services/userProfile.service.js';
 import { ensureMembershipSafe } from '../services/membership.js';
 import { recordUserActivity } from '../services/activityService.js';
+import { discLettersFromVector } from '../services/discLetters.js';
 import { config } from '../config.js';
 
 
@@ -242,6 +243,7 @@ export async function login(req: Request, res: Response) {
       approvalStatus: true,
       isActive: true,
       discType: true,
+      discVector: true, // #12: DISC çoklu-harf türetimi için (ham vektör response'a KONMAZ — aşağıda yalnız discLetters).
       needsOrientation: true,
       rejectionReason: true,
     },
@@ -325,6 +327,7 @@ export async function login(req: Request, res: Response) {
       email: user.email,
       approvalStatus: user.approvalStatus,
       discType: user.discType,
+      discLetters: discLettersFromVector(user.discVector), // #12: türetilmiş 1–3 harf (ör. "DI")
       needsOrientation: user.needsOrientation,
     },
     tenant: tenant
@@ -693,5 +696,6 @@ export async function getMe(req: RequestWithTenant, res: Response) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
   }
 
-  return res.json(user);
+  // #12: kendi profili — DISC çoklu-harf türetilir (vektör kendi verisi, zaten dönüyor).
+  return res.json({ ...user, discLetters: discLettersFromVector(user.discVector) });
 }
