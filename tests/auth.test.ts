@@ -121,13 +121,26 @@ describe('Auth: Login', () => {
     expect(res.body.error).toBe('KIMLIK_DOGRULANMADI');
   });
 
-  it('pasif kullanıcı ile 401 döner', async () => {
+  it('pasif kullanıcı DOĞRU şifreyle → 403 HESAP_PASIF (durum yalnız şifre sonrası açılır)', async () => {
     const user = await createUser({ tenantId: tenant.id });
     await testPrisma.user.update({ where: { id: user.id }, data: { isActive: false } });
-    await http
+    const res = await http
       .post('/api/auth/login')
       .send({ email: user.email, password: user.rawPassword })
+      .expect(403);
+    expect(res.body.error).toBe('HESAP_PASIF');
+    expect(res.body).not.toHaveProperty('accessToken');
+  });
+
+  it('ENUMERATION: pasif kullanıcı YANLIŞ şifreyle → generic 401 (pasiflik sızmaz)', async () => {
+    const user = await createUser({ tenantId: tenant.id });
+    await testPrisma.user.update({ where: { id: user.id }, data: { isActive: false } });
+    const res = await http
+      .post('/api/auth/login')
+      .send({ email: user.email, password: 'YanlisSifre99!' })
       .expect(401);
+    expect(res.body.error).toBe('KIMLIK_DOGRULANMADI');
+    expect(res.body.error).not.toBe('HESAP_PASIF');
   });
 });
 
@@ -263,6 +276,62 @@ describe('Auth: Onay Durumu Güvenlik Koruması', () => {
     expect(res.body.accessToken.length).toBeGreaterThan(0);
     expect(res.body).not.toHaveProperty('refreshToken');
     expect(res.body.user.approvalStatus).toBe('APPROVED');
+  });
+
+  // ─── #37 Enumeration sertleştirme: durum bilgisi şifre denemeden SIZMAZ ───────────────────
+  it('ENUMERATION: PENDING kullanıcı YANLIŞ şifreyle → generic 401 (onay-bekliyor sızmaz)', async () => {
+    const pendingUser = await createUser({
+      tenantId: tenant.id,
+      role: 'MENTI',
+      approvalStatus: 'PENDING',
+    });
+    const res = await http
+      .post('/api/auth/login')
+      .send({ email: pendingUser.email, password: 'YanlisSifre99!' })
+      .expect(401);
+    // Onay-bekleme durumu doğru şifre olmadan AÇILMAZ.
+    expect(res.body.error).toBe('KIMLIK_DOGRULANMADI');
+    expect(res.body.error).not.toBe('HESAP_ONAY_BEKLENIYOR');
+    expect(res.body.message).toBe('E-posta veya şifre hatalı.');
+  });
+
+  it('ENUMERATION: OAuth (sosyal) hesap herhangi bir şifreyle → generic 401 (sosyal-hesap sızmaz)', async () => {
+    const oauthUser = await createUser({
+      tenantId: tenant.id,
+      role: 'MENTI',
+      approvalStatus: 'APPROVED',
+    });
+    // Sosyal-giriş hesabına dönüştür: LOCAL değil + şifre yok.
+    await testPrisma.user.update({
+      where: { id: oauthUser.id },
+      data: { authProvider: 'GOOGLE', password: null },
+    });
+    const res = await http
+      .post('/api/auth/login')
+      .send({ email: oauthUser.email, password: 'HerhangiBirSifre1!' })
+      .expect(401);
+    // "Bu hesap sosyal giriş ile oluşturulmuştur" ipucu ARTIK SIZMAZ — var-olmayan e-posta ile aynı yanıt.
+    expect(res.body.error).toBe('KIMLIK_DOGRULANMADI');
+    expect(res.body.error).not.toBe('OAUTH_HESAP');
+    expect(res.body.message).toBe('E-posta veya şifre hatalı.');
+  });
+
+  it('ENUMERATION: var-olmayan / PENDING(yanlış şifre) / OAuth → HEPSİ aynı yanıt (ayırt edilemez)', async () => {
+    const pendingUser = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'PENDING' });
+    const oauthUser = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'APPROVED' });
+    await testPrisma.user.update({ where: { id: oauthUser.id }, data: { authProvider: 'GOOGLE', password: null } });
+
+    const send = (email: string, password: string) =>
+      http.post('/api/auth/login').send({ email, password });
+
+    const rNone    = await send('yok@test.local', 'Sifre1234!').expect(401);
+    const rPending = await send(pendingUser.email, 'YanlisSifre!').expect(401);
+    const rOauth   = await send(oauthUser.email, 'YanlisSifre!').expect(401);
+
+    // Üç senaryo da AYNI error kodu + AYNI mesaj → e-posta durumu/varlığı ayırt edilemez.
+    expect(rNone.body.error).toBe('KIMLIK_DOGRULANMADI');
+    expect(rPending.body).toEqual(rNone.body);
+    expect(rOauth.body).toEqual(rNone.body);
   });
 });
 
