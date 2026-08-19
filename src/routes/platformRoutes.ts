@@ -11,6 +11,7 @@ import {
   listAllTenants,
   approveTenant,
   rejectTenant,
+  requestTenantCorrection,
   freezeTenant,
   activateTenant,
   listSuspicionReports,
@@ -48,6 +49,7 @@ router.get('/tenants/pending', listPendingTenants);
 router.get('/tenants', listAllTenants);
 router.post('/tenants/:id/approve', approveTenant);
 router.post('/tenants/:id/reject', rejectTenant);
+router.post('/tenants/:id/request-correction', requestTenantCorrection); // #37: düzeltme iste
 router.post('/tenants/:id/freeze', freezeTenant);
 router.post('/tenants/:id/activate', activateTenant);
 

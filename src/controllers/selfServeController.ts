@@ -422,6 +422,62 @@ export async function updateOnboarding(req: Request, res: Response) {
   return res.json({ message: 'Onboarding adımı güncellendi.', tenant: updated });
 }
 
+// ─── POST /api/tenants/self-serve/resubmit ───────────────────────────────────
+// #37: Platform admin "düzeltme iste" dedikten sonra kurum yöneticisi bilgilerini revize edip
+// başvurusunu TEKRAR gönderir. Durum CORRECTION_REQUESTED → PENDING_REVIEW. Yalnız kurumun kendi
+// ADMIN'i (extractAdminPayload → payload.tenantId, IDOR-safe). correctionNote SİLİNMEZ (geçmiş korunur).
+const ResubmitSchema = z.object({
+  institutionRole:  z.string().trim().max(200).optional(),
+  // Güncellenmiş başvuru kanıtı (görev/ispat). En az 1, en fazla 1000 karakter.
+  verificationNote: z.string().trim().min(1, 'Başvuru bilgisi boş olamaz').max(1000),
+});
+
+export async function resubmitTenantApplication(req: Request, res: Response) {
+  const payload = extractAdminPayload(req, res);
+  if (!payload) return;
+
+  const parsed = ResubmitSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: payload.tenantId },
+    select: { id: true, verificationStatus: true },
+  });
+  if (!tenant) {
+    return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
+  }
+
+  // Yalnız düzeltme istenen kurum tekrar gönderebilir (durum geçişi net kalsın).
+  if (tenant.verificationStatus !== 'CORRECTION_REQUESTED') {
+    return res.status(409).json({
+      error:   'DUZELTME_BEKLENMIYOR',
+      message: 'Kurumunuz için bekleyen bir düzeltme talebi bulunmuyor.',
+    });
+  }
+
+  const { institutionRole, verificationNote } = parsed.data;
+  // Kanıtı kayıt akışıyla AYNI biçimde sakla (JSON: görev + ispat).
+  const combinedNote = JSON.stringify({ institutionRole, proof: verificationNote });
+
+  await prisma.tenant.update({
+    where: { id: tenant.id },
+    data: {
+      verificationNote:   combinedNote,     // güncel kanıt
+      verificationStatus: 'PENDING_REVIEW', // tekrar incelemeye
+      // correctionNote'a DOKUNULMAZ → düzeltme geçmişi korunur (kişi tarafı red-geçmişi deseni gibi).
+    },
+  });
+
+  invalidateTenant(tenant.id);
+
+  return res.json({
+    message: 'Başvurunuz güncellendi ve tekrar incelemeye gönderildi.',
+    verificationStatus: 'PENDING_REVIEW',
+  });
+}
+
 // ─── GET /api/tenants/:slug/preview ──────────────────────────────────────────
 
 export async function getTenantPreview(req: Request, res: Response) {
