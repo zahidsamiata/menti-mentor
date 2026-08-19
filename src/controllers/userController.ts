@@ -6,6 +6,7 @@ import { sendAdminNewUserNotification } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { ensureMembershipSafe } from '../services/membership.js';
 import { canViewerSeeDiscType } from '../services/discVisibility.js';
+import { discLettersFromVector } from '../services/discLetters.js';
 
 // ─── Security: Tag Poisoning Prevention ───────────────────────────────────────
 // Etiketlerdeki XSS, injection ve kimlik gizleme girişimlerini önler.
@@ -196,6 +197,12 @@ export async function getUser(req: RequestWithTenant, res: Response) {
   if (!fullAccess && !canViewerSeeDiscType(req.auth?.role, user.role)) {
     const { discType: _hiddenDisc, discResultCard: _hiddenCard, ...rest } = user;
     return res.json(rest);
+  }
+
+  // #12: self/admin (fullAccess) → DISC çoklu-harf türetilir (USER_FULL_SELECT'te discVector var).
+  // Peer (mentör→menti) yönünde USER_PUBLIC_SELECT'te vektör yok → discLetters bu turda eklenmez (kapsam dışı).
+  if ('discVector' in user) {
+    return res.json({ ...user, discLetters: discLettersFromVector(user.discVector) });
   }
 
   return res.json(user);
