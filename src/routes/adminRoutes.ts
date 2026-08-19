@@ -15,6 +15,7 @@ import {
   requestCorrection,
   getCoachingSuggestions,
   getPendingTuning,
+  getAlgorithmWeightsHandler,
   approvePendingTuning,
   rejectPendingTuning,
   listAdmins,
@@ -68,6 +69,7 @@ router.post('/visibility-optin/:optInId/confirm', confirmDoubleOptIn as unknown 
 
 // ─── AlgorithmTuner Onay Kapısı ──────────────────────────────────────────────
 router.get( '/algorithm-tuner/pending', getPendingTuning     as unknown as RequestHandler);
+router.get( '/algorithm-tuner/weights', getAlgorithmWeightsHandler as unknown as RequestHandler);
 router.post('/algorithm-tuner/approve', approvePendingTuning as unknown as RequestHandler);
 router.post('/algorithm-tuner/reject',  rejectPendingTuning  as unknown as RequestHandler);
 

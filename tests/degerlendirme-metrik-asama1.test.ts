@@ -172,6 +172,30 @@ describe('FAZ 2: adminListUsers kalite puanı (KVKK)', () => {
     expect(row?.qualityMultiplier).toBe(0.9);
   });
 
+  it('#34: ADMIN havuz listesinde learningJourneyCompletedAt DÖNER (tamamlandıysa tarih)', async () => {
+    const admin = await createAdminUser(tenant.id);
+    const done = await createUser({ tenantId: tenant.id, role: 'MENTI' });
+    const notDone = await createUser({ tenantId: tenant.id, role: 'MENTI' });
+    const completedAt = new Date('2026-08-01T00:00:00.000Z');
+    await testPrisma.tenantMembership.update({
+      where: { userId_tenantId: { userId: done.id, tenantId: tenant.id } },
+      data:  { learningJourneyCompletedAt: completedAt },
+    });
+    const tokens = await loginAs(http, admin.email, admin.rawPassword);
+
+    const res = await http
+      .get('/api/admin/users?role=MENTI')
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .expect(200);
+
+    const items = (res.body as { items: { id: string; learningJourneyCompletedAt: string | null }[] }).items;
+    const doneRow = items.find((u) => u.id === done.id);
+    const notDoneRow = items.find((u) => u.id === notDone.id);
+    expect(doneRow?.learningJourneyCompletedAt).toBe(completedAt.toISOString());
+    // Tamamlamayan → null (FE "—" gösterir)
+    expect(notDoneRow?.learningJourneyCompletedAt).toBeNull();
+  });
+
   it('KVKK: MENTİ /api/admin/users çağıramaz (403) → puan sızmaz', async () => {
     const menti = await createUser({ tenantId: tenant.id, role: 'MENTI' });
     const tokens = await loginAs(http, menti.email, menti.rawPassword);
