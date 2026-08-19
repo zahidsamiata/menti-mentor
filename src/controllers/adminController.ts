@@ -21,6 +21,7 @@ import {
   getPendingAdjustment,
   applyPendingAdjustment,
   rejectPendingAdjustment,
+  getAlgorithmWeights,
 } from '../services/algorithmTuner.js';
 import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
 import { discLettersFromVector } from '../services/discLetters.js';
@@ -307,14 +308,21 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   // KARAR 5 ruhu — feedback vereni koru, kişi kendi puanını görmez). Kaynak: bu tenant'ın
   // TenantMembership kaydı (kurum-içi kalite; feedbackController event-driven olarak yazar).
   // Tek batch sorgu (N+1 yok), TENANT-SCOPED (çapraz-tenant puan sızmaz). Üyeliği olmayan → null.
+  // #34: Aynı batch'te ÖĞRENME YOLCULUĞU tamamlanma anı (learningJourneyCompletedAt) de çekilir —
+  // platform admin'de zaten görünür (platformTenantController); STK yöneticisi de havuzda görsün
+  // (retention göstergesi). Kaynak yine TenantMembership (rol-bazlı yolculuk anı), tenant-scoped.
   const userIds = base.map((u) => u.id);
   const qualityByUser = new Map<string, number>();
+  const journeyByUser = new Map<string, Date>();
   if (userIds.length > 0) {
     const memberships = await prisma.tenantMembership.findMany({
       where:  { tenantId: req.tenant.tenantId, userId: { in: userIds } },
-      select: { userId: true, qualityMultiplier: true },
+      select: { userId: true, qualityMultiplier: true, learningJourneyCompletedAt: true },
     });
-    for (const m of memberships) qualityByUser.set(m.userId, m.qualityMultiplier);
+    for (const m of memberships) {
+      qualityByUser.set(m.userId, m.qualityMultiplier);
+      if (m.learningJourneyCompletedAt) journeyByUser.set(m.userId, m.learningJourneyCompletedAt);
+    }
   }
 
   const items = base.map((u) => ({
@@ -323,6 +331,8 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     rejectedByName: u.rejectedBy ? nameById.get(u.rejectedBy) ?? null : null,
     // Ham çarpan (0.8–1.2, nötr 1.0). FE yöneticiye anlaşılır biçime çevirir (5 üzerinden puan).
     qualityMultiplier: qualityByUser.get(u.id) ?? null,
+    // #34: null = yolculuk henüz tamamlanmadı → FE "—" gösterir. Analytical (PII değil), yönetici-görünür.
+    learningJourneyCompletedAt: journeyByUser.get(u.id) ?? null,
   }));
 
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
@@ -802,6 +812,17 @@ export async function getPendingTuning(req: RequestWithTenant, res: Response) {
   const pending = await getPendingAdjustment(req.tenant.tenantId);
   if (!pending) return res.json({ pending: null });
   return res.json({ pending });
+}
+
+/**
+ * GET /api/admin/algorithm-tuner/weights — #9: kurumun MEVCUT eşleştirme ağırlıkları (salt-okuma).
+ * Yönetici sistemin nasıl eşleştirdiğini görsün diye gösterim amaçlı. Kalibrasyon önerisi
+ * olmasa da her zaman döner (varsayılan %60/%40). Kalibrasyon UI'ındaki "Mevcut" kolonuyla aynı
+ * kaynak (getAlgorithmWeights). AYARLAMA YOK — yalnız okuma, tenant-scoped. Yeni şema alanı yok.
+ */
+export async function getAlgorithmWeightsHandler(req: RequestWithTenant, res: Response) {
+  const weights = await getAlgorithmWeights(req.tenant.tenantId);
+  return res.json({ weights });
 }
 
 /** POST /api/admin/algorithm-tuner/approve — kalibrasyon önerisini onayla */
