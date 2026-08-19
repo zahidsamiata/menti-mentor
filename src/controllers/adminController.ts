@@ -16,6 +16,7 @@ import { ensureMembershipSafe } from '../services/membership.js';
 import { notifyRematchRequested } from '../services/notificationService.js';
 import { sendUserApprovalNotification } from '../services/emailService.js';
 import { generateSuggestions } from '../services/coachingSuggestions.js';
+import { computePairSignalFromCheckIns, PAIR_SIGNAL_CONFIG } from '../services/pairSignal.service.js';
 import {
   getPendingAdjustment,
   applyPendingAdjustment,
@@ -302,10 +303,26 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     for (const a of admins) nameById.set(a.id, a.fullName);
   }
 
+  // #7 Aşama 1: Kişi-bazlı KALİTE PUANI (qualityMultiplier) — YALNIZ yönetici görür (KVKK, §5:
+  // KARAR 5 ruhu — feedback vereni koru, kişi kendi puanını görmez). Kaynak: bu tenant'ın
+  // TenantMembership kaydı (kurum-içi kalite; feedbackController event-driven olarak yazar).
+  // Tek batch sorgu (N+1 yok), TENANT-SCOPED (çapraz-tenant puan sızmaz). Üyeliği olmayan → null.
+  const userIds = base.map((u) => u.id);
+  const qualityByUser = new Map<string, number>();
+  if (userIds.length > 0) {
+    const memberships = await prisma.tenantMembership.findMany({
+      where:  { tenantId: req.tenant.tenantId, userId: { in: userIds } },
+      select: { userId: true, qualityMultiplier: true },
+    });
+    for (const m of memberships) qualityByUser.set(m.userId, m.qualityMultiplier);
+  }
+
   const items = base.map((u) => ({
     ...u,
     approvedByName: u.approvedBy ? nameById.get(u.approvedBy) ?? null : null,
     rejectedByName: u.rejectedBy ? nameById.get(u.rejectedBy) ?? null : null,
+    // Ham çarpan (0.8–1.2, nötr 1.0). FE yöneticiye anlaşılır biçime çevirir (5 üzerinden puan).
+    qualityMultiplier: qualityByUser.get(u.id) ?? null,
   }));
 
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
@@ -355,19 +372,54 @@ export async function adminListMatches(req: RequestWithTenant, res: Response) {
     prisma.match.count({ where }),
   ]);
 
-  const items = rows.map((m) => ({
-    id: m.id,
-    mentorName: m.mentor.user.fullName,
-    mentiName: m.menti.user.fullName,
-    predictedScore: m.predictedScore,
-    sectorScore: m.sectorScore,
-    characterScore: m.characterScore,
-    mentorArchetype: m.mentorArchetype,
-    mentiArchetype: m.mentiArchetype,
-    status: m.status,
-    meetingCount: m._count.meetings,
-    createdAt: m.createdAt,
-  }));
+  // #7 Aşama 1: her eşleşme (çift) için RİSK SİNYALİ — yönetici ilişki sağlığını TOPLU görür
+  // (KARAR: yönetici herkesi tek tek arayamaz → metrikten izler). Çiftin son N tamamlanmış
+  // görüşmesindeki check-in'lerden türetilir (pairSignal.service — eşik tek yerde, DRY).
+  // Tek batch sorgu (N+1 yok), TENANT-SCOPED. Kişi kendi sinyalini GÖRMEZ (yalnız admin listesi).
+  const matchIds = rows.map((m) => m.id);
+  const signalByMatch = new Map<string, ReturnType<typeof computePairSignalFromCheckIns>>();
+  if (matchIds.length > 0) {
+    const meetings = await prisma.meeting.findMany({
+      where:   { tenantId: req.tenant.tenantId, matchId: { in: matchIds }, status: 'COMPLETED' },
+      orderBy: { startsAt: 'desc' },
+      select:  { matchId: true, checkIns: { select: { overallRating: true, continueIntent: true } } },
+    });
+    // matchId → son N görüşmenin check-in'leri (görüşmeler startsAt desc; her match için ilk N alınır).
+    const checkInsByMatch = new Map<string, { overallRating: number; continueIntent: string }[]>();
+    const meetingSeen = new Map<string, number>();
+    for (const mt of meetings) {
+      if (!mt.matchId) continue;
+      const seen = meetingSeen.get(mt.matchId) ?? 0;
+      if (seen >= PAIR_SIGNAL_CONFIG.recentMeetingsWindow) continue;
+      meetingSeen.set(mt.matchId, seen + 1);
+      const list = checkInsByMatch.get(mt.matchId) ?? [];
+      list.push(...mt.checkIns);
+      checkInsByMatch.set(mt.matchId, list);
+    }
+    for (const [mid, checkIns] of checkInsByMatch) {
+      signalByMatch.set(mid, computePairSignalFromCheckIns(checkIns));
+    }
+  }
+
+  const items = rows.map((m) => {
+    const sig = signalByMatch.get(m.id);
+    return {
+      id: m.id,
+      mentorName: m.mentor.user.fullName,
+      mentiName: m.menti.user.fullName,
+      predictedScore: m.predictedScore,
+      sectorScore: m.sectorScore,
+      characterScore: m.characterScore,
+      mentorArchetype: m.mentorArchetype,
+      mentiArchetype: m.mentiArchetype,
+      status: m.status,
+      meetingCount: m._count.meetings,
+      createdAt: m.createdAt,
+      // Risk sinyali: veri yoksa INSUFFICIENT_DATA (FE "—" gösterir). Yalnız admin görür.
+      riskSignal:  sig?.signal ?? 'INSUFFICIENT_DATA',
+      riskReasons: sig?.reasons ?? [],
+    };
+  });
 
   void logger.info('SYSTEM', 'Admin: Eşleşme listesi görüntülendi', { tenantId: req.tenant.tenantId }); // KATMAN 9
   return res.json({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
