@@ -143,6 +143,7 @@ enum TenantVerificationStatus {
   PENDING_REVIEW // .edu.tr veya generic domain → platform admin incelemesi
   APPROVED // Platform admin tarafından onaylandı
   REJECTED // Platform admin tarafından reddedildi
+  CORRECTION_REQUESTED // Platform admin düzeltme istedi — kurum bilgileri revize edip tekrar gönderecek (#37)
 }
 
 model Tenant {
@@ -186,9 +187,12 @@ model Tenant {
 
   // Kurum kayıt doğrulama — selfServeRegister e-posta domain'ine göre atanır
   verificationStatus TenantVerificationStatus @default(AUTO_APPROVED)
-  verificationNote   String? // Başvuru kanıtı (görev + ispat URL)
+  verificationNote   String? // Başvuru kanıtı (görev + ispat URL) — düzeltme notuyla EZİLMEZ
   verifiedAt         DateTime?
-  verifiedBy         String? // Platform admin user ID
+  verifiedBy         String? // Platform admin user ID (onay/red/düzeltme-iste son işlem izi)
+  // #37: Platform admin'in kuruma ilettiği düzeltme notu (verificationNote'tan AYRI — kanıt korunur).
+  // null = düzeltme istenmedi. verificationStatus=CORRECTION_REQUESTED iken doludur; kurum görür.
+  correctionNote     String?
 
   // Faz 3 — Taslak kurtarma e-postası (KVKK: unsubscribe zorunlu)
   // Token: selfServeRegister'da üretilir, e-postada unsubscribe linki olarak gider.

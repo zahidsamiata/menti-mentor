@@ -67,6 +67,11 @@ export const config = {
     // Gönderen kurumsal, SPF/DKIM doğrulanmış domain olmalı. SMTP_USER'a DÜŞME —
     // Resend'de SMTP_USER "resend" gibi bir kullanıcı adıdır, gönderen adresi değil.
     from: process.env.SMTP_FROM ?? 'noreply@sivilkapasite.org',
+    // #37: Kurum (STK) başvuru bildirimleri (onay/red/düzeltme-iste) — GÖNDERİM BAYRAĞI.
+    // Varsayılan KAPALI (false): altyapı hazır ama gerçek mail GİTMEZ, yalnız log'lanır.
+    // Ürün sahibi `destek@` adresini kurup prod env'i bağlayınca `true` yapılıp açılacak.
+    // Canlıya istenmeyen mail gitmesi geri alınamaz → bilinçli opt-in.
+    tenantNotificationsEnabled: process.env.TENANT_NOTIFICATIONS_ENABLED === 'true',
   },
 
   // Frontend base URL — davet linkleri ve şifre sıfırlama URL'leri için kullanılır

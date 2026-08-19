@@ -4,6 +4,7 @@ import {
   selfServeRegister,
   checkSlugAvailability,
   updateOnboarding,
+  resubmitTenantApplication,
   getTenantPreview,
   createInvitation,
   unsubscribeTenant,
@@ -21,6 +22,8 @@ const router = Router();
 // checkSlugRateLimiter: IP-bazlı — slug numaralandırmasını yavaşlatır.
 router.get('/self-serve/check-slug', checkSlugRateLimiter, checkSlugAvailability as RequestHandler);
 router.post('/self-serve/register',  selfServeRegister     as RequestHandler);
+// #37: düzeltme sonrası tekrar gönderim — admin JWT ile korunan (controller içinde doğrulanır)
+router.post('/self-serve/resubmit',  resubmitTenantApplication as RequestHandler);
 router.patch('/:id/onboarding',      updateOnboarding      as RequestHandler);
 router.get('/:slug/preview',         getTenantPreview      as RequestHandler);
 router.post('/:id/invitations',      createInvitation      as RequestHandler);

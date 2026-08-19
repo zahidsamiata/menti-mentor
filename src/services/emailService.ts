@@ -28,7 +28,7 @@ export function isUndeliverableRecipient(to: string): boolean {
   return UNDELIVERABLE_TLDS.some((tld) => domain.endsWith(tld));
 }
 
-async function send(to: string, subject: string, html: string): Promise<void> {
+export async function send(to: string, subject: string, html: string): Promise<void> {
   // Sahte/teslim edilemez alıcıya gönderme — bounce üretmesin (her ortamda).
   // KVKK/log kuralı: e-posta adresi loglanmaz, yalnızca durum yazılır.
   if (isUndeliverableRecipient(to)) {

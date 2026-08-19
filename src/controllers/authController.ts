@@ -703,6 +703,24 @@ export async function getMe(req: RequestWithTenant, res: Response) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
   }
 
+  // #37: kurum başvuru durumu — kurum yöneticisi "düzeltme istendi" bilgisini burada görür.
+  // Tenant-scoped (req.tenant.tenantId) → IDOR yok. correctionNote YALNIZ ADMIN'e (kurumun
+  // başvurusunu düzeltecek kişi); MENTOR/MENTI için null (onları ilgilendirmez).
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: req.tenant.tenantId },
+    select: { name: true, displayName: true, verificationStatus: true, correctionNote: true },
+  });
+
   // #12: kendi profili — DISC çoklu-harf türetilir (vektör kendi verisi, zaten dönüyor).
-  return res.json({ ...user, discLetters: discLettersFromVector(user.discVector) });
+  return res.json({
+    ...user,
+    discLetters: discLettersFromVector(user.discVector),
+    tenant: tenant
+      ? {
+          name: tenant.displayName ?? tenant.name,
+          verificationStatus: tenant.verificationStatus,
+          correctionNote: user.role === 'ADMIN' ? (tenant.correctionNote ?? null) : null,
+        }
+      : null,
+  });
 }

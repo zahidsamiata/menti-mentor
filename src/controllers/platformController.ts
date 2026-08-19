@@ -7,6 +7,7 @@ import { signToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
 import { logger } from '../services/logger.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
+import { notifyTenantVerification } from '../services/tenantNotifications.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -243,6 +244,10 @@ export async function approveTenant(req: Request, res: Response) {
   });
 
   await auditPlatformAction('APPROVE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
+
+  // FAZ 3 (#37): onay bildirimi — gönderim bayrak arkasında KAPALI (TENANT_NOTIFICATIONS_ENABLED).
+  void notifyTenantVerification({ tenantId: tenant.id, kind: 'APPROVED' });
+
   return res.json({ ok: true });
 }
 
@@ -266,6 +271,56 @@ export async function rejectTenant(req: Request, res: Response) {
   });
 
   await auditPlatformAction('REJECT_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
+
+  // FAZ 3 (#37): red bildirimi (destekleyici dil) — gönderim bayrak arkasında KAPALI.
+  void notifyTenantVerification({ tenantId: tenant.id, kind: 'REJECTED', note: note ?? undefined });
+
+  return res.json({ ok: true });
+}
+
+// POST /api/platform/tenants/:id/request-correction
+// #37: Reddetmek yerine "düzeltme iste" — kurum bilgilerini revize edip tekrar gönderir.
+// Kişi tarafındaki requestCorrection deseninin kurum karşılığı (adminController.requestCorrection).
+// Not: düzeltme notu AYRI `correctionNote` alanına yazılır; başvuru kanıtı `verificationNote` KORUNUR.
+const RequestCorrectionSchema = z.object({
+  // Kuruma gösterilecek serbest metin. PII yazılmamalı (FE'de uyarı verilir). 10–1000 karakter.
+  note: z.string().trim().min(10, 'Düzeltme notu en az 10 karakter olmalı').max(1000, 'Düzeltme notu en fazla 1000 karakter olabilir'),
+});
+
+export async function requestTenantCorrection(req: Request, res: Response) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: req.params['id'] as string },
+    select: { id: true, verificationStatus: true },
+  });
+  if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  // Onaylanmış kuruma düzeltme istenmez (kişi tarafı deseniyle tutarlı: APPROVED'a düzeltme yok).
+  if (tenant.verificationStatus === 'APPROVED' || tenant.verificationStatus === 'AUTO_APPROVED') {
+    return res.status(409).json({
+      error: 'ZATEN_ONAYLANDI',
+      message: 'Onaylanmış kuruma düzeltme isteği gönderilemez.',
+    });
+  }
+
+  const parsed = RequestCorrectionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  await prisma.tenant.update({
+    where: { id: tenant.id },
+    data: {
+      verificationStatus: 'CORRECTION_REQUESTED',
+      correctionNote: parsed.data.note, // AYRI alan — verificationNote (kanıt) ezilmez
+      verifiedAt: new Date(),
+    },
+  });
+
+  await auditPlatformAction('REQUEST_TENANT_CORRECTION', req, { targetType: 'TENANT', targetTenantId: tenant.id });
+
+  // FAZ 3: bildirim altyapısı — gönderim bayrak arkasında (TENANT_NOTIFICATIONS_ENABLED, varsayılan kapalı).
+  void notifyTenantVerification({ tenantId: tenant.id, kind: 'CORRECTION_REQUESTED', note: parsed.data.note });
+
   return res.json({ ok: true });
 }
 
