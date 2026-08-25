@@ -61,6 +61,39 @@ const BatchResponseSchema = z.object({
     .max(50),
 });
 
+// ─── Validasyon mesajı yardımcısı ─────────────────────────────────────────────
+
+/**
+ * Zod hatasından kullanıcıya gösterilebilir sade bir Türkçe mesaj türetir.
+ *
+ * Neden: `flatten()` yapısı FE'de generic "Hata" olarak görünüyordu (madde 69).
+ * Bu yardımcı ilk sorunlu alanı Türkçe etiketiyle bildirir; iç şema yapısı,
+ * stack veya alınan ham değer SIZDIRILMAZ (enumeration-safe, sade).
+ */
+const FIELD_LABELS: Record<string, string> = {
+  text: 'Soru metni',
+  type: 'Soru tipi',
+  discDimension: 'DISC boyutu',
+  category: 'Kategori',
+  order: 'Sıra',
+  tenantScoped: 'Kuruma özel',
+  isRequired: 'Zorunluluk',
+  isActive: 'Aktiflik',
+  value: 'Cevap değeri',
+  responses: 'Yanıtlar',
+  questionId: 'Soru',
+};
+
+function firstValidationMessage(error: z.ZodError): string {
+  const issue = error.issues[0];
+  if (!issue) return 'Girdi doğrulanamadı. Lütfen alanları kontrol edin.';
+
+  // path: iç içe şemada [alan, index, altAlan] olabilir — ilk metin segmentini al
+  const fieldKey = issue.path.find((p): p is string => typeof p === 'string');
+  const label = fieldKey ? (FIELD_LABELS[fieldKey] ?? fieldKey) : 'Girdi';
+  return `${label}: ${issue.message}`;
+}
+
 // ─── GET /api/questions ───────────────────────────────────────────────────────
 
 /**
@@ -80,7 +113,11 @@ export async function listQuestions(req: RequestWithTenant, res: Response) {
 export async function createQuestion(req: RequestWithTenant, res: Response) {
   const parsed = CreateQuestionSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+    return res.status(400).json({
+      error: 'VALIDATION',
+      message: firstValidationMessage(parsed.error),
+      details: parsed.error.flatten(),
+    });
   }
 
   // DISC soru havuzu kilidi — sadece platform seviyesinde seed script ekleyebilir
@@ -135,7 +172,11 @@ export async function updateQuestion(req: RequestWithTenant, res: Response) {
 
   const parsed = UpdateQuestionSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+    return res.status(400).json({
+      error: 'VALIDATION',
+      message: firstValidationMessage(parsed.error),
+      details: parsed.error.flatten(),
+    });
   }
 
   const updated = await prisma.question.update({
@@ -247,7 +288,11 @@ export async function respondToQuestion(req: RequestWithTenant, res: Response) {
   const questionId = req.params['questionId'] as string;
   const parsed = SingleResponseSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+    return res.status(400).json({
+      error: 'VALIDATION',
+      message: firstValidationMessage(parsed.error),
+      details: parsed.error.flatten(),
+    });
   }
 
   // Soru bu tenant'a erişilebilir mi?
@@ -294,7 +339,11 @@ export async function submitResponses(req: RequestWithTenant, res: Response) {
 
   const parsed = BatchResponseSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+    return res.status(400).json({
+      error: 'VALIDATION',
+      message: firstValidationMessage(parsed.error),
+      details: parsed.error.flatten(),
+    });
   }
 
   const { responses } = parsed.data;
