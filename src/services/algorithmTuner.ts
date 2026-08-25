@@ -36,6 +36,104 @@ const MIN_SECTOR_WEIGHT = 0.40;
 const MAX_SECTOR_WEIGHT = 0.70;
 const STEP = 0.05;
 
+// ─── Manuel ağırlık ayarı (9a) — kurum yöneticisi elle ayarlar ────────────────
+
+/**
+ * Manuel ayar doğrulama sonucu — saf fonksiyon (DB/HTTP bağımsız), birim testi kolay.
+ * ok=false ise `error` Türkçe kullanıcı mesajı içerir.
+ */
+export type ManualWeightValidation =
+  | { ok: true; sectorWeight: number; discWeight: number }
+  | { ok: false; error: string };
+
+/**
+ * Manuel sektör ağırlığını doğrular. PO kuralları:
+ *  - 0.05'in katı olmalı (küsürat reddedilir)
+ *  - MIN_SECTOR_WEIGHT (0.40) ≤ sectorWeight ≤ MAX_SECTOR_WEIGHT (0.70)
+ *  - discWeight = 1 - sectorWeight otomatik türetilir (toplam HEP 1.00 garantisi)
+ *
+ * Yalnız sectorWeight alınır; discWeight girdiden ALINMAZ, türetilir — böylece
+ * "toplam ≠ 1.00" durumu yapısal olarak imkânsız. Girdi discWeight de gönderirse
+ * türetilenle çelişki denetlenir (bozuk UI sessizce kabul edilmesin).
+ */
+export function validateManualWeights(input: {
+  sectorWeight: unknown;
+  discWeight?: unknown;
+}): ManualWeightValidation {
+  const sector = input.sectorWeight;
+  if (typeof sector !== 'number' || !Number.isFinite(sector)) {
+    return { ok: false, error: 'Sektör ağırlığı geçerli bir sayı olmalıdır.' };
+  }
+
+  // 0.05'in katı mı? Float kaymasını önlemek için tam-sayı aritmetiği (x100).
+  const scaled = Math.round(sector * 100);
+  if (Math.abs(sector * 100 - scaled) > 1e-6 || scaled % (STEP * 100) !== 0) {
+    return { ok: false, error: "Ağırlık %5'in katı olmalıdır." };
+  }
+
+  if (sector < MIN_SECTOR_WEIGHT || sector > MAX_SECTOR_WEIGHT) {
+    return {
+      ok: false,
+      error: `Sektör ağırlığı %${MIN_SECTOR_WEIGHT * 100}-%${MAX_SECTOR_WEIGHT * 100} arasında olmalıdır.`,
+    };
+  }
+
+  const disc = Math.round((1 - sector) * 100) / 100;
+
+  // İstemci discWeight de gönderdiyse türetilenle tutarlı mı?
+  if (input.discWeight !== undefined) {
+    const givenDisc = input.discWeight;
+    if (typeof givenDisc !== 'number' || Math.abs(givenDisc - disc) > 1e-6) {
+      return { ok: false, error: 'Sektör ve DISC ağırlıklarının toplamı %100 olmalıdır.' };
+    }
+  }
+
+  return { ok: true, sectorWeight: Math.round(sector * 100) / 100, discWeight: disc };
+}
+
+export type ManualWeightResult = {
+  previousWeights: AlgorithmWeights;
+  newWeights: AlgorithmWeights;
+  pendingCleared: boolean;
+};
+
+/**
+ * Kurum yöneticisinin manuel ağırlık ayarını uygular (yalnız verilen tenant için).
+ * Bekleyen otomatik kalibrasyon önerisi (pendingAlgorithmAdjustment) VARSA temizlenir:
+ * admin zaten elle karar verdi; bekleyen ML önerisiyle çelişmemesi için (bkz. rejectPendingAdjustment).
+ * Doğrulama ÇAĞIRAN katmanda (controller) yapılır — buraya yalnız doğrulanmış değer gelir.
+ */
+export async function setManualWeights(
+  tenantId: string,
+  sectorWeight: number,
+  discWeight: number,
+): Promise<ManualWeightResult> {
+  const previous = await getAlgorithmWeights(tenantId);
+
+  const newWeights: AlgorithmWeights = {
+    sectorWeight,
+    discWeight,
+    lastAdjustedAt: new Date().toISOString(),
+    reason: 'Kurum yöneticisi tarafından manuel ayarlandı',
+  };
+
+  // Ağırlığı yaz + bekleyen otomatik öneriyi tek update'te temizle (tenant-scoped).
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { tenantVocabulary: true },
+  });
+  const existing = (tenant?.tenantVocabulary as Record<string, unknown>) ?? {};
+  const pendingCleared = existing['pendingAlgorithmAdjustment'] !== undefined;
+  delete existing['pendingAlgorithmAdjustment'];
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: { tenantVocabulary: { ...existing, algorithmWeights: newWeights } },
+  });
+
+  return { previousWeights: previous, newWeights, pendingCleared };
+}
+
 // ─── NPS istatistikleri ───────────────────────────────────────────────────────
 
 type NpsStats = {

@@ -22,6 +22,8 @@ import {
   applyPendingAdjustment,
   rejectPendingAdjustment,
   getAlgorithmWeights,
+  validateManualWeights,
+  setManualWeights,
 } from '../services/algorithmTuner.js';
 import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
 import { discLettersFromVector } from '../services/discLetters.js';
@@ -823,6 +825,46 @@ export async function getPendingTuning(req: RequestWithTenant, res: Response) {
 export async function getAlgorithmWeightsHandler(req: RequestWithTenant, res: Response) {
   const weights = await getAlgorithmWeights(req.tenant.tenantId);
   return res.json({ weights });
+}
+
+/**
+ * PUT /api/admin/algorithm-tuner/weights — 9a: kurum yöneticisi eşleştirme ağırlığını
+ * (sektör/DISC) MANUEL ayarlar. Yalnız istek tenant'ı için (tenant izolasyonu: requireTenant
+ * req.tenant.tenantId dışına asla yazmaz). Yetki: kurumun tüm ADMIN'leri (requireRole('ADMIN')).
+ *
+ * Kurallar (validateManualWeights): 0.05 katı, MIN/MAX_SECTOR sınırı, discWeight=1-sector türetilir.
+ * Bekleyen otomatik kalibrasyon önerisi varsa temizlenir (admin elle karar verdi → çelişki önlenir).
+ * Audit izi SystemLog.meta'ya AUDIT kategorisiyle yazılır (manuel admin ayarı, ML değil).
+ */
+export async function setAlgorithmWeightsHandler(req: RequestWithTenant, res: Response) {
+  const body = (req.body ?? {}) as { sectorWeight?: unknown; discWeight?: unknown };
+
+  const validation = validateManualWeights({
+    sectorWeight: body.sectorWeight,
+    discWeight: body.discWeight,
+  });
+  if (!validation.ok) {
+    return res.status(400).json({ error: 'GECERSIZ_AGIRLIK', message: validation.error });
+  }
+
+  const tenantId = req.tenant.tenantId;
+  const result = await setManualWeights(tenantId, validation.sectorWeight, validation.discWeight);
+
+  // Audit izi: kim, önce/sonra ne, ne zaman. (KVKK Md.12 denetim kaydı deseni — logger AUDIT.)
+  void logger.info('AUDIT', 'Kurum yöneticisi eşleştirme ağırlığını manuel ayarladı', {
+    actorUserId: req.auth?.userId ?? null,
+    tenantId,
+    previousWeights: result.previousWeights,
+    newWeights: result.newWeights,
+    pendingCleared: result.pendingCleared,
+    timestamp: new Date().toISOString(),
+  });
+
+  return res.json({
+    message: 'Eşleştirme ağırlıkları güncellendi.',
+    weights: result.newWeights,
+    pendingCleared: result.pendingCleared,
+  });
 }
 
 /** POST /api/admin/algorithm-tuner/approve — kalibrasyon önerisini onayla */
