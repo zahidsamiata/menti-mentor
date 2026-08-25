@@ -19,3 +19,27 @@ export function maskEmail(email: string | null | undefined): string {
   const first = local[0] ?? '*';
   return `${first}***@${domain}`;
 }
+
+/**
+ * Ad/soyad gibi serbest kişi adını `f***` biçiminde maskeler (yalnız ilk harf görünür).
+ * `maskEmail` ile aynı minimal desen — kimlik gizlenir, boş/whitespace tamamen maskelenir.
+ * Saf fonksiyon — birim testi kolaydır.
+ */
+export function maskName(name: string | null | undefined): string {
+  const trimmed = name?.trim();
+  if (!trimmed) return '***';
+  const first = trimmed[0] ?? '*';
+  return `${first}***`;
+}
+
+/**
+ * Serbest iletişim alanını maskeler. Alan e-posta ise `maskEmail`, değilse (telefon/handle)
+ * yalnız ilk karakteri gösterir. Yeni maskeleme mantığı icat etmez; mevcut deseni yeniden kullanır.
+ */
+export function maskContact(contact: string | null | undefined): string {
+  const trimmed = contact?.trim();
+  if (!trimmed) return '***';
+  if (trimmed.includes('@')) return maskEmail(trimmed);
+  const first = trimmed[0] ?? '*';
+  return `${first}***`;
+}

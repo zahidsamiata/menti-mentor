@@ -8,6 +8,7 @@ import { logger } from '../services/logger.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
 import { notifyTenantVerification } from '../services/tenantNotifications.js';
+import { maskName, maskContact } from '../services/mask.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -350,7 +351,29 @@ export async function listSuspicionReports(req: Request, res: Response) {
   const reviewed = reviewedParam === 'true' ? true : reviewedParam === 'false' ? false : undefined;
 
   const where = reviewed !== undefined ? { reviewed } : {};
-  const items = await prisma.suspicionReport.findMany({ where, orderBy: { createdAt: 'desc' } });
+  // KVKK: raporlayan KİMLİĞİ (reporterName/contact) platform admin'e maskeli döner; ham PII response'a girmez.
+  // Rapor İÇERİĞİ (tenantName/description/durum/tarih) admin işini yapabilsin diye korunur.
+  const rows = await prisma.suspicionReport.findMany({
+    where,
+    select: {
+      id: true,
+      tenantName: true,
+      reporterRole: true,
+      description: true,
+      reviewed: true,
+      reviewNote: true,
+      createdAt: true,
+      reporterName: true,
+      contact: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const items = rows.map(({ reporterName, contact, ...rest }) => ({
+    ...rest,
+    reporterName: maskName(reporterName),
+    contact: maskContact(contact),
+  }));
 
   return res.json({ items, total: items.length });
 }
