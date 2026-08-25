@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { maskUserReportRow } from '../src/controllers/platformController.js';
+import { maskUserReportRow, maskPendingTenantRow } from '../src/controllers/platformController.js';
 
 const tenantNameById = new Map<string, string>([['t1', 'Örnek Kurum']]);
 
@@ -64,5 +64,51 @@ describe('maskUserReportRow — reporter/target kimliği maskeli döner', () => 
     expect(out.target.fullName).toBe('***');
     // Kurum eşleşmezse tenantId fallback döner (kurum adı uydurulmaz)
     expect(out.tenantName).toBe('bilinmeyen');
+  });
+});
+
+describe('maskPendingTenantRow — başvuran yönetici kimliği maskeli döner (madde 89)', () => {
+  const baseRow = {
+    id: 'ten1',
+    name: 'Örnek Kurum',
+    displayName: 'Örnek',
+    slug: 'ornek',
+    isActive: false,
+    verificationStatus: 'PENDING_REVIEW',
+    verificationNote: null,
+    createdAt: new Date('2026-08-25T00:00:00Z'),
+  };
+
+  it('admin fullName + email maskeli; ham ad/yerel-kısım sızmaz, domain korunur', () => {
+    const out = maskPendingTenantRow({
+      ...baseRow,
+      users: [{ fullName: 'Alfa Yonetici', email: 'basvuran@kurum.com' }],
+    });
+
+    // Kimlik maskeli (yalnız ilk harf / ilk karakter)
+    expect(out.users[0]!.fullName).toBe('A***');
+    expect(out.users[0]!.email).toBe('b***@kurum.com');
+    // Ham PII sızmıyor (kanıt)
+    expect(out.users[0]!.fullName).not.toContain('lfa');
+    expect(out.users[0]!.email).not.toContain('asvuran');
+    // Domain korunur (admin başvuru domain'ini doğrulayabilir)
+    expect(out.users[0]!.email).toContain('@kurum.com');
+
+    // Kurum içeriği (isim/durum/tarih) admin işini görsün diye KORUNUR
+    expect(out.name).toBe('Örnek Kurum');
+    expect(out.verificationStatus).toBe('PENDING_REVIEW');
+  });
+
+  it('null fullName / admin yoksa → *** (patlamaz)', () => {
+    const out = maskPendingTenantRow({
+      ...baseRow,
+      users: [{ fullName: null, email: 'x@y.io' }],
+    });
+
+    expect(out.users[0]!.fullName).toBe('***');
+    expect(out.users[0]!.email).toBe('x***@y.io');
+
+    const noAdmin = maskPendingTenantRow({ ...baseRow, users: [] });
+    expect(noAdmin.users).toHaveLength(0);
   });
 });

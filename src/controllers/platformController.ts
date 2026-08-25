@@ -8,7 +8,7 @@ import { logger } from '../services/logger.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
 import { notifyTenantVerification } from '../services/tenantNotifications.js';
-import { maskName, maskContact } from '../services/mask.js';
+import { maskName, maskContact, maskEmail } from '../services/mask.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -92,7 +92,14 @@ export async function getPlatformStats(_req: Request, res: Response) {
     prisma.meeting.count({ where: { status: 'COMPLETED' } }),
     prisma.tenant.count({ where: { verificationStatus: 'PENDING_REVIEW' } }),
     prisma.suspicionReport.count({ where: { reviewed: false } }),
-    prisma.systemLog.findMany({ orderBy: { createdAt: 'desc' }, take: 10 }),
+    // KVKK (madde 88, madde 80 ile aynı desen): SystemLog.meta (Json) hata stack + userId/tenantId
+    // içerebilir → PII sızma riski. Explicit select ile ham `meta` KASITLI dışarıda bırakılır;
+    // stats panelindeki "son loglar" kartı level/category/message/tarih ile admin işini görür.
+    prisma.systemLog.findMany({
+      select: { id: true, level: true, category: true, message: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    }),
     prisma.tenant.findMany({
       select: {
         id: true,
@@ -189,6 +196,37 @@ export async function getPlatformLogs(req: Request, res: Response) {
   return res.json({ items: logs, total });
 }
 
+/** listPendingTenants satırının maskelenmiş görünüm biçimi (birim testi için saf fonksiyona ayrıldı). */
+type PendingTenantRow = {
+  id: string;
+  name: string;
+  displayName: string | null;
+  slug: string;
+  isActive: boolean;
+  verificationStatus: string;
+  verificationNote: string | null;
+  createdAt: Date;
+  users: { fullName: string | null; email: string }[];
+};
+
+/**
+ * KVKK (madde 89): başvuran kurum yöneticisinin KİMLİĞİ (fullName + email) platform admin'e
+ * maskeli döner; ham PII response'a girmez. Onay/red/düzeltme akışı yalnız tenant ID ile çalışır
+ * (approveTenant/rejectTenant/requestTenantCorrection) ve bildirim e-postası `notifyTenantVerification`
+ * içinde ADMIN e-postasını yeniden çekerek gönderilir — yani ham e-posta bu listede İŞ İÇİN GEREKMEZ.
+ * `maskEmail` domain'i korur → admin başvuru domain'ini (ör. `@kurum.com`) doğrulayabilir, kimlik gizli kalır.
+ * Diğer platform-admin PII listeleriyle (suspicion/user-reports) aynı desen. Saf fonksiyon — DB gerektirmez.
+ */
+export function maskPendingTenantRow(t: PendingTenantRow) {
+  return {
+    ...t,
+    users: t.users.map((u) => ({
+      fullName: maskName(u.fullName),
+      email: maskEmail(u.email),
+    })),
+  };
+}
+
 // GET /api/platform/tenants/pending
 export async function listPendingTenants(_req: Request, res: Response) {
   const tenants = await prisma.tenant.findMany({
@@ -211,7 +249,8 @@ export async function listPendingTenants(_req: Request, res: Response) {
     orderBy: { createdAt: 'asc' },
   });
 
-  return res.json({ items: tenants, total: tenants.length });
+  const items = tenants.map(maskPendingTenantRow);
+  return res.json({ items, total: items.length });
 }
 
 // GET /api/platform/tenants
