@@ -1,6 +1,7 @@
 import type { DiscType } from '@prisma/client';
 import { prisma } from '../db.js';
 import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, type DiscVector } from './scoring.js';
+import { getAlgorithmWeights } from './algorithmTuner.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
 
 export type RankedMenti = {
@@ -23,6 +24,20 @@ export type RankedMenti = {
 // 1: Zaman filtresi gevşetildi
 // 2: Anti-match filtresi kaldırıldı
 // 3: Sadece sektör uyumu (uyarı rozeti)
+
+// Tenant'a kayıtlı algoritma skor ağırlığını güvenli oku. algorithmTuner.getAlgorithmWeights
+// zaten kayıt yoksa DEFAULT (0.6/0.4) döner; buradaki try/catch DB hatasında da varsayılana
+// düşürerek canlı eşleştirmenin ASLA patlamamasını garanti eder (madde 87 fix).
+async function getScoringWeightsSafe(
+  tenantId: string,
+): Promise<{ sectorWeight: number; discWeight: number }> {
+  try {
+    const w = await getAlgorithmWeights(tenantId);
+    return { sectorWeight: w.sectorWeight, discWeight: w.discWeight };
+  } catch {
+    return { sectorWeight: 0.6, discWeight: 0.4 };
+  }
+}
 
 // Mentor için bu tenant'ta idari olarak bloklanmış menti ID kümesini oluşturur.
 // JSON blob bozuk veya array değilse boş küme döner (defensive).
@@ -83,6 +98,10 @@ export async function rankMentisForMentor(args: {
 
   // Mentorun geçmiş geri bildirim kalite katsayısı (< 3 görüşme → 1.0 nötr)
   const qualityMultiplier = await computeMentorQualityMultiplier(args.mentorId);
+
+  // Tenant'a kayıtlı skor ağırlığını sıralama başında BİR KEZ oku (N+1 yasak — döngü içinde çekilmez).
+  // Okuma/hesap hata verirse eski varsayılan 0.6/0.4'e düş → sıralama asla patlamaz.
+  const { sectorWeight, discWeight } = await getScoringWeightsSafe(args.mentorTenantId);
 
   // Öncelik sırası: çağıranın arg'ı > mentor'un kaydedilmiş filtresi > tenant barajı
   const savedFilter = mentorFilter?.filterEnabled ? mentorFilter : null;
@@ -159,6 +178,8 @@ export async function rankMentisForMentor(args: {
     mentorTenantId:         args.mentorTenantId,
     excludeDiscTypes:       effectiveExcludeDiscTypes,
     blockedMentiIds,        // idari blok listesi — her fallback kademe için uygulanır
+    sectorWeight,           // tenant-özel skor ağırlığı — bir kez okundu, döngüye taşınır
+    discWeight,
   };
 
   // strictFilter: 0-2 kademelerde tam eşiği uygular (tenant barajı dahil).
@@ -235,6 +256,8 @@ function scoreAndFilter(
     qualityMultiplier?: number;
     excludeDiscTypes?: Array<'D' | 'I' | 'S' | 'C'>;
     blockedMentiIds?: Set<string>; // admin tarafından idari olarak bloklanmış menti IDs
+    sectorWeight?: number;         // tenant-özel skor ağırlığı (verilmezse computeTotalScore varsayılanı 0.6)
+    discWeight?: number;           // tenant-özel DISC ağırlığı (verilmezse 0.4)
   },
 ): RankedMenti[] {
   const filtered: RankedMenti[] = [];
@@ -277,6 +300,8 @@ function scoreAndFilter(
       mentorDisc: opts.sectorOnly ? null : (mentor.discType as any),
       mentiVector,
       qualityMultiplier: opts.qualityMultiplier ?? 1.0,
+      sectorWeight: opts.sectorWeight,
+      discWeight: opts.discWeight,
     });
 
     const totalScore = Math.min(100, Math.round((breakdown.totalScore + interactionBonus * (opts.qualityMultiplier ?? 1.0)) * 10) / 10);
@@ -374,6 +399,10 @@ export async function rankMentorsForMenti(args: {
 
   const mentiVector = menti.discVector as DiscVector | null;
 
+  // Tenant-özel skor ağırlığını .map() döngüsünden ÖNCE bir kez oku (N+1 yasak).
+  // Hata → varsayılan 0.6/0.4 (patlama yok).
+  const { sectorWeight, discWeight } = await getScoringWeightsSafe(args.mentiTenantId);
+
   const items: RankedMentor[] = mentors.map((m) => {
     const breakdown = computeTotalScore({
       mentiTags:   menti.sectorTags,
@@ -381,6 +410,8 @@ export async function rankMentorsForMenti(args: {
       mentiDisc:   menti.discType as DiscType | null,
       mentorDisc:  m.discType as DiscType | null,
       mentiVector,
+      sectorWeight,
+      discWeight,
     });
     return {
       mentorId:        m.id,
