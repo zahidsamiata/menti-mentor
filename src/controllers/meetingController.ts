@@ -66,10 +66,11 @@ function getCtx(req: RequestWithTenant): { userId: string; tenantId: string } | 
   return { userId, tenantId };
 }
 
-// Haftalık görüşme limiti — bir hafta = 7 gün (kayan pencere).
-// Neden 7 gün / takvim haftası değil: takvim haftası saat-dilimi + hafta-başı
-// belirsizliği taşır; kayan 7 gün basit ve öngörülebilir. Pencere yeni görüşmenin
-// startsAt'ından İLERİYE 7 gün: "bu görüşmenin haftası".
+// Haftalık görüşme limiti — bir hafta = sabit 7 günlük UTC kova (bucket).
+// Neden kova, kayan-ileri pencere DEĞİL: yeni görüşmeden İLERİYE 7 gün penceresi, aynı hafta
+// içinde DAHA ÖNCE planlanmış görüşmeyi kaçırır (2. görüşme 1.'den saatler sonraysa 1. pencereye
+// girmez → limit çalışmaz). Sabit UTC kova, aynı 7-günlük dilimdeki TÜM görüşmeleri (önceki+sonraki)
+// birlikte sayar; takvim-haftası saat-dilimi/hafta-başı belirsizliği yoktur (saf UTC ms aritmetiği).
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Limit sayımına DAHİL edilen statüler — aktif/planlı görüşmeler.
@@ -107,15 +108,17 @@ async function checkWeeklyMeetingLimit(
     return { exceeded: false, limit: 0 };
   }
 
-  // Pencere: [newStart, newStart + 7 gün) — yeni görüşmenin haftası.
-  const windowEnd = new Date(newStart.getTime() + WEEK_MS);
+  // Kova: newStart'ın düştüğü sabit 7-günlük UTC dilimi [bucketStart, bucketStart+7g).
+  // Aynı kovadaki önceki+sonraki tüm görüşmeler birlikte sayılır.
+  const bucketStart = new Date(Math.floor(newStart.getTime() / WEEK_MS) * WEEK_MS);
+  const bucketEnd = new Date(bucketStart.getTime() + WEEK_MS);
 
   const existing = await prisma.meeting.count({
     where: {
       tenantId,
       mentiUserId,
       status:   { in: [...LIMIT_COUNTED_STATUSES] },
-      startsAt: { gte: newStart, lt: windowEnd },
+      startsAt: { gte: bucketStart, lt: bucketEnd },
     },
   });
 
