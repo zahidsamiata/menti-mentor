@@ -66,6 +66,65 @@ function getCtx(req: RequestWithTenant): { userId: string; tenantId: string } | 
   return { userId, tenantId };
 }
 
+// Haftalık görüşme limiti — bir hafta = 7 gün (kayan pencere).
+// Neden 7 gün / takvim haftası değil: takvim haftası saat-dilimi + hafta-başı
+// belirsizliği taşır; kayan 7 gün basit ve öngörülebilir. Pencere yeni görüşmenin
+// startsAt'ından İLERİYE 7 gün: "bu görüşmenin haftası".
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Limit sayımına DAHİL edilen statüler — aktif/planlı görüşmeler.
+// CANCELLED (iptal) ve COMPLETED (tamamlanmış geçmiş görüşme) HARİÇ:
+// iptal edilen kotayı tüketmemeli, tamamlanan geçmiş yeni haftayı bloklamamalı.
+const LIMIT_COUNTED_STATUSES = [
+  MeetingStatus.PENDING,
+  MeetingStatus.SCHEDULED,
+  MeetingStatus.IN_PROGRESS,
+  MeetingStatus.APPROVED,
+] as const;
+
+/**
+ * Menti başına haftalık görüşme limitini uygular.
+ * Limit KİME ait: bir menti (schema.prisma `Tenant.maxMeetingsPerWeek` yorumu:
+ * "Bir mentinin haftalık maks. görüşme sayısı").
+ *
+ * @returns limit aşıldıysa `{ exceeded: true, limit }`, aksi halde `{ exceeded: false }`.
+ *          Ayar tanımsız/geçersizse limit UYGULANMAZ (güvenli varsayılan: kısıtlama yok).
+ */
+async function checkWeeklyMeetingLimit(
+  tenantId: string,
+  mentiUserId: string,
+  newStart: Date,
+): Promise<{ exceeded: boolean; limit: number }> {
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { maxMeetingsPerWeek: true },
+  });
+
+  const limit = tenant?.maxMeetingsPerWeek;
+  // Ayar yok / geçersiz (≤0) → limit uygulanmaz. (Şema NOT NULL DEFAULT 2 olduğu için
+  // pratikte hep dolu; bu yalnızca savunma amaçlı.)
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || limit <= 0) {
+    return { exceeded: false, limit: 0 };
+  }
+
+  // Pencere: [newStart, newStart + 7 gün) — yeni görüşmenin haftası.
+  const windowEnd = new Date(newStart.getTime() + WEEK_MS);
+
+  const existing = await prisma.meeting.count({
+    where: {
+      tenantId,
+      mentiUserId,
+      status:   { in: [...LIMIT_COUNTED_STATUSES] },
+      startsAt: { gte: newStart, lt: windowEnd },
+    },
+  });
+
+  // Yeni görüşme de sayılır: mevcut + 1 > limit ise aşım.
+  return { exceeded: existing + 1 > limit, limit };
+}
+
+const WEEKLY_LIMIT_MESSAGE = 'Bu hafta için görüşme limitinize ulaştınız.';
+
 // ─── Eski handler'lar (mevcut rotalar bunları kullanıyor) ────────────────────
 
 const CreateMeetingSchema = z.object({
@@ -117,6 +176,12 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
   const endsAtDate = endsAt
     ? new Date(endsAt)
     : new Date(startsAt.getTime() + 60 * 60 * 1000); // +1 saat varsayılan
+
+  // Haftalık görüşme limiti — menti başına (create'den ÖNCE).
+  const weekly = await checkWeeklyMeetingLimit(req.tenant.tenantId, menti.id, startsAt);
+  if (weekly.exceeded) {
+    return res.status(409).json({ error: WEEKLY_LIMIT_MESSAGE });
+  }
 
   const meeting = await prisma.meeting.create({
     data: {
@@ -422,6 +487,12 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     rangesOverlap(start.getTime(), end.getTime(), m.startsAt.getTime(), m.endsAt.getTime())
   )) {
     return res.status(409).json({ error: 'Bu saatte taraflardan birinin başka görüşmesi var.' });
+  }
+
+  // Haftalık görüşme limiti — menti başına (create'den ÖNCE).
+  const weekly = await checkWeeklyMeetingLimit(tenantId, userId, start);
+  if (weekly.exceeded) {
+    return res.status(409).json({ error: WEEKLY_LIMIT_MESSAGE });
   }
 
   // Toplantı PENDING oluşturulur — mentor onayı beklenir
