@@ -35,9 +35,31 @@ export type QuestionNode = {
   order: number;
 };
 
+/**
+ * Adaptif test ilerleme özeti. Frontend faz geçişini (CORE→DEEPENING→COMPLETE)
+ * bu nesneden türetir; istemci tarafı sayım yapmaz.
+ * Alanlar frontend `AdaptiveProgress` sözleşmesiyle birebir eşleşir.
+ */
+export type AdaptiveProgress = {
+  /** Toplam yanıtlanmış soru (CORE + DEEPENING) */
+  totalAnswered: number;
+  /** Yanıtlanmış CORE soru sayısı */
+  coreAnswered: number;
+  /** Yanıtlanmış (ilgili) DEEPENING soru sayısı */
+  deepeningAnswered: number;
+  /** DEEPENING fazının açılması için gereken minimum CORE yanıtı */
+  coreThreshold: number;
+  /** Şu an DEEPENING fazında mı (CORE bitti, test bitmedi) */
+  isDeepening: boolean;
+  /** Test tamamlandı mı */
+  isComplete: boolean;
+  /** 0–100 tamamlanma yüzdesi */
+  completionPercent: number;
+};
+
 export type NextQuestionResult =
-  | { done: false; question: QuestionNode }
-  | { done: true; discVector: DiscVector; dominantType: DiscType };
+  | { done: false; question: QuestionNode; progress: AdaptiveProgress }
+  | { done: true; discVector: DiscVector; dominantType: DiscType; progress: AdaptiveProgress };
 
 type ResponseHistory = Array<{ questionId: string; value: number; discDimension: DiscDimension }>;
 
@@ -80,6 +102,43 @@ function getDominantType(raw: Record<string, number>): DiscType {
   return entries.reduce((a, b) => (b[1] > a[1] ? b : a))[0];
 }
 
+// ─── Yardımcı: ilerleme özeti (saf) ──────────────────────────────────────────
+
+/**
+ * Adaptif test ilerleme özetini saf (DB'siz) hesaplar.
+ *
+ * @param coreAnswered     Yanıtlanmış CORE soru sayısı
+ * @param coreTotal        Toplam aktif CORE soru sayısı
+ * @param deepeningAnswered Yanıtlanmış (ilgili) DEEPENING soru sayısı
+ * @param deepeningTotal   Bu kullanıcıya açık DEEPENING soru sayısı (dominant boyut bilinmiyorsa 0)
+ * @param isComplete       Test tamamlandı mı
+ */
+export function computeProgress(
+  coreAnswered: number,
+  coreTotal: number,
+  deepeningAnswered: number,
+  deepeningTotal: number,
+  isComplete: boolean,
+): AdaptiveProgress {
+  const totalAnswered = coreAnswered + deepeningAnswered;
+  const maxPossible = Math.max(coreTotal + deepeningTotal, 1);
+  const completionPercent = isComplete
+    ? 100
+    : Math.min(100, Math.round((totalAnswered / maxPossible) * 100));
+  // DEEPENING fazı: CORE eşiği geçildi ve test henüz bitmedi.
+  const isDeepening = !isComplete && coreAnswered >= MIN_CORE_RESPONSES;
+
+  return {
+    totalAnswered,
+    coreAnswered,
+    deepeningAnswered,
+    coreThreshold: MIN_CORE_RESPONSES,
+    isDeepening,
+    isComplete,
+    completionPercent,
+  };
+}
+
 // ─── Ana motor ────────────────────────────────────────────────────────────────
 
 /**
@@ -110,14 +169,18 @@ export async function getNextQuestion(
   const coreQuestions = allQuestions.filter((q) => q.type === 'CORE');
   const deepeningQuestions = allQuestions.filter((q) => q.type === 'DEEPENING');
 
+  const coreAnsweredCount = coreQuestions.filter((q) => answeredIds.has(q.id)).length;
+
   // Yanıtsız CORE sorular
   const unansweredCore = coreQuestions.filter((q) => !answeredIds.has(q.id));
 
   if (unansweredCore.length > 0) {
+    // CORE fazı: dominant boyut henüz bilinmiyor → deepeningTotal=0 (yüzde CORE üzerinden).
     const next = unansweredCore[0];
     return {
       done: false,
       question: { id: next.id, text: next.text, discDimension: next.discDimension, order: next.order },
+      progress: computeProgress(coreAnsweredCount, coreQuestions.length, 0, 0, false),
     };
   }
 
@@ -128,15 +191,12 @@ export async function getNextQuestion(
     return { questionId: r.questionId, value: r.value, discDimension: q?.discDimension ?? 'GENERAL' };
   });
 
-  const coreAnsweredCount = history.filter(
-    (h) => coreQuestions.some((q) => q.id === h.questionId),
-  ).length;
-
   if (coreAnsweredCount < MIN_CORE_RESPONSES) {
     // Henüz minimum CORE yanıt sayısına ulaşılmadı
     return {
       done: false,
       question: { id: 'PLACEHOLDER', text: 'Lütfen temel soruları tamamlayın.', discDimension: 'GENERAL', order: 0 },
+      progress: computeProgress(coreAnsweredCount, coreQuestions.length, 0, 0, false),
     };
   }
 
@@ -148,12 +208,20 @@ export async function getNextQuestion(
     (q) => q.discDimension === dominant || q.discDimension === 'GENERAL',
   );
   const unansweredDeepening = relevantDeepening.filter((q) => !answeredIds.has(q.id));
+  const deepeningAnsweredCount = relevantDeepening.length - unansweredDeepening.length;
 
   if (unansweredDeepening.length > 0) {
     const next = unansweredDeepening[0];
     return {
       done: false,
       question: { id: next.id, text: next.text, discDimension: next.discDimension, order: next.order },
+      progress: computeProgress(
+        coreAnsweredCount,
+        coreQuestions.length,
+        deepeningAnsweredCount,
+        relevantDeepening.length,
+        false,
+      ),
     };
   }
 
@@ -174,7 +242,18 @@ export async function getNextQuestion(
     },
   });
 
-  return { done: true, discVector, dominantType };
+  return {
+    done: true,
+    discVector,
+    dominantType,
+    progress: computeProgress(
+      coreAnsweredCount,
+      coreQuestions.length,
+      deepeningAnsweredCount,
+      relevantDeepening.length,
+      true,
+    ),
+  };
 }
 
 /**
