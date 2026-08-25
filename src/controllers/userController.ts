@@ -271,15 +271,17 @@ export async function updateUser(req: RequestWithTenant, res: Response) {
 
   // KVKK/over-fetch (madde 38): select'siz update ham User objesini (password hash +
   // discVector + selfProfile + tüm PII) response'a taşırdı. Bu uç ADMIN-only profil
-  // düzenlemesidir → getUser'ın admin yolundaki merkezi USER_FULL_SELECT ile aynı
-  // güvenli set dönülür (password global omit + explicit select ile iki kat dışarıda).
+  // düzenlemesidir → USER_FULL_SELECT ile döner (password global omit + select ile iki kat
+  // dışarıda), AYRICA ham psikometri (discVector/temperamentJson/selfProfile) — düzenleme
+  // onayı için gereksiz, veri-minimizasyonu — getUser'ın KARAR 5 desenindeki gibi çıkarılır.
   const updated = await prisma.user.update({
     where: { id: existing.id },
     data: parsed.data,
     select: USER_FULL_SELECT,
   });
 
-  return res.json(updated);
+  const { discVector: _dv, temperamentJson: _tj, selfProfile: _sp, ...safe } = updated;
+  return res.json(safe);
 }
 
 const CreateUserSchema = z.object({

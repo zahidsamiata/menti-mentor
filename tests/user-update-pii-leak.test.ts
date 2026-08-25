@@ -61,11 +61,13 @@ describe('Madde 38 — updateUser / temperament yanıtında PII+parola sızınt�
     expect(body.fullName).toBe('Guncellenmis Isim');
     expect(body.bioSummary).toBe('Yeni bio');
 
-    // Kanıt: parola hash'i response'ta HİÇ yok.
+    // Kanıt: parola hash'i response'ta HİÇ yok (global omit).
     expect(body).not.toHaveProperty('password');
 
-    // Kanıt: ham selfProfile (serbest-metin, gizli) sızmıyor.
+    // Kanıt: ham psikometri (veri-minimizasyonu) sızmıyor — düzenleme onayı için gereksiz.
     expect(body).not.toHaveProperty('selfProfile');
+    expect(body).not.toHaveProperty('discVector');
+    expect(body).not.toHaveProperty('temperamentJson');
   });
 
   it('POST /api/users/:id/temperament-test yanıtı password/discVector/selfProfile sızdırmaz', async () => {
