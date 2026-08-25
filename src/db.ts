@@ -44,7 +44,12 @@ const TENANT_SCOPED = new Set([
 const READ_OPS = new Set(['findMany', 'findFirst', 'count', 'aggregate', 'groupBy']);
 
 // ─── Prisma Client + RLS Extension ───────────────────────────────────────────
-const base = new PrismaClient();
+// Global omit (kalıcı savunma / madde 38): `password` hiçbir sorguda DEFAULT olarak
+// dönmez. `select`siz `create`/`update`/`findX` yapan bir uç yanlışlıkla parola
+// hash'ini response'a taşıyamaz. İhtiyaç duyan tek akış (login/reset doğrulaması)
+// explicit `select: { password: true }` yazar — Prisma'da `select`, `omit`'i override
+// eder, dolayısıyla o akışlar etkilenmez (bkz. authController.ts login/reset).
+const base = new PrismaClient({ omit: { user: { password: true } } });
 
 export const prisma = base.$extends({
   query: {

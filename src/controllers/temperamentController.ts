@@ -48,12 +48,23 @@ export async function submitTemperamentTest(req: RequestWithTenant, res: Respons
 
   const result = analyzeTemperament(parsed.data.answers);
 
+  // KVKK/over-fetch (madde 38): select'siz update ham User objesini (password hash +
+  // discVector + selfProfile + e-posta + CV alanları) response'a taşırdı. `analysis`
+  // zaten tam sonucu döndürdüğünden, yanıt yalnızca güncellenen kimlik+test alanlarına
+  // daraltılır. password global omit + explicit select ile iki kat dışarıdadır.
   const updatedUser = await prisma.user.update({
     where: { id: existing.id },
     data: {
       discType: result.dominantDisc,
       temperamentJson: result,
       enneagramWing: result.enneagramWing,
+    },
+    select: {
+      id: true,
+      discType: true,
+      temperamentJson: true,
+      enneagramWing: true,
+      updatedAt: true,
     },
   });
 

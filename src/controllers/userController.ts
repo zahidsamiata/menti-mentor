@@ -269,9 +269,14 @@ export async function updateUser(req: RequestWithTenant, res: Response) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
   }
 
+  // KVKK/over-fetch (madde 38): select'siz update ham User objesini (password hash +
+  // discVector + selfProfile + tüm PII) response'a taşırdı. Bu uç ADMIN-only profil
+  // düzenlemesidir → getUser'ın admin yolundaki merkezi USER_FULL_SELECT ile aynı
+  // güvenli set dönülür (password global omit + explicit select ile iki kat dışarıda).
   const updated = await prisma.user.update({
     where: { id: existing.id },
     data: parsed.data,
+    select: USER_FULL_SELECT,
   });
 
   return res.json(updated);
