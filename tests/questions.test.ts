@@ -103,6 +103,25 @@ describe('Questions: DISC Kilitleme', () => {
     expect(deleted).toBeNull();
   });
 
+  it('geçersiz soru girdisi → yanıtta anlamlı message döner (madde 69)', async () => {
+    // text çok kısa (min 10) → Zod validation hatası tetiklenir
+    const res = await http
+      .post('/api/questions')
+      .set(tenantHeaders(tenant.id, adminToken))
+      .send({ text: 'kısa', category: 'STK_CUSTOM', tenantScoped: true })
+      .expect(400);
+
+    const body = res.body as { error: string; message?: string };
+    expect(body.error).toBe('VALIDATION');
+    // Kullanıcıya anlamlı mesaj: alan etiketi + açıklama (generic "Hata" değil)
+    expect(body.message).toBeTruthy();
+    expect(body.message).toContain('Soru metni');
+
+    // Hassas iç detay SIZDIRILMAMALI: stack, dosya yolu, şema iç yapısı, alınan değer
+    const raw = JSON.stringify(res.body);
+    expect(raw).not.toMatch(/\.ts|\.js|stack|node_modules|ZodError|src[\\/]/i);
+  });
+
   it('MENTOR DISC sorusunu gizlemeye çalışırsa 403 (rol koruması)', async () => {
     const discQ = await createDiscQuestion();
     const mentor = await createUser({ tenantId: tenant.id, role: 'MENTOR' });

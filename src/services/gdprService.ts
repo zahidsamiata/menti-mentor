@@ -76,6 +76,11 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
         discVector: JsonNull,     // Kişilik verisi — hassas kategori
         discType: null,           // Kişilik verisi — hassas kategori
         temperamentJson: JsonNull,
+        discResultCard: JsonNull, // Kişilik "aha" kartı — hassas kategori (madde 93 kapsamında eklendi)
+        enneagramWing: null,      // Kişilik verisi — hassas kategori
+        avatarUrl: null,          // PII: profil fotoğrafı bağlantısı (fiziksel dosya silme = ayrı iş, madde 93)
+        linkedinUrl: null,        // PII: sosyal medya (doğrudan tanımlayıcı)
+        instagramUrl: null,       // PII: sosyal medya (doğrudan tanımlayıcı)
         isActive: false,      // Hesabı pasife al
       },
     });
@@ -99,7 +104,8 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
   const fieldsCleared = [
     'fullName', 'email', 'bioSummary', 'expertiseDetails', 'targetAudience',
     'volunteerHistory', 'pastProjects', 'education', 'selfProfile',
-    'discVector', 'discType', 'temperamentJson',
+    'discVector', 'discType', 'temperamentJson', 'discResultCard', 'enneagramWing',
+    'avatarUrl', 'linkedinUrl', 'instagramUrl',
     'userResponses',
     'userProfile.schools', 'userProfile.companies', 'userProfile.communities',
     'userProfile.disc', 'userProfile.ocean', 'userProfile.archetype',

@@ -116,6 +116,118 @@ describe('bookMeeting — requestMessage validasyonu', () => {
   });
 });
 
+describe('bookMeeting — haftalık görüşme limiti (maxMeetingsPerWeek)', () => {
+  let http: TestAgent;
+  let tenant: Tenant;
+  let mentor: User & { rawPassword: string };
+  let menti:  User & { rawPassword: string };
+  let mentiToken: string;
+
+  const VALID_MSG =
+    'Bu görüşmeyi istememin sebebi, kariyer geçişim hakkında mentorunuzun deneyiminden yararlanmak istememdir.';
+
+  beforeEach(async () => {
+    await cleanDb();
+    http   = agent();
+    tenant = await createTenant();
+    mentor = await createMentor(tenant.id);
+    menti  = await createMenti(tenant.id);
+    ({ accessToken: mentiToken } = await loginAs(http, menti.email, menti.rawPassword));
+
+    // Limiti 1'e çek — tek görüşmeden sonrası reddedilmeli.
+    await testPrisma.tenant.update({
+      where: { id: tenant.id },
+      data:  { maxMeetingsPerWeek: 1 },
+    });
+
+    // Mentör müsaitliği: FUTURE_DATE'in günü, geniş aralık (08:00-18:00).
+    const weekday = DAY_NAMES[FUTURE_DATE.getUTCDay()];
+    await testPrisma.availabilityBlock.create({
+      data: {
+        tenantId:  tenant.id,
+        userId:    mentor.id,
+        weekday:   weekday ?? 'MON',
+        startTime: '05:00',
+        endTime:   '18:00',
+        timezone:  'UTC',
+        isActive:  true,
+      },
+    });
+  });
+
+  it('limit altında (1/1) görüşme açılır → 201', async () => {
+    const res = await http
+      .post('/api/meetings/book')
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .send({
+        mentorUserId:   mentor.id,
+        format:         'ONLINE',
+        startsAt:       isoUtc(FUTURE_DATE, 9, 0),
+        endsAt:         isoUtc(FUTURE_DATE, 10, 0),
+        requestMessage: VALID_MSG,
+      });
+    expect(res.status).toBe(201);
+  });
+
+  it('limitte (2. görüşme, aynı hafta) → 409 limit mesajı', async () => {
+    // 1. görüşme — geçer.
+    const first = await http
+      .post('/api/meetings/book')
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .send({
+        mentorUserId:   mentor.id,
+        format:         'ONLINE',
+        startsAt:       isoUtc(FUTURE_DATE, 9, 0),
+        endsAt:         isoUtc(FUTURE_DATE, 10, 0),
+        requestMessage: VALID_MSG,
+      });
+    expect(first.status).toBe(201);
+
+    // 2. görüşme — aynı gün farklı saat (çakışma yok, aynı hafta) → limit aşımı.
+    const second = await http
+      .post('/api/meetings/book')
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .send({
+        mentorUserId:   mentor.id,
+        format:         'ONLINE',
+        startsAt:       isoUtc(FUTURE_DATE, 12, 0),
+        endsAt:         isoUtc(FUTURE_DATE, 13, 0),
+        requestMessage: VALID_MSG,
+      });
+    expect(second.status).toBe(409);
+    expect((second.body as { error: string }).error).toBe(
+      'Bu hafta için görüşme limitinize ulaştınız.',
+    );
+  });
+
+  it('iptal edilmiş (CANCELLED) görüşme sayıma dahil değil → yeni görüşme açılır 201', async () => {
+    // Aynı hafta içinde bir CANCELLED görüşme önceden var — kotayı TÜKETMEMELİ.
+    await testPrisma.meeting.create({
+      data: {
+        tenantId:     tenant.id,
+        mentorUserId: mentor.id,
+        mentiUserId:  menti.id,
+        status:       'CANCELLED',
+        format:       'ONLINE',
+        startsAt:     new Date(isoUtc(FUTURE_DATE, 8, 0)),
+        endsAt:       new Date(isoUtc(FUTURE_DATE, 9, 0)),
+      },
+    });
+
+    const res = await http
+      .post('/api/meetings/book')
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .send({
+        mentorUserId:   mentor.id,
+        format:         'ONLINE',
+        startsAt:       isoUtc(FUTURE_DATE, 14, 0),
+        endsAt:         isoUtc(FUTURE_DATE, 15, 0),
+        requestMessage: VALID_MSG,
+      });
+    expect(res.status).toBe(201);
+  });
+});
+
 describe('listMeetings — PENDING kuyruğunda requestMessage görünür', () => {
   let http: TestAgent;
   let tenant: Tenant;

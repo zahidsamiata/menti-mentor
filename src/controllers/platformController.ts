@@ -8,6 +8,7 @@ import { logger } from '../services/logger.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
 import { notifyTenantVerification } from '../services/tenantNotifications.js';
+import { maskName, maskContact, maskEmail } from '../services/mask.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -91,7 +92,14 @@ export async function getPlatformStats(_req: Request, res: Response) {
     prisma.meeting.count({ where: { status: 'COMPLETED' } }),
     prisma.tenant.count({ where: { verificationStatus: 'PENDING_REVIEW' } }),
     prisma.suspicionReport.count({ where: { reviewed: false } }),
-    prisma.systemLog.findMany({ orderBy: { createdAt: 'desc' }, take: 10 }),
+    // KVKK (madde 88, madde 80 ile aynı desen): SystemLog.meta (Json) hata stack + userId/tenantId
+    // içerebilir → PII sızma riski. Explicit select ile ham `meta` KASITLI dışarıda bırakılır;
+    // stats panelindeki "son loglar" kartı level/category/message/tarih ile admin işini görür.
+    prisma.systemLog.findMany({
+      select: { id: true, level: true, category: true, message: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    }),
     prisma.tenant.findMany({
       select: {
         id: true,
@@ -171,12 +179,52 @@ export async function getPlatformLogs(req: Request, res: Response) {
   if (level) where['level'] = level;
   if (category) where['category'] = category;
 
+  // KVKK: SystemLog.meta (Json) hata stack + userId/tenantId vb. içerebilir → PII sızma riski.
+  // CLAUDE.md "Loglar PII içermemeli" der ama yazım tarafında guard yok; okuma tarafında
+  // explicit select ile `meta` KASITLI dışarıda bırakılır (denetim panelinde level/category/
+  // message/tarih admin işini görür, ham meta response'a hiç girmez).
   const [logs, total] = await Promise.all([
-    prisma.systemLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit }),
+    prisma.systemLog.findMany({
+      where,
+      select: { id: true, level: true, category: true, message: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    }),
     prisma.systemLog.count({ where }),
   ]);
 
   return res.json({ items: logs, total });
+}
+
+/** listPendingTenants satırının maskelenmiş görünüm biçimi (birim testi için saf fonksiyona ayrıldı). */
+type PendingTenantRow = {
+  id: string;
+  name: string;
+  displayName: string | null;
+  slug: string;
+  isActive: boolean;
+  verificationStatus: string;
+  verificationNote: string | null;
+  createdAt: Date;
+  users: { fullName: string | null; email: string }[];
+};
+
+/**
+ * KVKK (madde 89): başvuran kurum yöneticisinin KİMLİĞİ (fullName + email) platform admin'e
+ * maskeli döner; ham PII response'a girmez. Onay/red/düzeltme akışı yalnız tenant ID ile çalışır
+ * (approveTenant/rejectTenant/requestTenantCorrection) ve bildirim e-postası `notifyTenantVerification`
+ * içinde ADMIN e-postasını yeniden çekerek gönderilir — yani ham e-posta bu listede İŞ İÇİN GEREKMEZ.
+ * `maskEmail` domain'i korur → admin başvuru domain'ini (ör. `@kurum.com`) doğrulayabilir, kimlik gizli kalır.
+ * Diğer platform-admin PII listeleriyle (suspicion/user-reports) aynı desen. Saf fonksiyon — DB gerektirmez.
+ */
+export function maskPendingTenantRow(t: PendingTenantRow) {
+  return {
+    ...t,
+    users: t.users.map((u) => ({
+      fullName: maskName(u.fullName),
+      email: maskEmail(u.email),
+    })),
+  };
 }
 
 // GET /api/platform/tenants/pending
@@ -201,7 +249,8 @@ export async function listPendingTenants(_req: Request, res: Response) {
     orderBy: { createdAt: 'asc' },
   });
 
-  return res.json({ items: tenants, total: tenants.length });
+  const items = tenants.map(maskPendingTenantRow);
+  return res.json({ items, total: items.length });
 }
 
 // GET /api/platform/tenants
@@ -350,7 +399,29 @@ export async function listSuspicionReports(req: Request, res: Response) {
   const reviewed = reviewedParam === 'true' ? true : reviewedParam === 'false' ? false : undefined;
 
   const where = reviewed !== undefined ? { reviewed } : {};
-  const items = await prisma.suspicionReport.findMany({ where, orderBy: { createdAt: 'desc' } });
+  // KVKK: raporlayan KİMLİĞİ (reporterName/contact) platform admin'e maskeli döner; ham PII response'a girmez.
+  // Rapor İÇERİĞİ (tenantName/description/durum/tarih) admin işini yapabilsin diye korunur.
+  const rows = await prisma.suspicionReport.findMany({
+    where,
+    select: {
+      id: true,
+      tenantName: true,
+      reporterRole: true,
+      description: true,
+      reviewed: true,
+      reviewNote: true,
+      createdAt: true,
+      reporterName: true,
+      contact: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const items = rows.map(({ reporterName, contact, ...rest }) => ({
+    ...rest,
+    reporterName: maskName(reporterName),
+    contact: maskContact(contact),
+  }));
 
   return res.json({ items, total: items.length });
 }
@@ -376,6 +447,33 @@ export async function reviewSuspicionReport(req: Request, res: Response) {
 
 // ─── Kullanıcı Şikayetleri (sistem-geneli) + Otomatik Tespit ──────────────────
 
+/** listUserReports satırının maskelenmiş görünüm biçimi (birim testi için saf fonksiyona ayrıldı). */
+type UserReportRow = {
+  id: string;
+  tenantId: string;
+  reason: string;
+  description: string | null;
+  status: string;
+  reviewNote: string | null;
+  createdAt: Date;
+  reporter: { fullName: string | null } | null;
+  target: { fullName: string | null } | null;
+};
+
+/**
+ * KVKK: raporlayan/raporlanan KİMLİĞİ (fullName) platform admin'e maskeli döner; ham PII response'a girmez.
+ * Rapor İÇERİĞİ (reason/description/durum/tarih/kurum) admin işini yapabilsin diye korunur.
+ * Saf fonksiyon — DB gerektirmez, birim testi kolaydır.
+ */
+export function maskUserReportRow(r: UserReportRow, tenantNameById: Map<string, string>) {
+  return {
+    ...r,
+    reporter: { fullName: maskName(r.reporter?.fullName) },
+    target: { fullName: maskName(r.target?.fullName) },
+    tenantName: tenantNameById.get(r.tenantId) ?? r.tenantId,
+  };
+}
+
 // GET /api/platform/user-reports?status=OPEN|REVIEWED|DISMISSED
 export async function listUserReports(req: Request, res: Response) {
   const statusRaw = req.query['status'] as string | undefined;
@@ -399,7 +497,7 @@ export async function listUserReports(req: Request, res: Response) {
     select: { id: true, name: true, displayName: true },
   });
   const nameById = new Map(tenants.map((t) => [t.id, t.displayName ?? t.name]));
-  const items = reports.map((r) => ({ ...r, tenantName: nameById.get(r.tenantId) ?? r.tenantId }));
+  const items = reports.map((r) => maskUserReportRow(r, nameById));
 
   // KVKK: platform admin kullanıcı şikayetlerini (PII içerir) görüntüledi → denetim izi.
   await auditPlatformAction('VIEW_USER_REPORTS', req, { count: items.length });
