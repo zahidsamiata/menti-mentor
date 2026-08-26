@@ -22,8 +22,10 @@ import {
   applyPendingAdjustment,
   rejectPendingAdjustment,
   getAlgorithmWeights,
+  getLastWeightChange,
   validateManualWeights,
   setManualWeights,
+  WEIGHT_CHANGE_AUDIT_MESSAGE,
 } from '../services/algorithmTuner.js';
 import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
 import { discLettersFromVector } from '../services/discLetters.js';
@@ -821,10 +823,16 @@ export async function getPendingTuning(req: RequestWithTenant, res: Response) {
  * Yönetici sistemin nasıl eşleştirdiğini görsün diye gösterim amaçlı. Kalibrasyon önerisi
  * olmasa da her zaman döner (varsayılan %60/%40). Kalibrasyon UI'ındaki "Mevcut" kolonuyla aynı
  * kaynak (getAlgorithmWeights). AYARLAMA YOK — yalnız okuma, tenant-scoped. Yeni şema alanı yok.
+ *
+ * `lastChange` (95): son manuel değişikliğin izi — kim (ad) / ne zaman / eski→yeni. Yoksa null.
+ * Tenant-scoped (yalnız kendi kurumunun izi); e-posta DÖNMEZ (PII minimizasyonu).
  */
 export async function getAlgorithmWeightsHandler(req: RequestWithTenant, res: Response) {
-  const weights = await getAlgorithmWeights(req.tenant.tenantId);
-  return res.json({ weights });
+  const [weights, lastChange] = await Promise.all([
+    getAlgorithmWeights(req.tenant.tenantId),
+    getLastWeightChange(req.tenant.tenantId),
+  ]);
+  return res.json({ weights, lastChange });
 }
 
 /**
@@ -851,7 +859,8 @@ export async function setAlgorithmWeightsHandler(req: RequestWithTenant, res: Re
   const result = await setManualWeights(tenantId, validation.sectorWeight, validation.discWeight);
 
   // Audit izi: kim, önce/sonra ne, ne zaman. (KVKK Md.12 denetim kaydı deseni — logger AUDIT.)
-  void logger.info('AUDIT', 'Kurum yöneticisi eşleştirme ağırlığını manuel ayarladı', {
+  // Mesaj sabiti algorithmTuner'dan gelir; getLastWeightChange aynı sabitle okur (95).
+  void logger.info('AUDIT', WEIGHT_CHANGE_AUDIT_MESSAGE, {
     actorUserId: req.auth?.userId ?? null,
     tenantId,
     previousWeights: result.previousWeights,

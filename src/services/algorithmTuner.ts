@@ -173,6 +173,75 @@ export async function getAlgorithmWeights(tenantId: string): Promise<AlgorithmWe
   return stored ?? { ...DEFAULT_WEIGHTS };
 }
 
+// ─── Son değişiklik izi (95) — "kim / ne zaman / eski→yeni" ────────────────────
+
+/**
+ * AUDIT log mesajı — manuel ağırlık ayarında yazılır (setAlgorithmWeightsHandler) ve
+ * son-değişiklik izini okumak için sorgulanır (getLastWeightChange). Tek kaynak = tek sabit
+ * (sihirli-dize tekrarı yok; iki taraf hep aynı mesajı kullanır).
+ */
+export const WEIGHT_CHANGE_AUDIT_MESSAGE = 'Kurum yöneticisi eşleştirme ağırlığını manuel ayarladı';
+
+/** Kalibrasyon sayfasındaki "son değişiklik" satırı için — kim/ne zaman/eski→yeni. */
+export type WeightChangeInfo = {
+  /** Aktörün ADI (e-posta DEĞİL — PII minimizasyonu). Silinmiş/anonimleştirilmiş/tenant-dışı ise null. */
+  actorName: string | null;
+  at: string; // ISO 8601 — değişiklik zamanı
+  previousSectorWeight: number;
+  previousDiscWeight: number;
+  newSectorWeight: number;
+  newDiscWeight: number;
+};
+
+/**
+ * Verilen tenant'ın SON manuel ağırlık değişikliğinin izini döndürür (yoksa null).
+ * Kaynak: SystemLog AUDIT kaydı (`meta.{actorUserId,tenantId,previousWeights,newWeights,timestamp}`).
+ *
+ * TENANT İZOLASYONU: SystemLog global tablodur (tenantId kolonu yok) → sorgu `meta.tenantId`
+ * eşitliğiyle filtrelenir; aktör adı da yalnız AYNI tenant'tan çözülür (başka kurumun izi sızmaz).
+ * PII minimizasyonu: yalnız `fullName` çözülür, e-posta okunmaz/döndürülmez.
+ */
+export async function getLastWeightChange(tenantId: string): Promise<WeightChangeInfo | null> {
+  const log = await prisma.systemLog.findFirst({
+    where: {
+      category: 'AUDIT',
+      message: WEIGHT_CHANGE_AUDIT_MESSAGE,
+      meta: { path: ['tenantId'], equals: tenantId },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { meta: true, createdAt: true },
+  });
+  if (!log?.meta) return null;
+
+  const meta = log.meta as {
+    actorUserId?: string | null;
+    previousWeights?: AlgorithmWeights;
+    newWeights?: AlgorithmWeights;
+    timestamp?: string;
+  };
+  const prev = meta.previousWeights;
+  const next = meta.newWeights;
+  if (!prev || !next) return null;
+
+  let actorName: string | null = null;
+  if (meta.actorUserId) {
+    const actor = await prisma.user.findFirst({
+      where: { id: meta.actorUserId, tenantId }, // tenant-scoped — izolasyon
+      select: { fullName: true },
+    });
+    actorName = actor?.fullName ?? null;
+  }
+
+  return {
+    actorName,
+    at: meta.timestamp ?? log.createdAt.toISOString(),
+    previousSectorWeight: prev.sectorWeight,
+    previousDiscWeight: prev.discWeight,
+    newSectorWeight: next.sectorWeight,
+    newDiscWeight: next.discWeight,
+  };
+}
+
 async function saveAlgorithmWeights(tenantId: string, weights: AlgorithmWeights): Promise<void> {
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
