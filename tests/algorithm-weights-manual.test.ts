@@ -26,6 +26,7 @@ describe('9a: PUT /algorithm-tuner/weights — manuel ağırlık ayarı', () => 
   let tenant: Tenant;
   let adminToken: string;
   let adminId: string;
+  let adminName: string;
 
   beforeEach(async () => {
     await cleanDb();
@@ -33,6 +34,7 @@ describe('9a: PUT /algorithm-tuner/weights — manuel ağırlık ayarı', () => 
     tenant = await createTenant();
     const admin = await createAdminUser(tenant.id);
     adminId = admin.id;
+    adminName = admin.fullName;
     const tokens = await loginAs(http, admin.email, admin.rawPassword);
     adminToken = tokens.accessToken;
   });
@@ -183,5 +185,79 @@ describe('9a: PUT /algorithm-tuner/weights — manuel ağırlık ayarı', () => 
     expect(meta.newWeights.sectorWeight).toBe(0.65);
     expect(meta.previousWeights).toBeDefined();
     expect(meta.timestamp).toBeDefined();
+  });
+
+  // ─── 95: GET /weights "son değişiklik" izi — kim / ne zaman / eski→yeni ──────
+
+  it('GET /weights: hiç değişiklik yapılmadıysa lastChange = null (uydurma yok)', async () => {
+    const res = await http
+      .get(WEIGHTS_PATH)
+      .set(tenantHeaders(tenant.id, adminToken))
+      .expect(200);
+    expect(res.body.weights.sectorWeight).toBe(0.6); // varsayılan
+    expect(res.body.lastChange).toBeNull();
+  });
+
+  it('GET /weights: manuel ayardan sonra lastChange aktör ADI + eski→yeni döner', async () => {
+    // Varsayılan 0.60 → 0.65 değiştir.
+    await http
+      .put(WEIGHTS_PATH)
+      .set(tenantHeaders(tenant.id, adminToken))
+      .send({ sectorWeight: 0.65 })
+      .expect(200);
+
+    // AUDIT log'u asenkron (void) — yazımın tamamlanması için lastChange dolana dek poll et.
+    let lastChange: {
+      actorName: string | null;
+      at: string;
+      previousSectorWeight: number;
+      previousDiscWeight: number;
+      newSectorWeight: number;
+      newDiscWeight: number;
+    } | null = null;
+    for (let i = 0; i < 20 && !lastChange; i++) {
+      const res = await http
+        .get(WEIGHTS_PATH)
+        .set(tenantHeaders(tenant.id, adminToken))
+        .expect(200);
+      lastChange = res.body.lastChange;
+      if (!lastChange) await new Promise((r) => setTimeout(r, 50));
+    }
+
+    expect(lastChange).not.toBeNull();
+    expect(lastChange?.actorName).toBe(adminName); // ad — e-posta DEĞİL
+    expect(lastChange?.previousSectorWeight).toBe(0.6);
+    expect(lastChange?.newSectorWeight).toBe(0.65);
+    expect(lastChange?.newDiscWeight).toBe(0.35);
+    expect(lastChange?.at).toBeDefined();
+    // PII minimizasyonu: yanıtta e-posta sızmasın.
+    expect(JSON.stringify(lastChange)).not.toContain('@');
+  });
+
+  it('TENANT İZOLASYONU (okuma): A kurumunun izi B kurumunun GET /weights yanıtında görünmez', async () => {
+    // A değişiklik yapar.
+    await http
+      .put(WEIGHTS_PATH)
+      .set(tenantHeaders(tenant.id, adminToken))
+      .send({ sectorWeight: 0.65 })
+      .expect(200);
+
+    // A'da izin oturması için bekle.
+    for (let i = 0; i < 20; i++) {
+      const res = await http.get(WEIGHTS_PATH).set(tenantHeaders(tenant.id, adminToken)).expect(200);
+      if (res.body.lastChange) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    // B kurumu hiç değişiklik yapmadı → kendi GET'inde lastChange null (A'nın izi sızmaz).
+    const tenantB = await createTenant();
+    const adminB = await createAdminUser(tenantB.id);
+    const httpB = agent();
+    const tokensB = await loginAs(httpB, adminB.email, adminB.rawPassword);
+    const resB = await httpB
+      .get(WEIGHTS_PATH)
+      .set(tenantHeaders(tenantB.id, tokensB.accessToken))
+      .expect(200);
+    expect(resB.body.lastChange).toBeNull();
   });
 });
