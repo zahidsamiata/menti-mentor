@@ -124,9 +124,10 @@ describe('anonymizeUser → bağlı serbest-metin PII temizlenir (madde 93)', ()
     await testPrisma.userReport.create({
       data: { tenantId, reporterUserId: userA, targetUserId: userB, reason: 'OTHER', description: `şikayet ${SECRET}` },
     });
+    // mentiGoal MENTİ'nin verisidir → A'yı MENTİ olarak kur (mentiGoal A'ya ait, anonimleşince temizlenir).
     await testPrisma.mentorshipAgreement.create({
       data: {
-        tenantId, mentorId: userA, mentiId: userB,
+        tenantId, mentorId: userB, mentiId: userA,
         meetingFrequency: 'WEEKLY', communicationChannel: 'ONLINE',
         durationWeeks: 12, targetMeetings: 12, mentiGoal: `hedef ${SECRET}`,
       },
