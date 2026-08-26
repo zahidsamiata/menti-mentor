@@ -16,6 +16,7 @@ import {
   getCoachingSuggestions,
   getPendingTuning,
   getAlgorithmWeightsHandler,
+  setAlgorithmWeightsHandler,
   approvePendingTuning,
   rejectPendingTuning,
   listAdmins,
@@ -70,6 +71,8 @@ router.post('/visibility-optin/:optInId/confirm', confirmDoubleOptIn as unknown 
 // ─── AlgorithmTuner Onay Kapısı ──────────────────────────────────────────────
 router.get( '/algorithm-tuner/pending', getPendingTuning     as unknown as RequestHandler);
 router.get( '/algorithm-tuner/weights', getAlgorithmWeightsHandler as unknown as RequestHandler);
+// 9a: kurum yöneticisi ağırlığı MANUEL ayarlar (tenant-scoped, ADMIN, auditli)
+router.put( '/algorithm-tuner/weights', setAlgorithmWeightsHandler as unknown as RequestHandler);
 router.post('/algorithm-tuner/approve', approvePendingTuning as unknown as RequestHandler);
 router.post('/algorithm-tuner/reject',  rejectPendingTuning  as unknown as RequestHandler);
 

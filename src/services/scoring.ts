@@ -83,6 +83,12 @@ export function computeDiscScore(
   return DISC_COMPATIBILITY[mentorDisc][mentiDisc];
 }
 
+// Varsayılan skor ağırlıkları — tenant'ta kayıtlı ağırlık yoksa bu değerler kullanılır.
+// algorithmTuner.DEFAULT_WEIGHTS ile aynı taban (0.60/0.40); burada saf-fonksiyon tarafında
+// da tekrar tanımlı ki DB bağımsız birim test edilebilsin.
+export const DEFAULT_SECTOR_WEIGHT = 0.6;
+export const DEFAULT_DISC_WEIGHT = 0.4;
+
 export function computeTotalScore(args: {
   mentiTags: string[];
   mentorTags: string[];
@@ -90,10 +96,16 @@ export function computeTotalScore(args: {
   mentorDisc?: DiscType | null;
   mentiVector?: DiscVector | null;
   qualityMultiplier?: number;
+  /** Tenant'a kayıtlı sektör ağırlığı (0-1). Verilmezse varsayılan 0.6 — eski davranış birebir. */
+  sectorWeight?: number;
+  /** Tenant'a kayıtlı DISC ağırlığı (0-1). Verilmezse varsayılan 0.4 — eski davranış birebir. */
+  discWeight?: number;
 }): ScoreBreakdown {
   const sectorScore = computeSectorScore(args.mentiTags, args.mentorTags);
   const discScore = computeDiscScore(args.mentiDisc, args.mentorDisc, args.mentiVector);
-  const base = sectorScore * 0.6 + discScore * 0.4;
+  const sectorWeight = args.sectorWeight ?? DEFAULT_SECTOR_WEIGHT;
+  const discWeight = args.discWeight ?? DEFAULT_DISC_WEIGHT;
+  const base = sectorScore * sectorWeight + discScore * discWeight;
   const totalScore = Math.min(100, Math.round(base * (args.qualityMultiplier ?? 1.0) * 10) / 10);
   const confidence = args.mentiVector?.confidence ?? (args.mentiDisc ? 1 : 0.5);
   return { sectorScore, discScore, totalScore, confidence };
