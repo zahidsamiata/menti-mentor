@@ -29,11 +29,25 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
+import { deleteLocalAvatar } from './avatarStorage.js';
 
 const JsonNull = Prisma.JsonNull;
 
 const ANON_NAME = '[Silinmiş Kullanıcı]';
 const ANON_EMAIL_PREFIX = 'deleted_';
+// Bağlı serbest-metin yer tutucuları (NOT NULL kolonlar için — null yerine placeholder, migration gerekmez):
+const ANON_MESSAGE_CONTENT = '[silindi]';       // Message.content (NOT NULL)
+const ANON_AGREEMENT_GOAL = '[kaldırıldı]';     // MentorshipAgreement.mentiGoal (NOT NULL)
+
+/**
+ * Kullanıcıya dönen DÜRÜST kapanış mesajı (madde 39, PO kararı 2026-08-26).
+ * "Silindi" DEMEZ — gerçek: kimliğe bağlanabilir veri anonimleştirilir, ortak kayıtlarda kimlik kaldırılır.
+ * (c) yolu seçildi: userId (rastgele cuid, kişisel bilgi içermez) bağlı kayıtlarda kalır; tam
+ * "geri-döndürülemez anonim" vaadi verilmez — bkz. KVKK 05-saklama-imha + kapak H-9.
+ */
+export const ACCOUNT_CLOSED_MESSAGE =
+  'Hesabınız kapatıldı ve kimliğinizle ilişkilendirilebilir verileriniz geri döndürülemez şekilde ' +
+  'anonimleştirildi. Diğer kullanıcılarla ortak kayıtlarda (görüşme, mesaj) kimliğiniz kaldırıldı.';
 
 // ─── 1. Anonimleştirme ────────────────────────────────────────────────────────
 
@@ -50,12 +64,16 @@ export type AnonymizeResult = {
 export async function anonymizeUser(userId: string, tenantId: string): Promise<AnonymizeResult> {
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId },
-    select: { id: true, email: true },
+    select: { id: true, email: true, avatarUrl: true },
   });
 
   if (!user) {
     throw new Error(`Kullanıcı bulunamadı: ${userId}`);
   }
+
+  // Fiziksel avatar dosyasını transaction SONRASI silmek için eski URL'i şimdi yakala
+  // (transaction avatarUrl'i null'lar; dosya silme dış kaynak → transaction'a giremez).
+  const previousAvatarUrl = user.avatarUrl;
 
   const anonymizedEmail = `${ANON_EMAIL_PREFIX}${userId}@anon.invalid`;
 
@@ -78,7 +96,7 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
         temperamentJson: JsonNull,
         discResultCard: JsonNull, // Kişilik "aha" kartı — hassas kategori (madde 93 kapsamında eklendi)
         enneagramWing: null,      // Kişilik verisi — hassas kategori
-        avatarUrl: null,          // PII: profil fotoğrafı bağlantısı (fiziksel dosya silme = ayrı iş, madde 93)
+        avatarUrl: null,          // PII: profil fotoğrafı bağlantısı (fiziksel dosya aşağıda silinir)
         linkedinUrl: null,        // PII: sosyal medya (doğrudan tanımlayıcı)
         instagramUrl: null,       // PII: sosyal medya (doğrudan tanımlayıcı)
         isActive: false,      // Hesabı pasife al
@@ -99,16 +117,77 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
         archetype: null,
       },
     });
+
+    // ── Oturum/token iptali (madde 39) — anonimleşen kullanıcı eski token'la işlem yapamamalı.
+    // Middleware TenantMembership.isActive kontrol eder → tüm üyelikleri pasife al (hesap kapalı,
+    // her tenant'ta erişim engellensin). Refresh/reset token'ları sil (yenileme de imkânsız).
+    await tx.tenantMembership.updateMany({ where: { userId }, data: { isActive: false } });
+    await tx.refreshToken.deleteMany({ where: { userId } });
+    await tx.passwordResetToken.deleteMany({ where: { userId } });
+
+    // ── Bağlı tablolardaki SERBEST-METİN PII'yi temizle (madde 93 — tam anonimleştirme, (c) yolu).
+    // Sahiplik-kapsamlı: yalnız anonimleşen kullanıcının YAZDIĞI/HAKKINDA-OLAN içerik. Karşı tarafın
+    // (B) kendi yazdıkları KORUNUR. userId rastgele cuid olduğundan sorgu doğal olarak A'ya kapsanır.
+    // Mesaj (iii): A'nın yazdığı içerik placeholder olur; B'nin mesajları + sohbet iskeleti kalır.
+    await tx.message.updateMany({
+      where: { senderUserId: userId },
+      data: { content: ANON_MESSAGE_CONTENT },
+    });
+    // Görüşme serbest metni + telefon (doğrudan PII). Görüşme iki-taraflı, tek yazar alanı yok →
+    // A'nın katıldığı görüşmelerin serbest metni temizlenir.
+    await tx.meeting.updateMany({
+      where: { OR: [{ mentorUserId: userId }, { mentiUserId: userId }] },
+      data: { notes: null, requestMessage: null, phoneNumber: null, locationText: null },
+    });
+    // Görüşme check-in notları — yazarı userId (sahiplik net).
+    await tx.meetingCheckIn.updateMany({
+      where: { userId },
+      data: { openNote: null, nextTopicNote: null },
+    });
+    // Geri bildirim serbest metinleri (skor/NPS gibi analitik alanlar KORUNUR).
+    await tx.feedback.updateMany({
+      where: { OR: [{ mentorId: userId }, { mentiId: userId }] },
+      data: { keyLearnings: null, specificComments: null, periodicCareerGrowth: null },
+    });
+    // Eşleşme talebi + görünürlük opt-in serbest metinleri.
+    await tx.matchRequest.updateMany({
+      where: { requesterUserId: userId },
+      data: { requestMessage: null },
+    });
+    await tx.visibilityOptIn.updateMany({
+      where: { OR: [{ mentorId: userId }, { mentiId: userId }] },
+      data: { iceBreaker: null, requestMessage: null },
+    });
+    // Şikayet açıklaması — yalnız A'nın YAZDIĞI (reporter). Hakkında yazılanlar (target) B'nin verisi → dokunma.
+    await tx.userReport.updateMany({
+      where: { reporterUserId: userId },
+      data: { description: null },
+    });
+    // Mentörlük sözleşmesi menti hedefi (NOT NULL → placeholder).
+    await tx.mentorshipAgreement.updateMany({
+      where: { mentiId: userId },
+      data: { mentiGoal: ANON_AGREEMENT_GOAL },
+    });
   });
+
+  // Transaction commit oldu → fiziksel avatar dosyasını best-effort sil (madde 93).
+  // Log-devam: silme başarısız olsa bile anonimleştirme GERİ ALINMAZ (DB'de avatarUrl zaten null,
+  // public URL kalmadı). deleteLocalAvatar ENOENT'i sessiz geçer, gerçek hatayı loglar (yetim dosya).
+  await deleteLocalAvatar(previousAvatarUrl);
 
   const fieldsCleared = [
     'fullName', 'email', 'bioSummary', 'expertiseDetails', 'targetAudience',
     'volunteerHistory', 'pastProjects', 'education', 'selfProfile',
     'discVector', 'discType', 'temperamentJson', 'discResultCard', 'enneagramWing',
-    'avatarUrl', 'linkedinUrl', 'instagramUrl',
-    'userResponses',
+    'avatarUrl', 'avatarFile', 'linkedinUrl', 'instagramUrl',
+    'userResponses', 'sessions',
     'userProfile.schools', 'userProfile.companies', 'userProfile.communities',
     'userProfile.disc', 'userProfile.ocean', 'userProfile.archetype',
+    'message.content', 'meeting.notes', 'meeting.requestMessage', 'meeting.phoneNumber',
+    'meeting.locationText', 'meetingCheckIn.openNote', 'meetingCheckIn.nextTopicNote',
+    'feedback.keyLearnings', 'feedback.specificComments', 'feedback.periodicCareerGrowth',
+    'matchRequest.requestMessage', 'visibilityOptIn.iceBreaker', 'visibilityOptIn.requestMessage',
+    'userReport.description', 'mentorshipAgreement.mentiGoal',
   ];
 
   void logger.info('SYSTEM', 'KVKK: Kullanıcı anonimleştirildi', {
@@ -130,69 +209,33 @@ export type HardDeleteResult = {
   userId: string;
   deletedAt: string;
   tablesAffected: string[];
+  /** true → fiziksel silme değil, anonimleştirmeye yönlendirildi (madde 39, PO kararı). */
+  anonymizedInstead: boolean;
 };
 
 /**
- * Kullanıcıyı ve tüm ilgili kayıtları kalıcı olarak siler.
- * ⚠️ GERİ ALINAMAZ — sadece açık kullanıcı talebi veya yasal zorunluluk ile kullanın.
+ * "Kalıcı silme" talebi (GDPR Md.17 / KVKK) — ANONİMLEŞTİRMEYE YÖNLENDİRİLİR.
+ *
+ * ⚠️ Madde 39 / PO kararı (2026-08-26): Gerçek fiziksel silme, User'a bağlı ~13 Restrict-FK tablosu
+ * (Meeting/Feedback/Message/MentorshipAgreement…) nedeniyle transaction'ı rollback ediyordu → "silme"
+ * fiilen ÇALIŞMIYOR ve çağrılınca patlıyordu. PO "silme yerine anonimleştirme" tercih etti (avukat
+ * onaylı). Bu yüzden bu fonksiyon artık `anonymizeUser`'a delege eder: PII + serbest metin temizlenir,
+ * oturum/token iptal edilir, avatar dosyası silinir. userId (rastgele cuid, kişisel bilgi içermez)
+ * bağlı kayıtlarda kalır. Kullanıcıya "silindi" DENMEZ (bkz. ACCOUNT_CLOSED_MESSAGE + kapak H-9).
  */
 export async function hardDeleteUser(userId: string, tenantId: string): Promise<HardDeleteResult> {
-  const user = await prisma.user.findFirst({
-    where: { id: userId, tenantId },
-    select: { id: true },
-  });
+  const anon = await anonymizeUser(userId, tenantId);
 
-  if (!user) {
-    throw new Error(`Kullanıcı bulunamadı: ${userId}`);
-  }
-
-  const tablesAffected: string[] = [];
-
-  await prisma.$transaction(async (tx) => {
-    // Bağımlı kayıtları önce sil (FK kısıtları nedeniyle sıra önemli)
-    const responses = await tx.userResponse.deleteMany({ where: { userId } });
-    if (responses.count > 0) tablesAffected.push('UserResponse');
-
-    const optIns = await tx.visibilityOptIn.deleteMany({
-      where: { OR: [{ mentorId: userId }, { mentiId: userId }] },
-    });
-    if (optIns.count > 0) tablesAffected.push('VisibilityOptIn');
-
-    const requests = await tx.matchRequest.deleteMany({ where: { requesterUserId: userId } });
-    if (requests.count > 0) tablesAffected.push('MatchRequest');
-
-    const memberships = await tx.clubMembership.deleteMany({ where: { userId } });
-    if (memberships.count > 0) tablesAffected.push('ClubMembership');
-
-    const feedbackLogs = await tx.feedbackLog.deleteMany({
-      where: { OR: [{ mentorId: userId }, { mentiId: userId }] },
-    });
-    if (feedbackLogs.count > 0) tablesAffected.push('FeedbackLog');
-
-    // UserProfile: PII (schools/companies/communities) dahil tüm profil kalıcı silinir.
-    // (User silme zaten cascade eder; burada açıkça silip tablesAffected'a yazarız.)
-    const profiles = await tx.userProfile.deleteMany({ where: { userId } });
-    if (profiles.count > 0) tablesAffected.push('UserProfile');
-
-    // Toplantıları ve geri bildirimleri anonimleştir (istatistik için koru)
-    // Not: Meeting ve Feedback kayıtları silinmez — mentorId/mentiId NULL yapılır.
-    // Bu Prisma şemasında FK nullable değilse transaction rollback olur.
-    // Öneri: Meeting.mentorId ve mentiId alanları nullable hale getirilmeli (ADIM 9 öneri).
-
-    await tx.user.delete({ where: { id: userId } });
-    tablesAffected.push('User');
-  });
-
-  void logger.info('SYSTEM', 'KVKK: Kullanıcı kalıcı olarak silindi', {
+  void logger.info('SYSTEM', 'KVKK: "Silme" talebi anonimleştirmeye yönlendirildi (madde 39)', {
     userId,
     tenantId,
-    tablesAffected,
   });
 
   return {
     userId,
-    deletedAt: new Date().toISOString(),
-    tablesAffected,
+    deletedAt: anon.anonymizedAt,
+    tablesAffected: ['anonymized'],
+    anonymizedInstead: true,
   };
 }
 

@@ -14,6 +14,7 @@ import { randomUUID } from 'crypto';
 import { mkdir, writeFile, unlink } from 'fs/promises';
 import { join, resolve, basename } from 'path';
 import { config } from '../config.js';
+import { logger } from './logger.js';
 
 export type ImageKind = { ext: 'jpg' | 'png' | 'webp'; mime: string };
 
@@ -92,7 +93,12 @@ export async function deleteLocalAvatar(avatarUrl: string | null | undefined): P
 
   try {
     await unlink(full);
-  } catch {
-    /* dosya zaten yoksa yok say */
+  } catch (err) {
+    // Dosya zaten yoksa (ENOENT) sessiz geç. Başka hata (izin/disk) = yetim dosya riski → logla,
+    // ama akışı durdurma (KVKK anonimleştirme geri alınmaz; dosya adı userId taşır, temizlik gerekir).
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT') {
+      void logger.warn('SYSTEM', 'Avatar dosyası silinemedi (yetim dosya kalabilir)', { file: name, code });
+    }
   }
 }
