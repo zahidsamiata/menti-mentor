@@ -2,9 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> ⚠️ GÜNCELLEME (2026-08-27, belge bilançosu madde 124 — grep-kanıtlı denetim): Bu dosyadaki bayat "kod-gerçeği" iddiaları düzeltildi (model sayısı 5→38, silinmiş `iceBreaker.ts`/`matchReason.ts`/`llmRateLimiter` referansları, LLM içsel çelişkisi, etiket uzunlukları). Düzeltmeler koddan doğrulandı (`backend/prisma/schema.prisma`, `src/`). Kaynak: `docs/raporlar/bilanco/`.
+
 ## Project Overview
 
-**Menti-Mentor** — a multi-tenant SaaS backend for mentor-mentee matching. Written in TypeScript (Node.js, Express 5), backed by PostgreSQL via Prisma. The LLM (OpenAI) is used only for ice-breaker generation, not for ranking.
+**Menti-Mentor** — a multi-tenant SaaS backend for mentor-mentee matching. Written in TypeScript (Node.js, Express 5), backed by PostgreSQL via Prisma. **Scoring and ranking are purely mathematical (no LLM).** The former OpenAI ice-breaker path has been **removed** (`iceBreaker.ts` and `matchReason.ts` deleted); only unused scaffolding remains (`config.ts` OpenAI env + `llmRetry.ts` with 0 imports).
 
 ## Commands
 
@@ -41,14 +43,15 @@ Every request must carry `X-Tenant-Id`. The `tenant.ts` middleware validates it 
 | `src/db.ts` | Prisma client singleton |
 | `src/middleware/tenant.ts` | X-Tenant-Id extraction and validation |
 | `src/services/scoring.ts` | Sector (60%) + DISC (40%) score computation |
-| `src/services/matching.ts` | `rankMentisForMentor` — sorts candidates by score |
+| `src/services/matching.ts` | `rankMentisForMentor` (mentor→menti) + `rankMentorsForMenti` (menti→mentor) — sorts candidates by score |
 | `src/services/tenantSharing.ts` | Cross-tenant pool logic (`isSharedPoolActive` flag) |
-| `src/services/iceBreaker.ts` | OpenAI call (decommissioned — no longer wired to any controller) |
 | `src/controllers/` | HTTP handlers for tenants, users, matching, requests |
+
+> ⚠️ `iceBreaker.ts` and `matchReason.ts` were **deleted** (LLM path removed). `llmRetry.ts` (`fetchWithRetry`) still exists but has **0 imports** (unused; kept for a possible future integration).
 
 ### Data Model (Prisma)
 
-Five models: `Tenant`, `User`, `VisibilityOptIn`, `MatchRequest`, `JobListing`.
+**38 models** (see `schema.prisma`; `grep -c '^model ' backend/prisma/schema.prisma`). Frequently referenced: `Tenant`, `User`, `TenantMembership`, `VisibilityOptIn`, `MatchRequest`, `Match`, `Meeting`, `Feedback`, `Question`, `UserResponse`, `Conversation`/`Message`, `Club`, `JobListing`.
 
 - All tenant-scoped tables carry a `tenantId` foreign key.
 - `UserRole`: `ADMIN | MENTOR | MENTI`
@@ -59,7 +62,7 @@ Five models: `Tenant`, `User`, `VisibilityOptIn`, `MatchRequest`, `JobListing`.
 
 1. **Tenant isolation** — tenants share the candidate pool only when both have `isSharedPoolActive = true`.
 2. **Opt-in gate** — a mentor must approve a menti's `VisibilityOptIn` before profile details are revealed.
-3. **LLM removed** — `iceBreaker.ts` is decommissioned. Mentis write their own `requestMessage` on `VisibilityOptIn` (Akış B) and on `MatchRequest`. No OpenAI dependency at runtime.
+3. **LLM removed** — `iceBreaker.ts` and `matchReason.ts` were **deleted** (not merely decommissioned). Mentis write their own `requestMessage` on `VisibilityOptIn` (Akış B) and on `MatchRequest`. No active OpenAI call path at runtime (only unused `config.ts` env + `llmRetry.ts` scaffolding).
 4. **Scoring** — purely mathematical (no LLM): sector tag overlap (60%) + DISC matrix (40%).
 
 ### ES Modules
@@ -84,10 +87,10 @@ All data in this system is classified into two categories. Code must never mix t
 1. **Never add a new field** to any user-facing select/export without classifying it as PII or Analytical first.
 2. **Analytics endpoints** (`/api/analytics/*`, `/api/admin/kpi`) must return only aggregate counts, averages, and distributions — never row-level PII.
 3. **gdprService.ts** is the single source of truth for KVKK/GDPR operations. All anonymization/deletion logic must go through it, never inline.
-4. **LLM calls** (`iceBreaker.ts`, `matchReason.ts`) must never receive raw email addresses, full names beyond what is needed for the prompt, or any field not explicitly listed in the service's argument type.
+4. **LLM calls** — there is currently **no active LLM call path** (`iceBreaker.ts`/`matchReason.ts` were deleted). If LLM integration is reintroduced, calls must never receive raw email addresses, full names beyond what the prompt needs, or any field not explicitly listed in the service's argument type.
 5. **Logs** (`logger.ts`, `requestLogger.ts`) must not contain PII. Log `userId` and `tenantId` only — never `email`, `fullName`, or `discVector`.
-6. **Rate limiting**: `llmRateLimiter` middleware exists but is no longer applied (LLM removed). Keep it for future integrations but do not add it to any route.
-7. **sectorTags** input must always be sanitized: trim, lowercase, max 50 chars per tag, alphanumeric + limited special chars only. The same applies to `UserProfile` tag fields (`skillTags`, `goalTags`, `schools`, `companies`, `communities`) — sanitized via `sanitizeTags()` in `onboardingController.ts` (trim, lowercase, whitelist regex, length cap, dedupe) before persistence.
+6. **Rate limiting**: the `llmRateLimiter` middleware was **removed** with the LLM path (no longer in the codebase — `grep -r llmRateLimiter src` is empty). If LLM integration returns, add rate limiting before wiring any OpenAI route. (General/auth rate limiters live in `src/middleware/rateLimiter.ts`.)
+7. **sectorTags** input must always be sanitized: trim, lowercase, **max 50 chars per tag** (`SECTOR_TAG_SCHEMA` in `userController.ts`), alphanumeric + limited special chars only. `UserProfile` tag fields (`skillTags`, `goalTags`, `schools`, `companies`, `communities`) are sanitized via `sanitizeTags()` in `onboardingController.ts` (trim, lowercase, whitelist regex, **max 80 chars**, dedupe) before persistence.
 
 ### Data Retention Policy (KVKK Art.7)
 
