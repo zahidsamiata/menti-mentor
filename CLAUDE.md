@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Menti-Mentor** — a multi-tenant SaaS backend for mentor-mentee matching. Written in TypeScript (Node.js, Express 5), backed by PostgreSQL via Prisma. **Scoring and ranking are purely mathematical (no LLM).** The former OpenAI ice-breaker path has been **removed** (`iceBreaker.ts` and `matchReason.ts` deleted); only unused scaffolding remains (`config.ts` OpenAI env + `llmRetry.ts` with 0 imports).
+**Menti-Mentor** — a multi-tenant SaaS backend for mentor-mentee matching. Written in TypeScript (Node.js, Express 5), backed by PostgreSQL via Prisma. **Scoring and ranking are purely mathematical (no LLM).** The former OpenAI ice-breaker path has been **removed** (`iceBreaker.ts`, `matchReason.ts` and `llmRetry.ts` all deleted); only unused `config.ts` OpenAI env scaffolding remains.
 
 ## Commands
 
@@ -47,7 +47,7 @@ Every request must carry `X-Tenant-Id`. The `tenant.ts` middleware validates it 
 | `src/services/tenantSharing.ts` | Cross-tenant pool logic (`isSharedPoolActive` flag) |
 | `src/controllers/` | HTTP handlers for tenants, users, matching, requests |
 
-> ⚠️ `iceBreaker.ts` and `matchReason.ts` were **deleted** (LLM path removed). `llmRetry.ts` (`fetchWithRetry`) still exists but has **0 imports** (unused; kept for a possible future integration).
+> ⚠️ `iceBreaker.ts`, `matchReason.ts` and `llmRetry.ts` (`fetchWithRetry`) were all **deleted** (LLM path removed; `llmRetry.ts` had 0 imports after its only consumer `matchReason.ts` was removed — Faz 1b, G10-01).
 
 ### Data Model (Prisma)
 
@@ -62,7 +62,7 @@ Every request must carry `X-Tenant-Id`. The `tenant.ts` middleware validates it 
 
 1. **Tenant isolation** — tenants share the candidate pool only when both have `isSharedPoolActive = true`.
 2. **Opt-in gate** — a mentor must approve a menti's `VisibilityOptIn` before profile details are revealed.
-3. **LLM removed** — `iceBreaker.ts` and `matchReason.ts` were **deleted** (not merely decommissioned). Mentis write their own `requestMessage` on `VisibilityOptIn` (Akış B) and on `MatchRequest`. No active OpenAI call path at runtime (only unused `config.ts` env + `llmRetry.ts` scaffolding).
+3. **LLM removed** — `iceBreaker.ts`, `matchReason.ts` and `llmRetry.ts` were **deleted** (not merely decommissioned). Mentis write their own `requestMessage` on `VisibilityOptIn` (Akış B) and on `MatchRequest`. No active OpenAI call path at runtime (only unused `config.ts` env remains).
 4. **Scoring** — purely mathematical (no LLM): sector tag overlap (60%) + DISC matrix (40%).
 
 ### ES Modules
