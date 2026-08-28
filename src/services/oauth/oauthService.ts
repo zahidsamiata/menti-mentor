@@ -21,6 +21,7 @@ import { sendAdminNewUserNotification } from '../emailService.js';
 import { notifyAdminsPendingUser } from '../notificationService.js';
 import { ensureMembershipSafe } from '../membership.js';
 import { recordUserActivity } from '../activityService.js';
+import { recordSignupConsent } from '../consentService.js';
 import type { OAuthCallbackResult, OAuthStatePayload, OAuthUserProfile } from './oauthTypes.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
@@ -95,23 +96,29 @@ async function handleNewUser(
     throw new OAuthConflictError('TENANT_BULUNAMADI', 'Kuruluş bulunamadı. Lütfen geçerli bir bağlantı kullanın.');
   }
 
-  const newUser = await prisma.user.create({
-    data: {
-      tenantId: tenant.id,
-      email: profile.email,
-      fullName: profile.fullName,
-      role: state.role,
-      authProvider: profile.provider,
-      approvalStatus: 'PENDING',
-      avatarUrl: profile.avatarUrl ?? null,
-      // password null — OAuth kullanıcıları şifre kullanmaz
-      // KVKK Md.5 (ispat yükü): OAuth ile katılım da açık rıza anlamına gelir —
-      // kullanıcı OAuth başlatırken davet/kayıt bağlamında KVKK'yı kabul eder.
-      // Local register (authController) new Date() deseniyle aynı; NULL bırakılırsa
-      // rıza anı kanıtlanamaz. Bkz. K2 (yol haritası v1-A).
-      kvkkConsentAt: new Date(),
-    },
-    select: { id: true, tenantId: true, role: true, fullName: true },
+  // KVKK: rızasız kayıt olmamalı → user.create + tipli rıza AYNI transaction'da atomik.
+  // YALNIZ yeni kullanıcıda (bu fonksiyon mevcut kullanıcıda çağrılmaz) → tekrar rıza yazılmaz.
+  const newUser = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        tenantId: tenant.id,
+        email: profile.email,
+        fullName: profile.fullName,
+        role: state.role,
+        authProvider: profile.provider,
+        approvalStatus: 'PENDING',
+        avatarUrl: profile.avatarUrl ?? null,
+        // password null — OAuth kullanıcıları şifre kullanmaz
+        // KVKK Md.5 (ispat yükü): OAuth ile katılım da açık rıza anlamına gelir —
+        // kullanıcı OAuth başlatırken davet/kayıt bağlamında KVKK'yı kabul eder.
+        // Local register (authController) new Date() deseniyle aynı; legacy dual-write.
+        kvkkConsentAt: new Date(),
+      },
+      select: { id: true, tenantId: true, role: true, fullName: true },
+    });
+    // Tipli rıza (G1-07): AYDINLATMA + ACIK_RIZA, source=OAUTH.
+    await recordSignupConsent({ userId: created.id }, 'OAUTH', { db: tx });
+    return created;
   });
 
   // b3: Kurum üyeliğini garanti et. GÜVENLİK: non-fatal — OAuth girişini ASLA bozmaz.
