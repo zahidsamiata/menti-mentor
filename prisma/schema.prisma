@@ -226,6 +226,7 @@ model Tenant {
   invitationTemplates InvitationTemplate[]
   agreements          MentorshipAgreement[]
   conversations       Conversation[]
+  consents            Consent[]
 }
 
 model User {
@@ -340,6 +341,9 @@ model User {
   conversationsAsMentor Conversation[] @relation("ConversationsAsMentor")
   conversationsAsMenti  Conversation[] @relation("ConversationsAsMenti")
   messagesSent          Message[]      @relation("MessagesSent")
+
+  // KVKK — tipli + sürümlü rıza kayıtları (G1-07). kvkkConsentAt ile dual-write.
+  consents Consent[]
 
   // email @unique ile global unique; ayrıca tenant bazlı sorgular için index
   @@index([tenantId, role, isActive])
@@ -1238,4 +1242,43 @@ model InvitationTemplate {
 
   @@unique([tenantId, role, format])
   @@index([tenantId])
+}
+
+// ── KVKK Rıza (Consent) — G1-07 ────────────────────────────────────────────
+// Tipli + sürümlü + geri-alınabilir rıza kaydı. Tasarım: konu/consent-modeli-plani-2026-08-28.md
+// Neden ayrı tablo (minimal kvkkConsentAt değil): yeni rıza türü = yeni SATIR (migration YOK).
+// kvkkConsentAt (User/Tenant) SİLİNMEZ — dual-write, geri alma yolu.
+model Consent {
+  id        String        @id @default(cuid())
+  // Özne: bireysel rıza → userId; kurum (self-serve register) → tenantId. Biri dolu olmalı.
+  userId    String?
+  tenantId  String?
+  type      ConsentType // rıza türü (aydınlatma onayı / açık rıza / ...)
+  version   String // metin sürümü, ör. 'v1.0' (kodda CONSENT_VERSION sabiti)
+  grantedAt DateTime // rıza anı — KVKK Md.5 ispat
+  revokedAt DateTime? // geri çekme anı (null = aktif)
+  source    ConsentSource // rıza hangi akıştan alındı
+  createdAt DateTime      @default(now())
+
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // "Güncel rıza" okuma: özne+type için revokedAt=null en yeni grantedAt
+  @@index([userId, type])
+  @@index([tenantId, type])
+}
+
+enum ConsentType {
+  AYDINLATMA // KVKK Aydınlatma Metni okundu/onaylandı (bilgilendirme onayı)
+  ACIK_RIZA // Kişisel veri işleme açık rızası (KVKK Md.5/1)
+  // İLERİDE (yeni değer yeter, tablo/kolon migration'ı GEREKMEZ):
+  //   PAZARLAMA        — iletişim/pazarlama rızası (avukat: gelebilir)
+  //   BIG_FIVE_PROFIL  — kişilik profili işleme açık rızası (G1-11, avukat bekliyor)
+}
+
+enum ConsentSource {
+  FORM // normal e-posta/şifre kaydı
+  OAUTH // Google / LinkedIn
+  SELF_SERVE // STK kurum kaydı
+  BACKFILL // eski kayıt taşıma (backfill script)
 }
