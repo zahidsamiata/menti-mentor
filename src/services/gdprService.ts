@@ -294,32 +294,55 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
 // ─── 4. Süresi Dolan Veri Temizliği ──────────────────────────────────────────
 
 /**
- * Yasal saklama süresi dolan logları temizler.
+ * KVKK yasal saklama süreleri — tek kaynak (sihirli sayı yok).
+ * Süre değişirse yalnız burası düzeltilir.
+ */
+const SYSTEM_LOG_RETENTION_DAYS = 90;
+const FEEDBACK_LOG_RETENTION_YEARS = 3; // yasal minimum
+
+/**
+ * Yasal saklama süresi dolan verileri temizler.
  * Önerilen çalıştırma: Haftalık cron (ADIM 11 ile entegre).
  *
  * Saklama süreleri:
- *   - SystemLog: 90 gün
+ *   - SystemLog:   90 gün
  *   - FeedbackLog: 3 yıl (yasal minimum)
+ *   - Message:     süre HENÜZ KARARLAŞMADI (bkz. TODO aşağıda / G1-10)
  */
 export type PurgeResult = {
   purgedAt: string;
   systemLogsDeleted: number;
+  feedbackLogsDeleted: number;
 };
 
 export async function purgeExpiredData(): Promise<PurgeResult> {
   const systemLogCutoff = new Date();
-  systemLogCutoff.setDate(systemLogCutoff.getDate() - 90);
+  systemLogCutoff.setDate(systemLogCutoff.getDate() - SYSTEM_LOG_RETENTION_DAYS);
+
+  const feedbackLogCutoff = new Date();
+  feedbackLogCutoff.setFullYear(feedbackLogCutoff.getFullYear() - FEEDBACK_LOG_RETENTION_YEARS);
 
   const systemLogs = await prisma.systemLog.deleteMany({
     where: { createdAt: { lt: systemLogCutoff } },
   });
 
+  // FeedbackLog: 3 yıllık yasal saklama dolduğunda imha (createdAt bazlı; şema değişikliği yok).
+  const feedbackLogs = await prisma.feedbackLog.deleteMany({
+    where: { createdAt: { lt: feedbackLogCutoff } },
+  });
+
+  // TODO(G1-10): Message saklama süresi avukat aydınlatma metniyle belirlenecek.
+  // Süre netleşene kadar Message imha kodu BİLİNÇLİ olarak YAZILMADI — kodda keyfi bir
+  // süre uygularsak yayınlanacak aydınlatma metniyle çelişir (metin ↔ kod tutarlılığı).
+
   void logger.info('SYSTEM', 'KVKK: Süresi dolan veriler temizlendi', {
     systemLogsDeleted: systemLogs.count,
+    feedbackLogsDeleted: feedbackLogs.count,
   });
 
   return {
     purgedAt: new Date().toISOString(),
     systemLogsDeleted: systemLogs.count,
+    feedbackLogsDeleted: feedbackLogs.count,
   };
 }

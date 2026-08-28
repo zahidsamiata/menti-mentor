@@ -97,7 +97,7 @@ All data in this system is classified into two categories. Code must never mix t
 | Table | Retention | Enforcement |
 |---|---|---|
 | `SystemLog` | 90 days | `purgeExpiredData()` cron — weekly |
-| `FeedbackLog` | 3 years | Manual admin review |
+| `FeedbackLog` | 3 years | `purgeExpiredData()` cron — weekly (G1-06) |
 | `UserResponse` | Until user anonymized/deleted | `anonymizeUser()` / `hardDeleteUser()` |
 | `VisibilityOptIn` | Until hard-delete | Cascades with user |
 

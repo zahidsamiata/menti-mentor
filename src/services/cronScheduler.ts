@@ -84,6 +84,7 @@ async function runWeeklyPurge(): Promise<void> {
     const result = await purgeExpiredData();
     void logger.info('SYSTEM', `Cron: KVKK temizliği tamamlandı`, {
       systemLogsDeleted: result.systemLogsDeleted,
+      feedbackLogsDeleted: result.feedbackLogsDeleted,
     });
   } catch (err) {
     void logger.error('SYSTEM', 'Cron: KVKK veri temizliği başarısız', { error: String(err) });
