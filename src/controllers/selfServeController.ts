@@ -7,6 +7,7 @@ import { prisma } from '../db.js';
 import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { ensureMembership } from '../services/membership.js';
+import { recordSignupConsent } from '../services/consentService.js';
 import { config } from '../config.js';
 
 const BCRYPT_ROUNDS = 12;
@@ -311,6 +312,11 @@ export async function selfServeRegister(req: Request, res: Response) {
     // requireTenant middleware'inin TenantMembership.isActive kontrolü için zorunlu.
     // b3: ortak helper (DRY) — tx İÇİNDE, atomik (kurucu admin için membership zorunlu).
     await ensureMembership(tx, user.id, tenant.id, 'ADMIN');
+
+    // KVKK tipli rıza (G1-07) — dual-write. Hem KURUM (tenant) hem KURUCU BİREY (user)
+    // için AYDINLATMA + ACIK_RIZA, aynı transaction'da atomik. kvkkConsentAt legacy kalır.
+    await recordSignupConsent({ tenantId: tenant.id }, 'SELF_SERVE', { db: tx });
+    await recordSignupConsent({ userId: user.id }, 'SELF_SERVE', { db: tx });
 
     return { tenant, user };
   });

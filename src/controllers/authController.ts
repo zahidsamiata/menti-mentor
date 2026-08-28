@@ -13,6 +13,7 @@ import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthState
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
 import { ensureMembershipSafe } from '../services/membership.js';
+import { recordSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { config } from '../config.js';
@@ -164,25 +165,31 @@ export async function register(req: Request, res: Response) {
 
   const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-  const user = await prisma.user.create({
-    data: {
-      tenantId:     tenant.id,
-      email,
-      password:     hashedPassword,
-      authProvider: 'LOCAL',
-      fullName,
-      role,
-      approvalStatus: 'PENDING',
-      kvkkConsentAt:  new Date(), // KVKK Md.5: onay anını kaydet
-    },
-    select: {
-      id: true,
-      email: true,
-      fullName: true,
-      role: true,
-      tenantId: true,
-      approvalStatus: true,
-    },
+  // KVKK: rızasız kayıt olmamalı → user.create + tipli rıza (AYDINLATMA + ACIK_RIZA) AYNI
+  // transaction'da atomik. kvkkConsentAt legacy ispat olarak dual-write edilir (G1-07).
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        tenantId:     tenant.id,
+        email,
+        password:     hashedPassword,
+        authProvider: 'LOCAL',
+        fullName,
+        role,
+        approvalStatus: 'PENDING',
+        kvkkConsentAt:  new Date(), // KVKK Md.5: onay anını kaydet (legacy, dual-write)
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        tenantId: true,
+        approvalStatus: true,
+      },
+    });
+    await recordSignupConsent({ userId: created.id }, 'FORM', { db: tx });
+    return created;
   });
 
   // Her kullanıcı için UserProfile yaşam döngüsünü başlat (idempotent).
