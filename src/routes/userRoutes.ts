@@ -147,11 +147,18 @@ router.get(
 router.get(
   '/mentors/:mentorId/filter',
   requireRole('ADMIN', 'MENTOR'),
+  // IDOR (Y3/3b-2): sahiplik kontrolü — mentör yalnız KENDİ filtre tercihlerini okur
+  // (başka mentörün minScore/blockedDiscTypes tercihleri sızmasın). Bkz. PUT (Y4).
+  requireSelfOrAdmin('mentorId'),
   getMentorFilter as unknown as RequestHandler,
 );
 router.put(
   '/mentors/:mentorId/filter',
   requireRole('ADMIN', 'MENTOR'),
+  // IDOR (Y4/3b-2): tenant kontrolü sahiplik DEĞİL — requireSelfOrAdmin ile bir mentör yalnız
+  // KENDİ filtresini yazabilir. Aksi halde mentör A, mentör B'nin eşleşme filtresini değiştirip
+  // rakibinin aday havuzunu sabote edebilirdi.
+  requireSelfOrAdmin('mentorId'),
   upsertMentorFilter as unknown as RequestHandler,
 );
 
