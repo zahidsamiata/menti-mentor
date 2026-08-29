@@ -194,6 +194,39 @@ export function checkSlugRateLimiter(req: Request, res: Response, next: NextFunc
   return next();
 }
 
+// ─── Self-servis KVKK hakları (G1-05) — kullanıcı başına sıkı limit ───────────
+// /me/data-export ağır sorgudur (birden çok tablo); /me/delete-account geri alınamaz.
+// Her ikisi de kullanıcı başına sınırlanır → spam/kötüye-kullanım azaltma. requireAuth
+// SONRASINDA mount edilmeli ki req.auth.userId hazır olsun (yoksa IP'ye düşer, defensive).
+
+/** GET /api/me/data-export — kullanıcı başına dakikada sınırlı dışa aktarma (varsayılan 5/dk). */
+export function dataExportRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const userId = (req as unknown as { auth?: { userId?: string } }).auth?.userId ?? clientIp(req);
+  const limit = Number(process.env['DATA_EXPORT_RATE_RPM'] ?? 5);
+  if (!checkLimit(`data-export:${userId}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla veri indirme talebi. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
+/** POST /api/me/delete-account — kullanıcı başına dakikada sınırlı kapatma denemesi (varsayılan 5/dk). */
+export function accountDeleteRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const userId = (req as unknown as { auth?: { userId?: string } }).auth?.userId ?? clientIp(req);
+  const limit = Number(process.env['ACCOUNT_DELETE_RATE_RPM'] ?? 5);
+  if (!checkLimit(`account-delete:${userId}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla hesap kapatma denemesi. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
 /** Test yardımcısı: in-memory sayaçları sıfırlar (yalnızca testlerde kullanılır). */
 export function resetRateLimiters(): void {
   counters.clear();

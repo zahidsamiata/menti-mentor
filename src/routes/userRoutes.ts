@@ -6,12 +6,12 @@ import { submitTemperamentTest } from '../controllers/temperamentController.js';
 import { getRankedMentisForMentor, getRankedMentorsForMenti, setVisibilityOptIn } from '../controllers/matchingController.js';
 import { createMatchRequest, listRequests, getRequest } from '../controllers/requestController.js';
 import { getUserClubs } from '../controllers/clubController.js';
-import { anonymizeUserHandler, hardDeleteUserHandler, exportUserDataHandler } from '../controllers/gdprController.js';
+import { anonymizeUserHandler, hardDeleteUserHandler, exportUserDataHandler, exportMyDataHandler, deleteMyAccountHandler } from '../controllers/gdprController.js';
 import { completedOrientation } from '../controllers/userController.js';
 import { uploadMyAvatar } from '../controllers/avatarController.js';
 import { createReport } from '../controllers/reportController.js';
 import { avatarUploadMiddleware } from '../middleware/avatarUpload.js';
-import { avatarUploadRateLimiter } from '../middleware/rateLimiter.js';
+import { avatarUploadRateLimiter, dataExportRateLimiter, accountDeleteRateLimiter } from '../middleware/rateLimiter.js';
 import { getMentorFilter, upsertMentorFilter } from '../controllers/mentorFilterController.js';
 import { getMentorDashboardMetrics } from '../controllers/mentorMetricsController.js';
 import { getNextAdaptiveQuestion, submitAdaptiveAnswer, previewAdaptiveResult } from '../controllers/adaptiveTestController.js';
@@ -181,6 +181,23 @@ router.get(
   '/users/:id/export',
   requireAuth(),
   exportUserDataHandler as unknown as RequestHandler,
+);
+
+// ─── Self-servis KVKK hakları (G1-05) — userId TOKEN'dan, IDOR yok ────────────
+// GET  /me/data-export   → kullanıcı kendi verisini indirir (JSON)
+// POST /me/delete-account → kullanıcı kendi hesabını kapatır (anonimleştirme, e-posta teyidi)
+// Sıra: requireAuth (req.auth) → rate limit (userId'ye ihtiyaç duyar) → controller.
+router.get(
+  '/me/data-export',
+  requireAuth(),
+  dataExportRateLimiter,
+  exportMyDataHandler as unknown as RequestHandler,
+);
+router.post(
+  '/me/delete-account',
+  requireAuth(),
+  accountDeleteRateLimiter,
+  deleteMyAccountHandler as unknown as RequestHandler,
 );
 
 export default router;
