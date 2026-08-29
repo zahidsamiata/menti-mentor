@@ -225,9 +225,17 @@ export async function listMeetings(req: RequestWithTenant, res: Response) {
 
   const { mentorId, mentiId, status, pendingFeedback } = parsed.data;
 
+  // Yetki (Y2/3b-2): admin dışı kullanıcı YALNIZ taraf olduğu görüşmeleri görür.
+  // Aksi halde tüm tenant'ın görüşme meta verisi (isim, sectorTags, beklenti, eşleşme skoru)
+  // peer'lere sızıyordu. ADMIN tenant genelini görür (program yönetimi). Opsiyonel mentorId/mentiId
+  // query'leri korunur; non-admin'de OR ile AND'lenir → yine yalnız kendi kayıtları döner.
+  const isAdmin = req.auth?.role === 'ADMIN';
+  const meId = req.auth?.userId;
+
   const meetings = await prisma.meeting.findMany({
     where: {
       tenantId: req.tenant.tenantId,
+      ...(isAdmin ? {} : { OR: [{ mentorUserId: meId }, { mentiUserId: meId }] }),
       ...(mentorId && { mentorUserId: mentorId }),
       ...(mentiId  && { mentiUserId:  mentiId  }),
       ...(status   && { status }),

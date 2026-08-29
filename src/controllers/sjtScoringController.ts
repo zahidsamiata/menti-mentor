@@ -52,12 +52,24 @@ export async function computeProfileHandler(req: RequestWithTenant, res: Respons
   }
 
   const { userId, role, answers } = parsed.data;
+
+  // Yetki (Y5/3b-2): userId + role GÖVDEDEN geliyor. Guard olmadan bir üye, başkasının
+  // OCEAN/archetype/archetypeRole'ünü (rol flip dahil) ezebilirdi. Kural: yalnız KENDİ
+  // profilini hesaplar; ADMIN herhangi birini. Non-admin için role de token'dan zorlanır
+  // (gövdeyle rol yükseltme/flip engeli). computeAndStoreProfile zaten user:{tenantId} ile
+  // tenant'a sınırlı → cross-tenant değil; buradaki eksik tenant-İÇİ sahiplikti.
+  const isAdmin = req.auth?.role === 'ADMIN';
+  if (!isAdmin && userId !== req.auth?.userId) {
+    return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca kendi profilinizi hesaplayabilirsiniz.' });
+  }
+  const effectiveRole = isAdmin ? role : (req.auth!.role);
+
   const sjtOverrides =
     Array.isArray(answers) && answers.length > 0
       ? await scoreSjtAnswers(answers as SjtAnswer[])
       : undefined;
 
-  const profile = await computeAndStoreProfile(userId, role, req.tenant.tenantId, sjtOverrides);
+  const profile = await computeAndStoreProfile(userId, effectiveRole, req.tenant.tenantId, sjtOverrides);
 
   return res.json({
     userId: profile.userId,
