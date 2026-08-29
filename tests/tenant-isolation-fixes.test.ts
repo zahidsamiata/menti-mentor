@@ -20,18 +20,22 @@ describe('Tenant izolasyonu düzeltmeleri', () => {
     http = agent();
   });
 
-  it('getMentorFilter: başka tenant mentörünün filtresi okunamaz (404), kendi 200', async () => {
+  it('getMentorFilter: başkasının mentör filtresi okunamaz (403), kendi 200', async () => {
     const tenantA = await createTenant();
     const tenantB = await createTenant();
     const mentorA = await createMentor(tenantA.id);
     const mentorB = await createMentor(tenantB.id);
     const { accessToken } = await loginAs(http, mentorA.email, mentorA.rawPassword);
 
-    // Cross-tenant: A'nın token'ıyla B'nin mentör filtresi → 404 (izolasyon)
+    // Başka mentörün (burada cross-tenant B) filtresi → 403.
+    // ⚠️ GÜNCELLEME (Y3/3b-2): eskiden controller 404 dönerdi; artık route'a eklenen
+    // requireSelfOrAdmin('mentorId') AUTH katmanında, tenant lookup'ından ÖNCE reddediyor.
+    // 403 tüm non-owner (aynı-tenant peer dahil) için TEK-TİP → varlık ifşası yok. Asıl fix
+    // aynı-tenant peer sızıntısıydı (mentör A, mentör C'nin filtresini 200 ile okuyabiliyordu).
     await http
       .get(`/api/mentors/${mentorB.id}/filter`)
       .set(tenantHeaders(tenantA.id, accessToken))
-      .expect(404);
+      .expect(403);
 
     // Kendi tenant'ındaki mentör → 200
     await http
