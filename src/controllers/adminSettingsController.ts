@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { extractBearerToken, verifyToken } from '../middleware/jwtAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
+import { logger } from '../services/logger.js';
 
 // ─── Ortak Yardımcı: Tenant ADMIN JWT doğrulaması ────────────────────────────
 // selfServeController'daki extractAdminPayload ile aynı pattern.
@@ -106,6 +107,14 @@ export async function updateTenantSettings(req: Request, res: Response) {
   });
 
   invalidateTenant(tenantId);
+
+  // Denetim izi (G1-14/G1-15): program ayarı değişikliği kim/ne zaman/hangi alanlar.
+  // PII YOK — yalnız actorId + tenantId + değişen alan ADLARI (değerler değil) loglanır.
+  void logger.info('AUDIT', 'Tenant program ayarları güncellendi', {
+    actorId: payload.sub,
+    tenantId,
+    changedFields: Object.keys(parsed.data),
+  });
 
   return res.json({
     message: 'Program ayarları güncellendi.',

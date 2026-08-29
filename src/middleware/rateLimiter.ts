@@ -227,6 +227,26 @@ export function accountDeleteRateLimiter(req: Request, res: Response, next: Next
   return next();
 }
 
+// ─── Self-serve kurum başvurusu spam koruması (G1-26) ─────────────────────────
+// POST /api/tenants/self-serve/register PUBLIC'tir ve her çağrıda bir Tenant + admin User
+// oluşturur (ağır + kalıcı). X-Tenant-Id taşımaz → generalRateLimiter'ın zayıf 'anon' kovasına
+// düşer. register/suspicion deseniyle aynı: IP-bazlı EK sıkı limit. Eşik call-time'da okunur
+// (test kendi eşiğini ayarlar). GEREKÇE: meşru bir kurucu tek başvuru yapar; 5/dk/IP insan
+// akışını engellemez ama scriptli toplu sahte-başvuru burst'ünü keser. (Mevcut altyapı 1-dk
+// sliding window; saat-bazlı limit window parametresi + cleanup revizyonu gerektirir → ayrı iş.)
+/** POST /api/tenants/self-serve/register — sahte kurum başvurusu koruması (varsayılan 5/dk/IP). */
+export function selfServeRegisterRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['SELF_SERVE_REGISTER_RATE_RPM'] ?? 5);
+  if (!checkLimit(`self-serve-register:${clientIp(req)}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla kurum başvurusu denemesi. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
 /** Test yardımcısı: in-memory sayaçları sıfırlar (yalnızca testlerde kullanılır). */
 export function resetRateLimiters(): void {
   counters.clear();
