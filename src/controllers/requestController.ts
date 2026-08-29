@@ -86,12 +86,19 @@ export async function listRequests(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
+  // Yetki (Y1/3b-2): admin dışı kullanıcı YALNIZ taraf olduğu talepleri görür — gönderen
+  // (requesterUserId) VEYA hedef mentör (targetType=USER, targetId). Aksi halde tüm tenant'ın
+  // eşleşme talepleri + serbest-metin requestMessage (PII) peer'lere sızıyordu. ADMIN tenant
+  // genelini görür (program yönetimi); istenirse requesterUserId query'siyle daraltır.
+  const isAdmin = req.auth?.role === 'ADMIN';
+  const meId = req.auth?.userId;
+
   const items = await prisma.matchRequest.findMany({
     where: {
       tenantId: req.tenant.tenantId,
-      ...(parsed.data.requesterUserId !== undefined && {
-        requesterUserId: parsed.data.requesterUserId,
-      }),
+      ...(isAdmin
+        ? (parsed.data.requesterUserId !== undefined && { requesterUserId: parsed.data.requesterUserId })
+        : { OR: [{ requesterUserId: meId }, { targetType: 'USER', targetId: meId }] }),
       ...(parsed.data.targetType !== undefined && { targetType: parsed.data.targetType }),
     },
     orderBy: { createdAt: 'desc' },
