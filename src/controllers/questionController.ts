@@ -128,11 +128,16 @@ export async function createQuestion(req: RequestWithTenant, res: Response) {
     });
   }
 
-  const { tenantScoped, ...data } = parsed.data;
+  // Yetki (Y6/3b-2): Bu uç TENANT admininedir (requireTenant + requireRole('ADMIN')).
+  // Global soru (tenantId:null) yaratımı YASAK — aksi halde bir kurumun admini `tenantScoped:false`
+  // göndererek TÜM kurumların soru havuzuna görünen içerik enjekte edebilirdi (cross-tenant kirlilik).
+  // Global sorular yalnız seed/platform seviyesindedir. Bu yüzden `tenantScoped` bayrağı YOK SAYILIR;
+  // buradan yaratılan her soru DAİMA istek tenant'ına sınırlıdır.
+  const { tenantScoped: _ignoredTenantScoped, ...data } = parsed.data;
 
   const { prisma } = await import('../db.js');
   const question = await prisma.question.create({
-    data: { ...data, tenantId: tenantScoped ? req.tenant.tenantId : null },
+    data: { ...data, tenantId: req.tenant.tenantId },
   });
   // Yeni soru eklenince confidence hedefi değişir — cache'i invalidate et
   invalidateDimensionalCountCache();
