@@ -30,6 +30,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
 import { deleteLocalAvatar } from './avatarStorage.js';
+import { revokeConsent } from './consentService.js';
 
 const JsonNull = Prisma.JsonNull;
 
@@ -168,6 +169,12 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
       where: { mentiId: userId },
       data: { mentiGoal: ANON_AGREEMENT_GOAL },
     });
+
+    // ── KVKK açık rızasını geri çek (G1-05). Hesap kapanınca ACIK_RIZA geçerliliğini
+    // yitirir; aktif satıra revokedAt=now() yazılır — YENİ SATIR AÇILMAZ, geçmiş SİLİNMEZ
+    // (denetim izi korunur, bkz. consentService). AYDINLATMA bir onay değil bilgilendirme
+    // beyanıdır → geri çekilmez. Aktif rıza yoksa (eski/backfill'siz kullanıcı) no-op.
+    await revokeConsent({ userId }, 'ACIK_RIZA', tx);
   });
 
   // Transaction commit oldu → fiziksel avatar dosyasını best-effort sil (madde 93).
@@ -239,6 +246,26 @@ export async function hardDeleteUser(userId: string, tenantId: string): Promise<
   };
 }
 
+/**
+ * Self-servis hesap kapatma guard'ı (G1-05): Kullanıcı, kurumun SON aktif ADMIN'i mi?
+ *
+ * Son admin kendini kapatırsa kurum yönetici­siz (sahipsiz) kalır → self-servis kapatma
+ * engellenir, açık hata verilir. Kurum-içi rol kaynağı TenantMembership.role'dür
+ * (User.role DEĞİL — bkz. CLAUDE.md veri modeli; bir kullanıcı farklı kurumlarda farklı rolde
+ * olabilir). MENTOR/MENTI için guard uygulanmaz (false döner).
+ */
+export async function isSoleActiveTenantAdmin(userId: string, tenantId: string): Promise<boolean> {
+  const [selfIsActiveAdmin, otherActiveAdmins] = await Promise.all([
+    prisma.tenantMembership.count({
+      where: { tenantId, userId, role: 'ADMIN', isActive: true },
+    }),
+    prisma.tenantMembership.count({
+      where: { tenantId, role: 'ADMIN', isActive: true, userId: { not: userId } },
+    }),
+  ]);
+  return selfIsActiveAdmin > 0 && otherActiveAdmins === 0;
+}
+
 // ─── 3. Veri Dışa Aktarma (KVKK Md.11 / GDPR Md.20) ─────────────────────────
 
 export type UserDataExport = {
@@ -248,10 +275,14 @@ export type UserDataExport = {
   responses: Array<{ questionId: string; value: number; createdAt: Date }>;
   feedbackLogs: Array<Record<string, unknown>>;
   matchRequests: Array<Record<string, unknown>>;
+  /** KVKK Md.11: verdiği/geri çektiği rızaların denetim izi (tip, sürüm, tarih). */
+  consents: Array<Record<string, unknown>>;
+  /** Yalnız SAYI — mesaj içeriği KARŞI TARAFI da içerir, dışa aktarılmaz (PII sızıntısı önlemi). */
+  messageCount: number;
 };
 
 export async function exportUserData(userId: string, tenantId: string): Promise<UserDataExport> {
-  const [user, responses, feedbackLogs, matchRequests] = await Promise.all([
+  const [user, responses, feedbackLogs, matchRequests, consents, messageCount] = await Promise.all([
     prisma.user.findFirst({
       where: { id: userId, tenantId },
       select: {
@@ -273,6 +304,14 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
       where: { requesterUserId: userId },
       select: { targetType: true, targetId: true, createdAt: true },
     }),
+    // Rıza denetim izi (kendi verisi) — Consent tenant-scope DIŞI, userId ile global.
+    prisma.consent.findMany({
+      where: { userId },
+      select: { type: true, version: true, source: true, grantedAt: true, revokedAt: true },
+      orderBy: { grantedAt: 'desc' },
+    }),
+    // Yalnız kendi gönderdiği mesajların SAYISI — içerik dışa aktarılmaz (karşı taraf PII'si).
+    prisma.message.count({ where: { senderUserId: userId } }),
   ]);
 
   if (!user) {
@@ -288,6 +327,8 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
     responses,
     feedbackLogs: feedbackLogs as Array<Record<string, unknown>>,
     matchRequests: matchRequests as Array<Record<string, unknown>>,
+    consents: consents as Array<Record<string, unknown>>,
+    messageCount,
   };
 }
 
