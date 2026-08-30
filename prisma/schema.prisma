@@ -1197,8 +1197,9 @@ model UserReport {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  reporter User @relation("ReportsMade", fields: [reporterUserId], references: [id])
-  target   User @relation("ReportsReceived", fields: [targetUserId], references: [id])
+  // onDelete: Restrict (PO kararı 2026-08-30) — MentorshipAgreement ile aynı ilke.
+  reporter User @relation("ReportsMade", fields: [reporterUserId], references: [id], onDelete: Restrict)
+  target   User @relation("ReportsReceived", fields: [targetUserId], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
   @@index([status])
@@ -1253,9 +1254,11 @@ model MentorshipAgreement {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-  mentor User   @relation("AgreementsAsMentor", fields: [mentorId], references: [id])
-  menti  User   @relation("AgreementsAsMenti", fields: [mentiId], references: [id])
+  // onDelete: Restrict (PO kararı 2026-08-30) — anonimleştirme satır silmez; çift taraflı kayıt,
+  // bir tarafın silinmesi diğerinin geçmişini silmemeli; mevcut ->Tenant deseniyle tutarlı.
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  mentor User   @relation("AgreementsAsMentor", fields: [mentorId], references: [id], onDelete: Restrict)
+  menti  User   @relation("AgreementsAsMenti", fields: [mentiId], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
   @@index([mentorId])
