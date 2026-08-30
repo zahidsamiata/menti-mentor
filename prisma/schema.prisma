@@ -60,6 +60,38 @@ enum ExpectationCategory {
   SEKTOR_TANIMA
 }
 
+// Üç soru (S1/S2/S3) — değerlendirme tasarımı §10.2 (PO onaylı). Enum sabitleri
+// UPPER_SNAKE ASCII; görünen kullanıcı metni ayrı (form turunda keskinleşir).
+enum MentiNeed {
+  KARAR_VEREMIYORUM
+  BECERIDE_TAKILDIM
+  GUVENMIYORUM
+  INSANLARI_TANIMIYORUM
+  KONUSACAK_BIRI
+}
+
+enum MentorStrength {
+  YON_BULMA
+  BECERI
+  OZGUVEN
+  AG_KURMA
+  DINLEME
+}
+
+enum SupportApproach {
+  YOL_GOSTERME
+  BIRLIKTE_DUSUNME
+  DINLEME
+}
+
+// PriorityValue İngilizce, diğer üçü Türkçe — PO kararı (2026-08-30), tutarsızlık değil.
+enum PriorityValue {
+  RESULT
+  LEARNING
+  UNDERSTOOD
+  PERSPECTIVE
+}
+
 enum MeetingFormat {
   ONLINE
   IN_PERSON
@@ -255,6 +287,13 @@ model User {
   enneagramWing         String?
   rematchPriority       Boolean               @default(false)
   rematchCount          Int                   @default(0)
+
+  // Üç soru (S1/S2/S3) — değerlendirme tasarımı §10.2. Additive/opsiyonel; cevapsız meşru.
+  // interactionStyle DONDURULMUŞ (yukarıda) — supportApproach onun yerini alır (her iki rol).
+  mentiNeeds      MentiNeed[]      @default([])
+  mentorStrengths MentorStrength[] @default([])
+  supportApproach SupportApproach?
+  priorityValue   PriorityValue?
 
   bioSummary       String?
   expertiseDetails String?
