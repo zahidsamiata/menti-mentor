@@ -6,6 +6,7 @@ import {
   submitDiscTest,
   getDiscQuestions,
   updateSocialProfile,
+  submitMatchingPreferences,
 } from '../controllers/onboardingController.js';
 
 const router = Router();
@@ -41,6 +42,14 @@ router.patch(
   '/users/me/social',
   requireAuth(),
   updateSocialProfile as unknown as RequestHandler,
+);
+
+// ─── Üç soru (S1/S2/S3) — arketip kartından sonra toplanır (tasarım §10.2) ────
+// PATCH /api/users/me/matching-preferences → dört alanı doldurur (migration YOK; alanlar mevcut).
+router.patch(
+  '/users/me/matching-preferences',
+  requireAuth(),
+  submitMatchingPreferences as unknown as RequestHandler,
 );
 
 export default router;

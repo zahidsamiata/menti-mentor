@@ -361,6 +361,70 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
   });
 }
 
+// ─── PATCH /api/users/me/matching-preferences ────────────────────────────────
+// Üç soru (S1/S2/S3, tasarım §10.2) — arketip kartından SONRA toplanır. Alanlar
+// User modelinde ZATEN VAR (backend #62); bu uç yalnız doldurur (migration YOK).
+// ⚠️ EK2 (PO kararı): dördü de OPSİYONEL kalır — S1 (mentiNeeds/mentorStrengths) BOŞ
+// bırakılabilir ("henüz netleşmedi" dürüst cevaptır; zorla seçtirmek rastgele sinyal
+// üretir, motor onu %45 ağırlıkla ciddiye alır). S2/S3 zorunluluğu FE katmanında; backend
+// nullable. "≤2 seçim" hem burada (.max(2)) hem FE'de zorlanır.
+const MENTI_NEEDS      = ['KARAR_VEREMIYORUM', 'BECERIDE_TAKILDIM', 'GUVENMIYORUM', 'INSANLARI_TANIMIYORUM', 'KONUSACAK_BIRI'] as const;
+const MENTOR_STRENGTHS = ['YON_BULMA', 'BECERI', 'OZGUVEN', 'AG_KURMA', 'DINLEME'] as const;
+const SUPPORT_APPROACHES = ['YOL_GOSTERME', 'BIRLIKTE_DUSUNME', 'DINLEME'] as const;
+const PRIORITY_VALUES  = ['RESULT', 'LEARNING', 'UNDERSTOOD', 'PERSPECTIVE'] as const;
+
+const MatchingPreferencesSchema = z.object({
+  mentiNeeds:      z.array(z.enum(MENTI_NEEDS)).max(2).optional(),
+  mentorStrengths: z.array(z.enum(MENTOR_STRENGTHS)).max(2).optional(),
+  supportApproach: z.enum(SUPPORT_APPROACHES).optional(),
+  priorityValue:   z.enum(PRIORITY_VALUES).optional(),
+});
+
+export async function submitMatchingPreferences(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({
+      error:   'KIMLIK_DOGRULANMADI',
+      message: 'Bu işlem için giriş yapmanız gerekmektedir.',
+    });
+  }
+
+  const parsed = MatchingPreferencesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+  const { mentiNeeds, mentorStrengths, supportApproach, priorityValue } = parsed.data;
+
+  // Rol uyumu: menti mentör-gücü, mentör menti-ihtiyacı GÖNDEREMEZ (yanlış-rol sinyalini reddet).
+  const role = req.auth.role;
+  if (role === 'MENTI' && mentorStrengths !== undefined) {
+    return res.status(403).json({ error: 'ROL_UYUMSUZ', message: 'Menti mentör gücü gönderemez.' });
+  }
+  if (role === 'MENTOR' && mentiNeeds !== undefined) {
+    return res.status(403).json({ error: 'ROL_UYUMSUZ', message: 'Mentör menti ihtiyacı gönderemez.' });
+  }
+
+  // Self-write: yalnız kendi kaydına — id token'dan (req.auth.userId) → IDOR yapısal imkânsız.
+  const updated = await prisma.user.update({
+    where: { id: req.auth.userId },
+    data: {
+      ...(mentiNeeds      !== undefined && { mentiNeeds }),
+      ...(mentorStrengths !== undefined && { mentorStrengths }),
+      ...(supportApproach !== undefined && { supportApproach }),
+      ...(priorityValue   !== undefined && { priorityValue }),
+    },
+    select: {
+      id:              true,
+      mentiNeeds:      true,
+      mentorStrengths: true,
+      supportApproach: true,
+      priorityValue:   true,
+      updatedAt:       true,
+    },
+  });
+
+  return res.json({ message: 'Tercihlerin kaydedildi.', user: updated });
+}
+
 // ─── POST /api/users/disc/submit ─────────────────────────────────────────────
 
 const AnswerSchema = z.object({
