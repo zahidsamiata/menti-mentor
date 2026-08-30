@@ -167,7 +167,7 @@ async function runDraftTenantReminder(): Promise<void> {
  * 96 saati geçmiş ve hâlâ taslak olan tenant'ları siler (GDPR/KVKK veri minimizasyonu).
  * Cascade: users + memberships + refreshTokens otomatik silinir.
  */
-async function runDraftTenantCleanup(): Promise<void> {
+async function runDraftTenantCleanup(): Promise<{ deleted: number; skipped: number }> {
   void logger.info('SYSTEM', 'Cron: Taslak tenant temizliği başladı');
   try {
     const cutoff = new Date(Date.now() - DRAFT_CLEANUP_HOURS * 60 * 60 * 1000);
@@ -178,11 +178,23 @@ async function runDraftTenantCleanup(): Promise<void> {
         createdAt:      { lt: cutoff },
         isActive:       true,
       },
-      select: { id: true, name: true },
+      // Anlaşma sayısı: anlaşması olan tenant TERK EDİLMİŞ değil KULLANILMIŞ demektir → silinmez.
+      select: { id: true, name: true, _count: { select: { agreements: true } } },
     });
 
     let deleted = 0;
+    let skipped = 0;
     for (const t of stale) {
+      // Anlaşması olan taslak tenant KULLANILMIŞ → silme (onboarding'i bitmemiş olsa da). Görünmez
+      // birikmesin diye atlama SystemLog'a yazılır (PII yok: yalnız tenantId + anlaşma sayısı).
+      if (t._count.agreements > 0) {
+        void logger.info('SYSTEM', 'Taslak tenant atlandı: anlaşması var', {
+          tenantId: t.id,
+          agreementCount: t._count.agreements,
+        });
+        skipped++;
+        continue;
+      }
       try {
         // Kullanıcıları sil (cascade yeterli değilse manuel)
         await prisma.user.deleteMany({ where: { tenantId: t.id } });
@@ -193,9 +205,11 @@ async function runDraftTenantCleanup(): Promise<void> {
       }
     }
 
-    void logger.info('SYSTEM', 'Cron: Taslak tenant temizliği tamamlandı', { deleted });
+    void logger.info('SYSTEM', 'Cron: Taslak tenant temizliği tamamlandı', { deleted, skipped });
+    return { deleted, skipped };
   } catch (err) {
     void logger.error('SYSTEM', 'Cron: Taslak tenant temizliği hatası', { error: String(err) });
+    return { deleted: 0, skipped: 0 };
   }
 }
 
