@@ -40,4 +40,23 @@ describe('OAuth — yeni kullanıcıda kvkkConsentAt set edilir (K2)', () => {
     expect(user?.kvkkConsentAt).not.toBeNull();
     expect(user?.kvkkConsentAt).toBeInstanceOf(Date);
   });
+
+  // REGRESYON (PO 2026-09-01, Seçenek A): LOCAL register'a eklenen "davet=APPROVED" iyileştirmesi
+  // OAuth'u ETKİLEMEZ — OAuth zinciri davet token'ı taşımıyor (4 katman), `oauthService` kapsam dışı.
+  // OAuth yeni kullanıcı hâlâ PENDING yazılır. Gelecek "OAuth davet token'ı taşıma" turunda beklenti
+  // burada nettir (o tur bu testi APPROVED-for-invite'a genişletecek). Bkz. 00-KARAR-TAKIP.
+  it('OAuth yeni kullanıcı APPROVED DEĞİL → PENDING kalır (LOCAL fix OAuth\'u etkilemez)', async () => {
+    const email = `oauth-pending-${Date.now()}@test.local`;
+
+    await handleOAuthCallback(
+      { providerUserId: 'g-456', email, fullName: 'OAuth Pending', provider: 'GOOGLE' },
+      { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'test-nonce' },
+    );
+
+    const user = await testPrisma.user.findUnique({
+      where: { email },
+      select: { approvalStatus: true },
+    });
+    expect(user?.approvalStatus).toBe('PENDING');
+  });
 });

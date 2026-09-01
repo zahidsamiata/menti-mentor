@@ -6,10 +6,17 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import jwt from 'jsonwebtoken';
 import { agent, loginAs, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser } from './helpers/factories.js';
+import { config } from '../src/config.js';
 import type { Tenant } from '@prisma/client';
+
+/** Geçerli davet token'ı üret (createInvitation ile BİREBİR aynı imza: type='invitation'). */
+function signInvite(tenantId: string, role: 'MENTOR' | 'MENTI'): string {
+  return jwt.sign({ tenantId, role, type: 'invitation' }, config.jwt.secret, { expiresIn: '30d' });
+}
 
 describe('Auth: Register', () => {
   let http: TestAgent;
@@ -21,7 +28,9 @@ describe('Auth: Register', () => {
     tenant = await createTenant({ name: 'Auth Test Tenant' });
   });
 
-  it('geçerli payload ile 201 döner ve kullanıcı PENDING olur', async () => {
+  // DAVETSİZ kayıt (token yok) → PENDING kalır (admin onayı). Bu, davet=onay iyileştirmesinin
+  // regresyon koruması: PO kararı 2026-09-01 (Seçenek A) davetsiz kaydı otomatik ONAYLAMAZ.
+  it('davetsiz (token yok) geçerli payload → 201 + kullanıcı PENDING', async () => {
     const res = await http
       .post('/api/auth/register')
       .send({
@@ -36,6 +45,61 @@ describe('Auth: Register', () => {
 
     expect(res.body.user.approvalStatus).toBe('PENDING');
     expect(res.body.user.email).toBe('newuser@test.local');
+  });
+
+  // GÜVENLİK İYİLEŞTİRMESİ (PO 2026-09-01, Seçenek A): geçerli davet token'ı = onay → APPROVED.
+  // Kurum yöneticisi token'ı üretip kime verdiğini biliyor; ikinci admin onayı mükerrer.
+  it('geçerli davet token\'ı ile → 201 + kullanıcı APPROVED', async () => {
+    const res = await http
+      .post('/api/auth/register')
+      .send({
+        email: 'davetli@test.local',
+        password: 'Test1234!',
+        fullName: 'Davetli Kullanıcı',
+        role: 'MENTI',
+        tenantSlug: tenant.slug,
+        kvkkConsent: true,
+        inviteToken: signInvite(tenant.id, 'MENTI'),
+      })
+      .expect(201);
+
+    expect(res.body.user.approvalStatus).toBe('APPROVED');
+  });
+
+  // Sahte/geçersiz token onay KAZANDIRMAZ → PENDING (kayıt reddedilmez, admin onaylar).
+  it('sahte/geçersiz davet token\'ı ile → 201 + PENDING (onay kazandırmaz)', async () => {
+    const res = await http
+      .post('/api/auth/register')
+      .send({
+        email: 'sahte@test.local',
+        password: 'Test1234!',
+        fullName: 'Sahte Token',
+        role: 'MENTI',
+        tenantSlug: tenant.slug,
+        kvkkConsent: true,
+        inviteToken: 'gecersiz.sahte.token',
+      })
+      .expect(201);
+
+    expect(res.body.user.approvalStatus).toBe('PENDING');
+  });
+
+  // Token GEÇERLİ ama rol/tenant UYUŞMUYOR → PENDING (başka kuruma/role ait token onay taşımaz).
+  it('davet token\'ı rol/tenant uyuşmuyorsa → 201 + PENDING', async () => {
+    const res = await http
+      .post('/api/auth/register')
+      .send({
+        email: 'uyusmaz@test.local',
+        password: 'Test1234!',
+        fullName: 'Uyusmaz Rol',
+        role: 'MENTI',
+        tenantSlug: tenant.slug,
+        kvkkConsent: true,
+        inviteToken: signInvite(tenant.id, 'MENTOR'), // token MENTOR, kayıt MENTI → uyuşmaz
+      })
+      .expect(201);
+
+    expect(res.body.user.approvalStatus).toBe('PENDING');
   });
 
   it('geçersiz e-posta ile 400 döner', async () => {
