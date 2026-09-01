@@ -16,6 +16,7 @@ import { ensureMembershipSafe } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
+import { verifyInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
 
 
@@ -32,6 +33,9 @@ const RegisterSchema = z.object({
   // K4 (18+ beyanı) bu onayın METNİNE gömülüdür (PO kararı: tek onay kutusu) —
   // ayrı ageConsent alanı YOK. Kullanıcı bu rızayı verirken 18+ olduğunu da beyan eder.
   kvkkConsent: z.literal(true, { message: 'KVKK onayı zorunludur.' }),
+  // Davet token'ı (opsiyonel) — FE davet linkindeki token'ı iletir. Geçerliyse davetli
+  // APPROVED olur (davet = onay; PO kararı 2026-09-01, Seçenek A). Yoksa PENDING kalır.
+  inviteToken: z.string().optional(),
 });
 
 const LoginSchema = z.object({
@@ -133,7 +137,7 @@ export async function register(req: Request, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const { email, password, fullName, role, tenantSlug } = parsed.data;
+  const { email, password, fullName, role, tenantSlug, inviteToken } = parsed.data;
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
@@ -148,6 +152,22 @@ export async function register(req: Request, res: Response) {
       error: 'TENANT_ONAY_BEKLENIYOR',
       message: REGISTER_MESSAGES.TENANT_PENDING,
     });
+  }
+
+  // ─── Onay durumu: davet = onay (PO kararı 2026-09-01, Seçenek A; GÜVENLİK İYİLEŞTİRMESİ) ───
+  // Geçerli davet token'ı (doğru tenant + doğru rol) → davetli APPROVED: kurum yöneticisi token'ı
+  // üretip kime verdiğini bildiği için ikinci onay mükerrer (bedeli gönüllü kaybı).
+  // Token YOK / geçersiz / uyuşmuyor → PENDING (admin onayı) korunur. Eskiden backend token'ı HİÇ
+  // görmüyordu (yalnız tenantSlug) → API'ye davetsiz doğrudan POST atan otomatik onaylanabilirdi;
+  // bu doğrulama o yolu da kapatır. Sahte token onay KAZANDIRMAZ; kaydı da reddetmeyiz (admin onaylar).
+  // NOT (2026-09-01): OAuth kaydı bu turda KAPSAM DIŞI (token'ı 4 katmanın hiçbiri taşımıyor) →
+  // `oauthService.ts:109` PENDING olduğu gibi kalır; ayrı BYPASS turu. Bkz. 00-KARAR-TAKIP.
+  let approvalStatus: 'PENDING' | 'APPROVED' = 'PENDING';
+  if (inviteToken) {
+    const claims = verifyInvitationToken(inviteToken);
+    if (claims && claims.tenantId === tenant.id && claims.role === role) {
+      approvalStatus = 'APPROVED';
+    }
   }
 
   const existing = await prisma.user.findUnique({
@@ -176,7 +196,7 @@ export async function register(req: Request, res: Response) {
         authProvider: 'LOCAL',
         fullName,
         role,
-        approvalStatus: 'PENDING',
+        approvalStatus, // davet geçerliyse APPROVED, aksi halde PENDING (yukarıda hesaplandı)
         kvkkConsentAt:  new Date(), // KVKK Md.5: onay anını kaydet (legacy, dual-write)
       },
       select: {
@@ -200,27 +220,31 @@ export async function register(req: Request, res: Response) {
   // GÜVENLİK: non-fatal — membership yazımı kaydı ASLA bozmamalı (kullanıcı zaten oluştu).
   await ensureMembershipSafe(prisma, user.id, user.tenantId, user.role);
 
-  // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
-  const tenantAdmins = await prisma.user.findMany({
-    where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
-    select: { email: true, fullName: true },
-  });
+  // Admin onay bildirimleri YALNIZ onay bekleyen (PENDING) kayıtta gönderilir. Davetli APPROVED
+  // ise onaylanacak bir şey yoktur → admin'e "onaya bak" bildirimi gönderilmez (yanıltıcı olurdu).
+  if (approvalStatus === 'PENDING') {
+    // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
+    const tenantAdmins = await prisma.user.findMany({
+      where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
+      select: { email: true, fullName: true },
+    });
 
-  for (const admin of tenantAdmins) {
-    void sendAdminNewUserNotification({
-      toEmail: admin.email,
-      adminName: admin.fullName,
+    for (const admin of tenantAdmins) {
+      void sendAdminNewUserNotification({
+        toEmail: admin.email,
+        adminName: admin.fullName,
+        newUserFullName: fullName,
+        newUserRole: role,
+        tenantName: tenant.displayName ?? tenant.name,
+      });
+    }
+
+    void notifyAdminsPendingUser({
+      tenantId: tenant.id,
       newUserFullName: fullName,
       newUserRole: role,
-      tenantName: tenant.displayName ?? tenant.name,
     });
   }
-
-  void notifyAdminsPendingUser({
-    tenantId: tenant.id,
-    newUserFullName: fullName,
-    newUserRole: role,
-  });
 
   return res.status(201).json({
     message: REGISTER_MESSAGES.SUCCESS_PENDING_APPROVAL,
