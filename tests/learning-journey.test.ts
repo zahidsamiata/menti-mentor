@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
-import { createTenant, createMentor, createMenti, createAdminUser } from './helpers/factories.js';
+import { createTenant, createMentor, createMenti, createAdminUser, createUserProfile } from './helpers/factories.js';
 import type { Tenant, LearningAudience } from '@prisma/client';
 
 type Outcome = 'correct' | 'warn' | 'wrong';
@@ -111,6 +111,28 @@ describe('Öğrenme Yolculuğu — keşif motoru', () => {
     expect(res.body).not.toHaveProperty('score');
     expect(res.body).not.toHaveProperty('competencyScore');
     expect(res.body).not.toHaveProperty('passed');
+  });
+
+  it('seçim kişilik profiline YAZMAZ (madde 145 — koruma: yön verilen seçim saf sinyal değil)', async () => {
+    const stage = await seedStage({ tenantId: null, audience: 'MENTOR', order: 0 });
+    const mentor = await createMentor(tenant.id);
+    // Ocean/archetype boş bir profil: öğrenme yolculuğu seçimi bunları BESLEMEMELİ.
+    await createUserProfile(mentor.id, {});
+    const before = await testPrisma.userProfile.findUnique({ where: { userId: mentor.id } });
+    const { accessToken } = await loginAs(http, mentor.email, mentor.rawPassword);
+
+    await http
+      .post(`/api/learning-journey/stages/${stage.id}/select`)
+      .set(tenantHeaders(tenant.id, accessToken))
+      .send({ choiceKey: 'a' })
+      .expect(200);
+
+    const after = await testPrisma.userProfile.findUnique({ where: { userId: mentor.id } });
+    // Profil satırı seçimden sonra AYNI (hiçbir alan yazılmadı) — ocean/archetype hâlâ null.
+    expect(after).toEqual(before);
+    expect(after?.oceanO).toBeNull();
+    expect(after?.oceanC).toBeNull();
+    expect(after?.archetype).toBeNull();
   });
 
   it('geçersiz seçim/aşama 404 döner', async () => {

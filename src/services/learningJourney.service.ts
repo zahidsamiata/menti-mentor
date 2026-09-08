@@ -165,6 +165,12 @@ export async function buildStageList(
 /**
  * Tek bir seçimin sonucunu döner (outcome + feedback). PUAN YOK.
  * Aşamanın bu tenant'a görünür ve doğru audience'ta olduğunu doğrular (IDOR/izolasyon).
+ *
+ * ⚠️ Öğrenme yolculuğu cevapları kişilik profilini BESLEMEZ (madde 145). Yön verilen seçim
+ * saf kişilik sinyali değildir (kullanıcı geri bildirimi görüp beklenen tepkiyi seçebilir) —
+ * bu yüzden bu yol SALT-OKUMADIR; UserProfile/ocean/discVector'a YAZMAZ. Kişilik ölçümü
+ * yalnız 39 senaryodan gelir. Regresyon: `tests/learning-journey.test.ts` (madde 145 koruma testi).
+ *
  * @returns ChoiceResult veya null (aşama/seçenek bulunamadı ya da erişim yok)
  */
 export async function resolveChoice(
