@@ -316,3 +316,14 @@ export async function seedCertification(): Promise<void> {
     `${deactivated.count} eski soru pasifleştirildi.`,
   );
 }
+
+// Doğrudan çalıştırma desteği (npx tsx prisma/seed-certification.ts)
+const isDirectRun = process.argv[1]?.includes('seed-certification');
+if (isDirectRun) {
+  seedCertification()
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    })
+    .finally(() => prisma.$disconnect());
+}
