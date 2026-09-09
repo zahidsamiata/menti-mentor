@@ -70,12 +70,16 @@ describe('Sertifika motoru + STK koruması', () => {
   });
 
   // ── Saf kural ───────────────────────────────────────────────────────────────
-  it('isFirstAttemptPass: normal 3/2 geçer, red-line yalnız 3 geçer', () => {
+  it('isFirstAttemptPass: eşik >= 2 — normal ve red-line konuda 3 ve 2 geçer, 1 ve 0 eler (madde 164)', () => {
     expect(isFirstAttemptPass(3, false)).toBe(true);
     expect(isFirstAttemptPass(2, false)).toBe(true);
     expect(isFirstAttemptPass(1, false)).toBe(false);
     expect(isFirstAttemptPass(3, true)).toBe(true);
-    expect(isFirstAttemptPass(2, true)).toBe(false);
+    // madde 164 (PO 2026-09-04): red-line eşiği >= 2 — 2 GEÇER (eski beklenti toBe(false) idi)
+    expect(isFirstAttemptPass(2, true)).toBe(true);
+    // alt sınır: red-line'da 1 ve 0 HÂLÂ eler — eşik düştü ama taban korunur (madde 164)
+    expect(isFirstAttemptPass(1, true)).toBe(false);
+    expect(isFirstAttemptPass(0, true)).toBe(false);
   });
 
   it('requiredToPass: ceil(aktif × %80)', () => {
@@ -143,7 +147,7 @@ describe('Sertifika motoru + STK koruması', () => {
       { questionCode: 'Q_T3', optionKey: 'A' },
       { questionCode: 'Q_T4', optionKey: 'A' },
       { questionCode: 'Q_T5', optionKey: 'A' }, // 5 normal geçti (required=5 karşılandı)
-      { questionCode: 'Q_T6', optionKey: 'B' }, // red-line score 2 → GEÇMEZ
+      { questionCode: 'Q_T6', optionKey: 'D' }, // red-line score 0 → GEÇMEZ (eski 'B'/2; madde 164: red-line'da 2 artık GEÇER → alt sınır 0'a taşındı)
     ];
     const r = await evaluateCertification(mentorId, tenant.id, answers);
     expect(r.passedTopics).toBe(5);
@@ -187,9 +191,18 @@ describe('Sertifika motoru + STK koruması', () => {
     expect(m!.isCertified).toBe(false); // yazılmadı
   });
 
-  it('red-line ilk seçim 2 → o konu geçmez', async () => {
-    const r = await evaluateCertification(mentorId, tenant.id, [{ questionCode: 'Q_T6', optionKey: 'B' }]);
+  it('red-line ilk seçim 1 → o konu geçmez', async () => {
+    // eski fixture 'B'/2 idi; madde 164: red-line'da 2 artık GEÇER → alt sınır 1'e (C) taşındı
+    const r = await evaluateCertification(mentorId, tenant.id, [{ questionCode: 'Q_T6', optionKey: 'C' }]);
     expect(r.topicResults.find((t) => t.topic === 'topic6')!.passed).toBe(false);
+  });
+
+  it('red-line ilk seçim 2 → o konu GEÇER (madde 164: eşik >= 2 — entegrasyon kanıtı)', async () => {
+    // madde 164'ün ASIL değişikliği. Birim testinin (:78) yanında entegrasyon kanıtı:
+    // biri ileride >= 2'yi geri çevirirse birim testi kırılır AMA gerçek akış da
+    // sessizce eski davranışa dönmesin diye entegrasyonda da korunur (madde 171 akrabası).
+    const r = await evaluateCertification(mentorId, tenant.id, [{ questionCode: 'Q_T6', optionKey: 'B' }]);
+    expect(r.topicResults.find((t) => t.topic === 'topic6')!.passed).toBe(true);
   });
 
   it('yalnızca İLK-deneme sayılır (aynı konudan ikinci cevap yok sayılır)', async () => {
@@ -220,7 +233,7 @@ describe('Sertifika motoru + STK koruması', () => {
     expect(r.outcome).toBe('correct');
     expect(r.explanation).toBe('Açıklama A');
     expect(r.firstAttemptPass).toBe(true);
-    const rWrong = await revealOption('Q_T6', 'B'); // red-line 2
+    const rWrong = await revealOption('Q_T6', 'C'); // red-line score 1 (eski 'B'/2; madde 164: red-line'da 2 artık GEÇER → geçmeyen örnek 1'e taşındı)
     expect(rWrong.firstAttemptPass).toBe(false);
   });
 

@@ -62,9 +62,15 @@ export class CertTopicError extends Error {
   }
 }
 
+// PO kararı 2026-09-04: kritik (red-line) konularda eşik
+// === 3 → >= 2. Kritik 4 konuda 3 VE 2 geçer, 1 ve 0 eler.
+// Red-line'ın diğer iki işlevi KORUNUR: garantili gelme
+// (madde 149) + RED_LINE_FAILED ayrı eleme işareti.
+// ⚠️ Sertifika içeriğinin 88 şıkkı bu eşiğe göre yazıldı
+// (1↔2 çizgisi = prensip uygulandı mı). Detay: madde 164/72.
 /** Bir seçeneğin ilk-denemede "geçer" olup olmadığı (konunun kritikliğine göre). */
 export function isFirstAttemptPass(competencyScore: number, isRedLine: boolean): boolean {
-  return isRedLine ? competencyScore === 3 : competencyScore >= 2;
+  return competencyScore >= 2;
 }
 
 /** Kurumun kapattığı sertifika konusu slug'ları (per-tenant). Boş = tüm konular aktif. */
