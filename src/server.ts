@@ -20,6 +20,8 @@ import questionRoutes from './routes/questionRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import { suggestTag } from './controllers/tagController.js';
+import { requireTenant } from './middleware/tenant.js';
+import { requireAuth } from './middleware/authorize.js';
 import { notFoundHandler, globalErrorHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { generalRateLimiter } from './middleware/rateLimiter.js';
@@ -130,7 +132,15 @@ app.use('/api/agreements', agreementRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/learning-journey', learningJourneyRoutes);
 // Kullanıcı etiket önerisi (authenticated, tenant-scoped)
-app.post('/api/tags/suggest', generalRateLimiter, suggestTag as unknown as RequestHandler);
+// V-13: controller req.tenant + req.auth bekliyor ama mount'ta requireTenant/requireAuth yoktu
+// → uç fail-closed 401 dönüyordu (ölü uç). Diğer tenant-scoped uçlarla tutarlı hale getirildi.
+app.post(
+  '/api/tags/suggest',
+  requireTenant as unknown as RequestHandler,
+  requireAuth(),
+  generalRateLimiter,
+  suggestTag as unknown as RequestHandler,
+);
 
 // Hata yönetimi — route'lardan sonra olmalı
 app.use(notFoundHandler);
