@@ -28,7 +28,21 @@ if (isProd && platformAdminKey === DEV_PLATFORM_KEY) {
 }
 
 // Platform admin e-posta — /platform/login için ikinci faktör
-const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL ?? 'admin@platform.local';
+const DEV_PLATFORM_EMAIL = 'admin@platform.local';
+const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL ?? DEV_PLATFORM_EMAIL;
+
+// KEY'in aksine burada THROW YOK (bilinçli): canlıda bu değişken set edilmemişse süreç
+// çökerse tüm site kapanır. Tahmin edilebilir ikinci faktör ciddi bir eksiktir ama
+// hizmeti durdurmayı gerektirmez → yalnız uyarı. Uyarı logger yerine console.warn ile
+// yazılır: config, modül yüklenirken değerlendirilir ve logger → db → Prisma zinciri
+// açılışta DB yazımı tetikler.
+if (isProd && platformAdminEmail === DEV_PLATFORM_EMAIL) {
+  console.warn(
+    '[UYARI] PLATFORM_ADMIN_EMAIL ortam değişkeni set edilmemiş — platform giriş e-postası ' +
+      'tahmin edilebilir varsayılan değerde. İkinci faktör koruma sağlamıyor; ' +
+      'ortam değişkenlerine PLATFORM_ADMIN_EMAIL eklenmeli.',
+  );
+}
 
 // Backend base URL — hem config.backendBaseUrl hem de yüklenen avatar'ın public
 // URL tabanı için kullanılır. Object içinde iki kez tekrar etmemek için üste alındı.
