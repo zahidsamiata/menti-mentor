@@ -62,7 +62,7 @@ Every request must carry `X-Tenant-Id`. The `tenant.ts` middleware validates it 
 
 1. **Tenant isolation** — tenants share the candidate pool only when both have `isSharedPoolActive = true`.
 2. **Opt-in gate** — a mentor must approve a menti's `VisibilityOptIn` before profile details are revealed.
-3. **LLM removed** — `iceBreaker.ts`, `matchReason.ts` and `llmRetry.ts` were **deleted** (not merely decommissioned). Mentis write their own `requestMessage` on `VisibilityOptIn` (Akış B) and on `MatchRequest`. No active OpenAI call path at runtime (only unused `config.ts` env remains).
+3. **LLM removed** — `iceBreaker.ts`, `matchReason.ts` and `llmRetry.ts` were **deleted** (not merely decommissioned). ~~Mentis write their own `requestMessage` on `VisibilityOptIn` (Akış B) and on `MatchRequest`.~~ ⚠️ DÜZELTME (2026-09-19, kod-teyitli): the live menti niyet mektubu is written **only via `Meeting.requestMessage`** (`schema.prisma:559`, set at `meetingController.ts` book/create). "Akış B" (menti-driven `VisibilityOptIn`) was **deleted** (`09-DURUM.md:413`); the `VisibilityOptIn.requestMessage` field still exists (`schema.prisma:407`) but no flow writes it. `MatchRequest.requestMessage` (`schema.prisma:445`) is written only by `POST /api/requests` (`requestController.ts:60`) which has **no frontend caller**; the live conversation path creates `MatchRequest` **without** `requestMessage` (`conversationController.ts:154`) → always NULL. Kaynak: panel denetimi PR #186, BY-5/Ç-1. No active OpenAI call path at runtime (only unused `config.ts` env remains).
 4. **Scoring** — purely mathematical (no LLM): sector tag overlap (60%) + DISC matrix (40%).
 
 ### ES Modules
