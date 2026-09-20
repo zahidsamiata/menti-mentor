@@ -175,6 +175,20 @@ export async function clearOrientationLock(req: RequestWithTenant, res: Response
   return res.json({ message: `${user.fullName} kullanıcısının oryantasyon kilidi kaldırıldı.`, user: updated });
 }
 
+// V-07: hatırlatma gönderimi SMTP burst koruması.
+// Bu uç ADMIN elle tetikliyor; eskiden her çağrıda bekleyen TÜM toplantılara (2 mail/toplantı)
+// batch/cooldown olmadan mail atıyordu → admin arka arkaya tıklayınca kurum spam'lenir, SMTP
+// itibarı yanardı. Şema alanı EKLEMEDEN (migration'sız): (1) çağrı başına batch tavanı,
+// (2) toplantı başına in-memory cooldown — süre içinde tekrar tetiklense de yeniden gönderilmez.
+// In-memory olması best-effort'tur (restart'ta sıfırlanır) ama tek oturumda tekrarlı tıklamayı keser.
+// Eşikler çağrı anında okunur (test kendi eşiğini ayarlayabilsin).
+const lastReminderByMeeting = new Map<string, number>();
+
+/** Test yardımcısı — cooldown durumunu sıfırlar (yalnız testlerde kullanılır). */
+export function resetFeedbackReminderCooldown(): void {
+  lastReminderByMeeting.clear();
+}
+
 // Geri bildirim bekleyen tamamlanmış toplantıları sorgula ve hatırlatma e-postası gönder
 export async function sendPendingFeedbackReminders(req: RequestWithTenant, res: Response) {
   const pendingMeetings = await prisma.meeting.findMany({
@@ -185,8 +199,21 @@ export async function sendPendingFeedbackReminders(req: RequestWithTenant, res: 
     },
   });
 
+  const batchLimit = Number(process.env['FEEDBACK_REMINDER_BATCH_LIMIT'] ?? 100);
+  const cooldownMs = Number(process.env['FEEDBACK_REMINDER_COOLDOWN_MS'] ?? 20 * 60 * 60 * 1000); // 20 saat
+  const now = Date.now();
+  // Cooldown süresi içinde son kez hatırlatılan toplantıları ele.
+  const eligible = pendingMeetings.filter((m) => {
+    const last = lastReminderByMeeting.get(m.id);
+    return last === undefined || now - last >= cooldownMs;
+  });
+  const skippedCooldown = pendingMeetings.length - eligible.length;
+  // Çağrı başına batch tavanı — kalan sonraki çağrıda işlenir.
+  const batch = eligible.slice(0, batchLimit);
+  const remaining = eligible.length - batch.length;
+
   let sent = 0;
-  for (const m of pendingMeetings) {
+  for (const m of batch) {
     await sendFeedbackReminderEmail({
       toEmail: m.mentor.email,
       recipientName: m.mentor.fullName,
@@ -199,8 +226,14 @@ export async function sendPendingFeedbackReminders(req: RequestWithTenant, res: 
       meetingId: m.id,
       scheduledAt: m.startsAt,
     }).catch(() => null);
+    lastReminderByMeeting.set(m.id, now);
     sent++;
   }
 
-  return res.json({ message: `${sent} toplantı için hatırlatma e-postası gönderildi.`, count: sent });
+  return res.json({
+    message: `${sent} toplantı için hatırlatma e-postası gönderildi.`,
+    count: sent,
+    skippedCooldown,
+    remaining,
+  });
 }
