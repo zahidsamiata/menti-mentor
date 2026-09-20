@@ -86,9 +86,12 @@ router.get(
 );
 
 // POST /mentors/:mentorId/visibility-optin → ADMIN veya MENTOR
+// IDOR: requireSelfOrAdmin — bir mentör yalnız KENDİ adına opt-in yazabilir; başkasının mentorId'sini
+// yazıp o mentör adına kayıt oluşturamaz/ezemez (komşu uçlarla tutarlı — :84, :100, :114). W §4#6.
 router.post(
   '/mentors/:mentorId/visibility-optin',
   requireRole('ADMIN', 'MENTOR'),
+  requireSelfOrAdmin('mentorId'),
   setVisibilityOptIn as unknown as RequestHandler,
 );
 
