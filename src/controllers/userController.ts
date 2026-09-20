@@ -7,6 +7,7 @@ import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { ensureMembershipSafe } from '../services/membership.js';
 import { canViewerSeeDiscType } from '../services/discVisibility.js';
 import { discLettersFromVector } from '../services/discLetters.js';
+import { applyKAnonymity } from '../services/mask.js';
 
 // ─── Security: Tag Poisoning Prevention ───────────────────────────────────────
 // Etiketlerdeki XSS, injection ve kimlik gizleme girişimlerini önler.
@@ -121,9 +122,14 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
  * Yalnızca toplam onaylı mentor sayısını döner — PII yok.
  * Menti bekleme odası "N mentor profili tespit edildi" için kullanılır.
  * KVKK: mentor isimleri/e-postaları hiç gönderilmez.
+ *
+ * k-anonimlik: eşik (K_ANONYMITY_THRESHOLD) altındaki GERÇEK sayı response'a HİÇ girmez.
+ * Küçük kurumda "1 mentor var" bilgisi, kurumu tanıyan biri için kimlik çıkarımıdır.
+ * Bu kapı BACKEND'de durmak zorunda: uç `requireAuth()` ile PENDING kullanıcıya da açık
+ * (bkz. userRoutes.ts) ve istemci onu doğrudan çağırabilir — frontend guard tek başına yetmez.
  */
 export async function countApprovedMentors(req: RequestWithTenant, res: Response) {
-  const count = await prisma.user.count({
+  const rawCount = await prisma.user.count({
     where: {
       tenantId:       req.tenant.tenantId,
       role:           'MENTOR',
@@ -131,7 +137,7 @@ export async function countApprovedMentors(req: RequestWithTenant, res: Response
       approvalStatus: 'APPROVED',
     },
   });
-  return res.json({ count });
+  return res.json(applyKAnonymity(rawCount));
 }
 
 // GET /api/users/:id — profil detayı.
