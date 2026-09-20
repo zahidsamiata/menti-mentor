@@ -187,9 +187,12 @@ router.delete(
   requireRole('ADMIN'),
   hardDeleteUserHandler as unknown as RequestHandler,
 );
+// V-10: ağır KVKK export'u ikizi /me/data-export gibi rate-limitli olmalı; aksi halde
+// kendi ID'sini :id'ye yazan kullanıcı 5/dk sınırını atlatır. Sıra: auth → limit → handler.
 router.get(
   '/users/:id/export',
   requireAuth(),
+  dataExportRateLimiter,
   exportUserDataHandler as unknown as RequestHandler,
 );
 
