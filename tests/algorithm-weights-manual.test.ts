@@ -164,15 +164,11 @@ describe('9a: PUT /algorithm-tuner/weights — manuel ağırlık ayarı', () => 
       .send({ sectorWeight: 0.65 })
       .expect(200);
 
-    // logger asenkron (void) — kısa bekleme yerine yazımın tamamlanması için poll.
-    let log: { meta: unknown } | null = null;
-    for (let i = 0; i < 20 && !log; i++) {
-      log = await testPrisma.systemLog.findFirst({
-        where: { category: 'AUDIT', message: { contains: 'manuel ayarladı' } },
-        orderBy: { createdAt: 'desc' },
-      });
-      if (!log) await new Promise((r) => setTimeout(r, 50));
-    }
+    // F-06: audit yazımı artık AWAIT ediliyor → yanıt döndüğünde satır GARANTİ yazılı (poll gereksiz).
+    const log = await testPrisma.systemLog.findFirst({
+      where: { category: 'AUDIT', message: { contains: 'manuel ayarladı' } },
+      orderBy: { createdAt: 'desc' },
+    });
 
     expect(log).not.toBeNull();
     const meta = log?.meta as {

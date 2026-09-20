@@ -860,14 +860,25 @@ export async function setAlgorithmWeightsHandler(req: RequestWithTenant, res: Re
 
   // Audit izi: kim, önce/sonra ne, ne zaman. (KVKK Md.12 denetim kaydı deseni — logger AUDIT.)
   // Mesaj sabiti algorithmTuner'dan gelir; getLastWeightChange aynı sabitle okur (95).
-  void logger.info('AUDIT', WEIGHT_CHANGE_AUDIT_MESSAGE, {
-    actorUserId: req.auth?.userId ?? null,
-    tenantId,
-    previousWeights: result.previousWeights,
-    newWeights: result.newWeights,
-    pendingCleared: result.pendingCleared,
-    timestamp: new Date().toISOString(),
-  });
+  // F-06 (G1-14): eskiden `void` (fire-and-forget) idi → audit yazımı sessizce düşebilirdi.
+  // Artık await + catch: yazım tamamlanır; başarısızlık console.error'a düşer (ops görür,
+  // sessiz kayıp yok). Ağırlık zaten kalıcı olduğundan işlem yine de başarıyla döner.
+  await logger
+    .info('AUDIT', WEIGHT_CHANGE_AUDIT_MESSAGE, {
+      actorUserId: req.auth?.userId ?? null,
+      tenantId,
+      previousWeights: result.previousWeights,
+      newWeights: result.newWeights,
+      pendingCleared: result.pendingCleared,
+      timestamp: new Date().toISOString(),
+    })
+    .catch((err) => {
+      console.error('KRİTİK: ağırlık değişikliği AUDIT izi yazılamadı', {
+        tenantId,
+        actorUserId: req.auth?.userId ?? null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
   return res.json({
     message: 'Eşleştirme ağırlıkları güncellendi.',
