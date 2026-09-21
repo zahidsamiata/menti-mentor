@@ -8,6 +8,7 @@ import {
   writeAvatarFile,
   deleteLocalAvatar,
 } from '../services/avatarStorage.js';
+import { logger } from '../services/logger.js';
 
 /**
  * POST /api/users/me/avatar — kullanıcı KENDİ profil fotoğrafını yükler.
@@ -44,7 +45,21 @@ export async function uploadMyAvatar(req: RequestWithTenant, res: Response) {
   if (!user) return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
 
   const filename = buildAvatarFilename(user.id, kind.ext);
-  await writeAvatarFile(filename, file.buffer);
+  // K-04: kalıcı disk yok / uid 1001 yazma izni yoksa (EACCES) burada patlar. Jenerik 500
+  // yerine kullanıcıya anlaşılır mesaj; gerçek sebep operatöre loglanır (PII yok, iç detay sızmaz).
+  try {
+    await writeAvatarFile(filename, file.buffer);
+  } catch (err) {
+    void logger.error('SYSTEM', 'Avatar diske yazılamadı (kalıcı disk/izin?)', {
+      userId: user.id,
+      tenantId: req.tenant.tenantId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return res.status(503).json({
+      error: 'AVATAR_YAZILAMADI',
+      message: 'Fotoğraf şu anda kaydedilemedi. Lütfen daha sonra tekrar deneyin; sorun sürerse yöneticinize bildirin.',
+    });
+  }
   const avatarUrl = buildAvatarUrl(filename);
 
   await prisma.user.update({ where: { id: user.id }, data: { avatarUrl } });
