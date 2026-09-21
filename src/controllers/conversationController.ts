@@ -15,6 +15,17 @@ import { sendNewChatMessageEmail } from '../services/emailService.js';
 const MESSAGE_MAX = 2000;
 const PREVIEW_LEN = 90;
 
+// F-27: inbox sayfalama — sınırsız N+1'i sayfa boyutuyla sınırlar. Saf, test edilebilir.
+export const CONVERSATION_PAGE_DEFAULT = 30;
+export const CONVERSATION_PAGE_MAX = 100;
+export function parseConversationPagination(limitRaw: unknown, offsetRaw: unknown): { limit: number; offset: number } {
+  const l = Number(limitRaw);
+  const o = Number(offsetRaw);
+  const limit = Number.isFinite(l) ? Math.min(Math.max(Math.trunc(l), 1), CONVERSATION_PAGE_MAX) : CONVERSATION_PAGE_DEFAULT;
+  const offset = Number.isFinite(o) && o > 0 ? Math.trunc(o) : 0;
+  return { limit, offset };
+}
+
 const MessageSchema = z.object({
   message: z
     .string()
@@ -227,11 +238,21 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
   }
   const me = req.auth.userId;
 
-  const convos = await prisma.conversation.findMany({
-    where: { OR: [{ mentorUserId: me }, { mentiUserId: me }] },
-    orderBy: { lastMessageAt: 'desc' },
-    include: { mentor: { select: counterpartSelect }, menti: { select: counterpartSelect } },
-  });
+  // F-27: sayfalama — eskiden TÜM konuşmalar çekiliyor ve her biri için ayrı count+findFirst
+  // (sınırsız N+1). Sayfa boyutuyla sınırlanır; per-konuşma sorgu sayısı en fazla sayfa boyutu kadar.
+  const where = { OR: [{ mentorUserId: me }, { mentiUserId: me }] };
+  const { limit, offset } = parseConversationPagination(req.query['limit'], req.query['offset']);
+
+  const [total, convos] = await Promise.all([
+    prisma.conversation.count({ where }),
+    prisma.conversation.findMany({
+      where,
+      orderBy: { lastMessageAt: 'desc' },
+      include: { mentor: { select: counterpartSelect }, menti: { select: counterpartSelect } },
+      take: limit,
+      skip: offset,
+    }),
+  ]);
 
   const items = await Promise.all(
     convos.map(async (c) => {
@@ -260,7 +281,7 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
     }),
   );
 
-  return res.json({ items, total: items.length });
+  return res.json({ items, total, limit, offset });
 }
 
 // ─── GET /api/conversations/:id/messages — thread (kronolojik) ─────────────────
