@@ -212,27 +212,36 @@ export async function sendPendingFeedbackReminders(req: RequestWithTenant, res: 
   const batch = eligible.slice(0, batchLimit);
   const remaining = eligible.length - batch.length;
 
-  let sent = 0;
+  // U-16: "gönderildi" artık gerçek teslimi yansıtır. count = işlenen (batch/cooldown
+  // muhasebesi), delivered = en az bir tarafa (mentör/menti) gerçekten giden mail sayısı.
+  let attempted = 0;
+  let delivered = 0;
   for (const m of batch) {
-    await sendFeedbackReminderEmail({
+    const mentorOk = await sendFeedbackReminderEmail({
       toEmail: m.mentor.email,
       recipientName: m.mentor.fullName,
       meetingId: m.id,
       scheduledAt: m.startsAt,
-    }).catch(() => null);
-    await sendFeedbackReminderEmail({
+    }).catch(() => false);
+    const mentiOk = await sendFeedbackReminderEmail({
       toEmail: m.menti.email,
       recipientName: m.menti.fullName,
       meetingId: m.id,
       scheduledAt: m.startsAt,
-    }).catch(() => null);
+    }).catch(() => false);
+    // Cooldown işleme anında kurulur (anti-spam: aynı oturumda tekrar tetikleme kesilir).
     lastReminderByMeeting.set(m.id, now);
-    sent++;
+    attempted++;
+    if (mentorOk || mentiOk) delivered++;
   }
 
+  const failed = attempted - delivered;
   return res.json({
-    message: `${sent} toplantı için hatırlatma e-postası gönderildi.`,
-    count: sent,
+    message: `${delivered} toplantı için hatırlatma e-postası gönderildi${
+      failed > 0 ? ` (${failed} toplantıya gönderilemedi).` : '.'
+    }`,
+    count: attempted,
+    delivered,
     skippedCooldown,
     remaining,
   });

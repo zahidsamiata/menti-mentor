@@ -140,12 +140,18 @@ async function runDraftTenantReminder(): Promise<void> {
       if (!admin || !tenant.unsubscribeToken) continue;
 
       try {
-        await sendDraftTenantReminderEmail({
+        // U-16: mail GERÇEKTEN gitmediyse reminderEmailSentAt YAZILMAZ — tek-atımlık
+        // hatırlatma boşa yakılmasın; SMTP düzelince sonraki cron'da tekrar denenir.
+        const ok = await sendDraftTenantReminderEmail({
           toEmail:          admin.email,
           adminName:        admin.fullName,
           tenantName:       tenant.displayName ?? tenant.name,
           unsubscribeToken: tenant.unsubscribeToken,
         });
+        if (!ok) {
+          void logger.warn('EMAIL', `Taslak kurtarma e-postası gönderilemedi — atlandı, işaretlenmedi: ${tenant.id}`);
+          continue;
+        }
         await prisma.tenant.update({
           where: { id: tenant.id },
           data:  { reminderEmailSentAt: new Date() },

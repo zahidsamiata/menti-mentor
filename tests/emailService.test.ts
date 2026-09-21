@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isUndeliverableRecipient } from '../src/services/emailService.js';
+import { isUndeliverableRecipient, send } from '../src/services/emailService.js';
 
 // Saf fonksiyon — DB/SMTP'ye dokunmaz; sahte-alıcı guard mantığını doğrular.
 describe('isUndeliverableRecipient', () => {
@@ -24,5 +24,16 @@ describe('isUndeliverableRecipient', () => {
 
   it('büyük/küçük harf toleransı', () => {
     expect(isUndeliverableRecipient('User@TEST.LOCAL')).toBe(true);
+  });
+});
+
+// U-16: send() gönderim başarısını dönmeli — çağıran "gönderildi" yalanı üretmesin.
+describe('send() dönüş sözleşmesi (U-16)', () => {
+  it('teslim edilemez alıcıda false döner (gönderilmedi)', async () => {
+    expect(await send('user@test.local', 'konu', '<p>x</p>')).toBe(false);
+  });
+
+  it("geçersiz adreste (@ yok) false döner", async () => {
+    expect(await send('gecersiz-adres', 'konu', '<p>x</p>')).toBe(false);
   });
 });
