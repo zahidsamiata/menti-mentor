@@ -28,23 +28,30 @@ export function isUndeliverableRecipient(to: string): boolean {
   return UNDELIVERABLE_TLDS.some((tld) => domain.endsWith(tld));
 }
 
-export async function send(to: string, subject: string, html: string): Promise<void> {
+/**
+ * E-posta gönderir. Dönüş: gerçekten GÖNDERİLDİYSE true, atlandı/başarısızsa false (U-16).
+ * Çağıranlar bu değere bakarak "gönderildi" yalanı üretmeyebilir ve tek-atımlık
+ * hatırlatma bayrağını (reminderEmailSentAt) boşa yakmayabilir. Hata FIRLATMAZ.
+ */
+export async function send(to: string, subject: string, html: string): Promise<boolean> {
   // Sahte/teslim edilemez alıcıya gönderme — bounce üretmesin (her ortamda).
   // KVKK/log kuralı: e-posta adresi loglanmaz, yalnızca durum yazılır.
   if (isUndeliverableRecipient(to)) {
     void logger.info('EMAIL', 'Teslim edilemez/sahte alıcı — gönderim atlandı.');
-    return;
+    return false;
   }
   if (!config.email.smtpHost || !config.email.smtpUser || !config.email.smtpPass) {
     void logger.warn('EMAIL', 'SMTP yapılandırması eksik — e-posta gönderilmedi.');
-    return;
+    return false;
   }
   // Sessiz başarısızlığı önle: SMTP/auth hataları (ör. 535) görünür olmalı.
   try {
     await transporter.sendMail({ from: config.email.from, to, subject, html });
+    return true;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     void logger.error('EMAIL', `E-posta gönderilemedi: ${reason}`);
+    return false;
   }
 }
 
@@ -214,7 +221,7 @@ export async function sendDraftTenantReminderEmail(args: {
   adminName:        string;
   tenantName:       string;
   unsubscribeToken: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const frontendUrl    = process.env['FRONTEND_URL'] ?? 'http://localhost:3001';
   // BACKEND_URL kullan: /api/tenants/unsubscribe bir backend route'u.
   // Tek-domain deploy'da FRONTEND_URL ile aynı; ayrı-domain deploy'da farklı olabilir.
@@ -222,7 +229,7 @@ export async function sendDraftTenantReminderEmail(args: {
   const resumeUrl      = `${frontendUrl}/onboarding/stk`;
   const unsubscribeUrl = `${backendUrl}/api/tenants/unsubscribe?token=${args.unsubscribeToken}`;
 
-  await send(
+  return send(
     args.toEmail,
     `${args.tenantName} — Programınızı Tamamlamayı Unutmayın`,
     `<p>Merhaba ${args.adminName},</p>
@@ -239,7 +246,7 @@ export async function sendDraftTenantReminderEmail(args: {
 export async function sendAlreadyRegisteredEmail(args: {
   toEmail: string;
   userName: string;
-}): Promise<void> {
+}): Promise<boolean> {
   return send(
     args.toEmail,
     'Hesabınızla İlgili Bilgilendirme',
@@ -282,9 +289,9 @@ export async function sendFeedbackReminderEmail(args: {
   recipientName: string;
   meetingId: string;
   scheduledAt: Date;
-}): Promise<void> {
+}): Promise<boolean> {
   const tarih = args.scheduledAt.toLocaleString('tr-TR');
-  await send(
+  return send(
     args.toEmail,
     'Toplantı Geri Bildiriminizi Bekliyoruz',
     `<p>Merhaba ${args.recipientName},</p>
