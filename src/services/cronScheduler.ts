@@ -30,6 +30,11 @@ const CRON_ENABLED =
   process.env.NODE_ENV !== 'test' &&
   process.env.CRON_ENABLED !== 'false';
 
+/** V-11: zamanlanmış görevler açık mı — /health göstergesi için. */
+export function isCronEnabled(): boolean {
+  return CRON_ENABLED;
+}
+
 // ─── Görev: Algoritma Ağırlık Ayarlaması ─────────────────────────────────────
 
 /**

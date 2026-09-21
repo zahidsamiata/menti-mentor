@@ -10,4 +10,6 @@ coverage
 tests
 vitest.config.ts
 README.md
-prisma/migrations/*/migration.sql
+# V-14: migration .sql'leri ELENMEZ — Dockerfile `prisma migrate deploy` çalıştırıyor;
+# boş DB'ye kurtarmada şema bu dosyalardan oluşur. Elenirse kurtarma imajı şemasız kalır.
+# prisma/migrations/*/migration.sql  ← eski (yanlış) kural, kaldırıldı

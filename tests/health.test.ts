@@ -18,6 +18,8 @@ vi.mock('../src/db.js', () => ({
 }));
 
 import { getHealthStatus } from '../src/services/health.js';
+import { getSmtpStatus, verifyTransporter } from '../src/services/emailService.js';
+import { isCronEnabled } from '../src/services/cronScheduler.js';
 import { prisma } from '../src/db.js';
 
 const queryRaw = prisma.$queryRaw as unknown as ReturnType<typeof vi.fn>;
@@ -39,5 +41,31 @@ describe('getHealthStatus — DB canlılık kontrolü', () => {
     const s = await getHealthStatus();
     expect(s.ok).toBe(false);
     expect(s.db).toBe('down');
+  });
+
+  // V-01 / V-11: /health artık SMTP ve cron durumunu da taşır.
+  it('smtp ve cron alanlarını içerir', async () => {
+    queryRaw.mockResolvedValueOnce([{ ok: 1 }]);
+    const s = await getHealthStatus();
+    expect(['verified', 'failed', 'unconfigured', 'unknown']).toContain(s.smtp);
+    expect(['enabled', 'disabled']).toContain(s.cron);
+  });
+});
+
+// V-01 / F-25: SMTP durum göstergesi — test ortamında SMTP yapılandırılmamış.
+describe('SMTP durum göstergesi (V-01/F-25)', () => {
+  it('yapılandırma yoksa getSmtpStatus "unconfigured" döner', () => {
+    expect(getSmtpStatus()).toBe('unconfigured');
+  });
+
+  it('yapılandırma yoksa verifyTransporter false döner (handshake denenmez)', async () => {
+    expect(await verifyTransporter()).toBe(false);
+  });
+});
+
+// V-11: cron göstergesi — test ortamında (NODE_ENV=test) cron devre dışı.
+describe('isCronEnabled (V-11)', () => {
+  it('test ortamında false', () => {
+    expect(isCronEnabled()).toBe(false);
   });
 });
