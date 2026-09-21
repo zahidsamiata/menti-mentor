@@ -9,11 +9,47 @@ const transporter = nodemailer.createTransport({
   host: config.email.smtpHost,
   port: config.email.smtpPort,
   secure: config.email.smtpSecure,
+  // V-01/F-25: SMTP erişilemezse verify()/gönderim hızlı başarısız olsun (health/probe asılı kalmasın).
+  connectionTimeout: 5000,
+  greetingTimeout: 5000,
   auth: {
     user: config.email.smtpUser,
     pass: config.email.smtpPass,
   },
 });
+
+// ── SMTP durum görünürlüğü (V-01 / F-25) ────────────────────────────────────
+// send() zaten sessiz başarısızlığı engelliyor; burada operatöre "mail çalışıyor mu"
+// göstergesi için gerçek SMTP el sıkışması (verify) sonucu tutulur.
+let smtpVerified: boolean | null = null; // null = henüz denenmedi
+
+export type SmtpStatus = 'verified' | 'failed' | 'unconfigured' | 'unknown';
+
+/**
+ * Canlı SMTP el sıkışması (verify) yapar, sonucu önbelleğe alır. Hata FIRLATMAZ.
+ * Başlangıçta bir kez (server.ts) ve platform sağlık ucunda (F-25) çağrılır.
+ */
+export async function verifyTransporter(): Promise<boolean> {
+  if (!config.email.smtpHost || !config.email.smtpUser || !config.email.smtpPass) {
+    smtpVerified = false;
+    return false;
+  }
+  try {
+    await transporter.verify();
+    smtpVerified = true;
+  } catch (err) {
+    void logger.error('EMAIL', `SMTP verify başarısız: ${err instanceof Error ? err.message : String(err)}`);
+    smtpVerified = false;
+  }
+  return smtpVerified;
+}
+
+/** Son verify sonucunu döndürür (önbellekli — /health'i yavaşlatmaz). */
+export function getSmtpStatus(): SmtpStatus {
+  if (!config.email.smtpHost || !config.email.smtpUser || !config.email.smtpPass) return 'unconfigured';
+  if (smtpVerified === null) return 'unknown';
+  return smtpVerified ? 'verified' : 'failed';
+}
 
 // Teslim edilemeyen (sahte/test) domainler — bunlara gönderim kaçınılmaz bounce üretir.
 // Test/dev'de üretilen @test.local adresleri gerçek gönderen kutusunu bounce'la doldurur.

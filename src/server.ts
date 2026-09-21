@@ -28,6 +28,8 @@ import { generalRateLimiter } from './middleware/rateLimiter.js';
 import { startCronScheduler } from './services/cronScheduler.js';
 import { ensureUploadDir } from './services/avatarStorage.js';
 import { getHealthStatus } from './services/health.js';
+import { verifyTransporter } from './services/emailService.js';
+import { logger } from './services/logger.js';
 import sjtScoringRoutes from './routes/sjtScoringRoutes.js';
 import suspicionRoutes from './routes/suspicionRoutes.js';
 import agreementRoutes from './routes/agreementRoutes.js';
@@ -153,6 +155,10 @@ const server = app.listen(config.port, () => {
     console.error('Upload dizini oluşturulamadı:', err instanceof Error ? err.message : err);
   });
   startCronScheduler();
+  // V-01: başlangıçta bir kez SMTP verify — sonucu /health ve platform sağlığı gösterir.
+  void verifyTransporter().then((ok) => {
+    console.log(`[SMTP] verify: ${ok ? 'OK' : 'BAŞARISIZ/eksik yapılandırma'}`);
+  });
 });
 
 /**
@@ -179,3 +185,17 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
 process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+
+// V-02: yakalanmamış hata/reddi süreç sessizce çökmeden logla (iz bırak, teşhis edilebilsin).
+process.on('uncaughtException', (err) => {
+  void logger.error('SYSTEM', 'uncaughtException', {
+    message: err.message,
+    stack: err.stack,
+  });
+});
+process.on('unhandledRejection', (reason) => {
+  void logger.error('SYSTEM', 'unhandledRejection', {
+    message: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+});

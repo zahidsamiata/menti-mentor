@@ -1,10 +1,15 @@
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from './logger.js';
+import { getSmtpStatus, type SmtpStatus } from './emailService.js';
+import { isCronEnabled } from './cronScheduler.js';
 
 export interface HealthStatus {
   ok: boolean;
   db: 'up' | 'down';
+  // V-01: son SMTP verify sonucu (önbellekli); V-11: zamanlanmış görevler açık mı.
+  smtp: SmtpStatus;
+  cron: 'enabled' | 'disabled';
   env: string;
   ts: string;
   version: string;
@@ -35,6 +40,8 @@ export async function getHealthStatus(): Promise<HealthStatus> {
   return {
     ok: db === 'up',
     db,
+    smtp: getSmtpStatus(),
+    cron: isCronEnabled() ? 'enabled' : 'disabled',
     env: config.nodeEnv,
     ts: new Date().toISOString(),
     version: process.env.npm_package_version ?? '0.1.0',

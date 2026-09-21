@@ -9,6 +9,7 @@ import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
 import { notifyTenantVerification } from '../services/tenantNotifications.js';
 import { maskName, maskContact, maskEmail } from '../services/mask.js';
+import { verifyTransporter, getSmtpStatus } from '../services/emailService.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -142,9 +143,10 @@ export async function getPlatformHealth(_req: Request, res: Response) {
     await prisma.$queryRaw`SELECT 1`;
     const mem = process.memoryUsage();
 
-    // Mail: SMTP yapılandırması tam mı? Canlı gönderim testi YAPILMAZ (gerçek kullanıcıya
-    // bounce/spam riski) — yalnızca env yapılandırmasının varlığı kontrol edilir.
-    const mailConfigured = !!(config.email.smtpHost && config.email.smtpUser && config.email.smtpPass);
+    // F-25: config-var varlığı DEĞİL, gerçek SMTP el sıkışması (verify) sonucu. Platform
+    // sağlığı admin-tetikli ve seyrek; verify() 5sn timeout'lu (gönderim YAPILMAZ, yalnız handshake).
+    await verifyTransporter();
+    const mailConfigured = getSmtpStatus() === 'verified';
 
     // Son 24 saatteki kritik hata sayısı (SystemLog ERROR) — "kırmızı" sinyali.
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
