@@ -4,7 +4,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { computeAndStoreProfile, rankMentorsForMenti, type CertData } from '../services/scoring.service.js';
 import { computeSectorScore } from '../services/scoring.js';
-import { submitFeedback } from '../services/feedback.service.js';
+import { submitFeedback, FeedbackAuthError } from '../services/feedback.service.js';
 import { scoreSjtAnswers, type SjtAnswer } from '../services/sjt-scorer.js';
 import {
   evaluateCertification,
@@ -33,11 +33,12 @@ const RankMentorsSchema = z.object({
   limit:   z.coerce.number().int().min(1).max(100).optional(),
 });
 
+// GÜVENLİK: fromUserId ve role bilerek YOK — kimlik yalnız oturumdan (req.auth) alınır.
+// z.object varsayılanı strip'tir (.strict() değil): eski istemciler bu alanları göndermeye
+// devam etse bile istek REDDEDİLMEZ, alanlar sessizce yok sayılır.
 const FeedbackSchema = z.object({
   matchId:       z.string().min(1),
   checkpoint:    z.enum(['DAY_3', 'DAY_14', 'DAY_30']),
-  fromUserId:    z.string().min(1),
-  role:          z.enum(['ADMIN', 'MENTOR', 'MENTI']),
   progressScore: z.number().int().min(1).max(5).optional(),
   rapportScore:  z.number().int().min(1).max(5).optional(),
   earlyExit:     z.boolean().optional(),
@@ -247,11 +248,37 @@ export async function certifyHandler(req: RequestWithTenant, res: Response) {
 
 // POST /api/scoring/feedback
 export async function feedbackHandler(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
+  }
   const parsed = FeedbackSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const feedback = await submitFeedback({ ...parsed.data, tenantId: req.tenant.tenantId });
-  return res.status(201).json({ id: feedback.id, recorded: true });
+  // Kurum-içi rol kaynağı TenantMembership.role'dür, User.role DEĞİL (veri modeli kuralı):
+  // aynı kişi farklı kurumlarda farklı rolde olabilir. certQuestionsHandler ile aynı desen.
+  const membership = await prisma.tenantMembership.findUnique({
+    where:  { userId_tenantId: { userId: req.auth.userId, tenantId: req.tenant.tenantId } },
+    select: { role: true },
+  });
+  if (!membership) {
+    return res.status(403).json({ error: 'YETKISIZ', message: 'Bu kurumda üyeliğiniz bulunmuyor.' });
+  }
+
+  try {
+    const feedback = await submitFeedback({
+      ...parsed.data,
+      tenantId:   req.tenant.tenantId,
+      fromUserId: req.auth.userId,   // kimlik YALNIZ oturumdan
+      role:       membership.role,   // rol YALNIZ kurum üyeliğinden
+    });
+    return res.status(201).json({ id: feedback.id, recorded: true });
+  } catch (err) {
+    if (err instanceof FeedbackAuthError) {
+      const status = err.code === 'MATCH_NOT_FOUND' ? 404 : 403;
+      return res.status(status).json({ error: err.code, message: err.message });
+    }
+    throw err;
+  }
 }

@@ -39,6 +39,24 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
     select: { id: true, status: true, mentorUserId: true, mentiUserId: true, hasFeedback: true },
   });
   if (!meeting) return res.status(404).json({ error: 'NOT_FOUND', message: 'Toplantı bulunamadı.' });
+
+  // SAHİPLİK (güvenlik): yazma yolunda taraf kontrolü EKSİKTİ — kimliği doğrulanmış herhangi
+  // bir kullanıcı, tarafı olmadığı bir görüşmeye değerlendirme yazıp mentörün kalıcı kalite
+  // katsayısını düşürebiliyor, mentiye oryantasyon kilidi bastırabiliyor ve hasFeedback
+  // bayrağını yakarak gerçek tarafların yazmasını engelleyebiliyordu.
+  // Desen: aynı dosyadaki OKUMA ucu (getFeedback) ile birebir aynı taraf kontrolü.
+  // Fark (bilinçli): okuma ADMIN'e açıktır, YAZMA değildir — değerlendirme yalnız taraflarındır.
+  // Kontrol, HİÇBİR yazma yapılmadan ÖNCE çalışır (hasFeedback · kalite katsayısı · kilit).
+  const authUserId = req.auth?.userId;
+  const isMentor   = meeting.mentorUserId === authUserId;
+  const isMenti    = meeting.mentiUserId  === authUserId;
+  if (!isMentor && !isMenti) {
+    return res.status(403).json({
+      error:   'YETKISIZ',
+      message: 'Yalnızca görüşmenin tarafları değerlendirme yazabilir.',
+    });
+  }
+
   if (meeting.status !== 'COMPLETED') {
     return res.status(409).json({ error: 'DURUM_HATASI', message: 'Geri bildirim yalnızca tamamlanmış toplantılar için verilebilir.' });
   }
@@ -47,6 +65,35 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
   }
 
   const data = parsed.data;
+
+  // ROL KAYITTAN (güvenlik): değerlendirenin yönü istekten değil, görüşme kaydından çıkarılır.
+  // Alan bölümlemesi okuma ucundaki (getFeedback) bölümlemenin aynısıdır:
+  //   mentör → menti: preparedness · proactivity · keyLearnings · specificComments
+  //   menti  → mentör: guidance · resourceSharing · trust
+  // Aksi hâlde bir mentör kendi kalite katsayısını besleyen puanları KENDİSİ yazabilir,
+  // bir menti kendine oryantasyon kilidi bastırabilirdi.
+  const mentiSideSent =
+    data.guidanceScore !== undefined ||
+    data.resourceSharingScore !== undefined ||
+    data.trustScore !== undefined;
+  const mentorSideSent =
+    data.preparednessScore !== undefined ||
+    data.proactivityScore !== undefined ||
+    data.keyLearnings !== undefined ||
+    data.specificComments !== undefined;
+
+  if (isMentor && mentiSideSent) {
+    return res.status(403).json({
+      error:   'YETKISIZ_ALAN',
+      message: 'Mentör, mentinin mentöre verdiği puanları gönderemez.',
+    });
+  }
+  if (isMenti && mentorSideSent) {
+    return res.status(403).json({
+      error:   'YETKISIZ_ALAN',
+      message: 'Menti, mentörün mentiye verdiği puanları gönderemez.',
+    });
+  }
 
   // Geri bildirimi kaydet ve toplantıyı işaretle (transaction)
   const [feedback] = await prisma.$transaction([
