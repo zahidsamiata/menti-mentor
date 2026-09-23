@@ -528,6 +528,33 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   const { notifyMatchRequestReceived } = await import('../services/notificationService.js');
   void notifyMatchRequestReceived(mentorUserId, tenantId);
 
+  // P-10: mentöre e-posta bildirimi de gönder — canlı booking yolu (menti self-service)
+  // önceden yalnız uygulama-içi (çan) bildirim gönderiyordu; createMeeting (admin yolu)
+  // zaten e-posta atıyordu. Aynı deseni buraya taşıdık. SMTP kapalıysa sessizce loglanır
+  // (fire-and-forget, ana akışı bloklamaz).
+  const [mentorUser, mentiUser] = await Promise.all([
+    prisma.user.findFirst({
+      where:  { id: mentorUserId, tenantId },
+      select: { email: true, fullName: true },
+    }),
+    prisma.user.findFirst({
+      where:  { id: userId, tenantId },
+      select: { fullName: true },
+    }),
+  ]);
+  if (mentorUser?.email) {
+    sendMeetingRequestEmail({
+      toEmail:     mentorUser.email,
+      mentorName:  mentorUser.fullName,
+      mentiName:   mentiUser?.fullName ?? 'Bir menti',
+      scheduledAt: meeting.startsAt,
+    }).catch((err: unknown) =>
+      logger.warn('EMAIL', 'Toplantı talebi bildirimi gönderilemedi', {
+        message: err instanceof Error ? err.message : String(err),
+      })
+    );
+  }
+
   return res.status(201).json({ meeting, awaitingMentorApproval: true });
 }
 
