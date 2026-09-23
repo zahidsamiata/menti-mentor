@@ -50,8 +50,9 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3001,http://127.0.0.1:3001').split(',');
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+// Y-01: origin listesi config'ten (boşluk-toleranslı parse) gelir — env'de virgülden
+// sonra boşluk olsa bile origin doğru eşleşir.
+app.use(cors({ origin: config.allowedOrigins, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(requestLogger);
 
