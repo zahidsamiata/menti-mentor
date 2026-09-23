@@ -5,11 +5,21 @@
  * listMeetings: PENDING kuyruğunda requestMessage dönmeli.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createMentor, createMenti } from './helpers/factories.js';
 import type { Tenant, User } from '@prisma/client';
+
+// P-10: e-posta servisini mock'la — sendMeetingRequestEmail bir Promise döndürmeli
+// (kod fire-and-forget `.catch(...)` çağırıyor). Diğer export'lar korunur.
+const { sendMeetingRequestEmailMock } = vi.hoisted(() => ({
+  sendMeetingRequestEmailMock: vi.fn(async () => undefined),
+}));
+vi.mock('../src/services/emailService.js', async (orig) => ({
+  ...(await orig<typeof import('../src/services/emailService.js')>()),
+  sendMeetingRequestEmail: sendMeetingRequestEmailMock,
+}));
 
 const FUTURE_DATE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 gün sonra
 const DAY_NAMES   = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const;
@@ -113,6 +123,29 @@ describe('bookMeeting — requestMessage validasyonu', () => {
     expect(res.status).toBe(201);
     const body = res.body as { meeting: { requestMessage: string } };
     expect(body.meeting.requestMessage).toBe(msg);
+  });
+
+  it('P-10: başarılı book mentöre e-posta bildirimi tetikler', async () => {
+    sendMeetingRequestEmailMock.mockClear();
+    const msg = 'Kariyer geçişimde deneyiminizden yararlanmak için sizinle bir görüşme planlamak istiyorum.';
+    expect(msg.length).toBeGreaterThanOrEqual(50);
+
+    const res = await http
+      .post('/api/meetings/book')
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .send({
+        mentorUserId:   mentor.id,
+        format:         'ONLINE',
+        startsAt:       isoUtc(FUTURE_DATE, 9, 0),
+        endsAt:         isoUtc(FUTURE_DATE, 10, 0),
+        requestMessage: msg,
+      });
+
+    expect(res.status).toBe(201);
+    expect(sendMeetingRequestEmailMock).toHaveBeenCalledTimes(1);
+    expect(sendMeetingRequestEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({ toEmail: mentor.email, mentiName: menti.fullName }),
+    );
   });
 });
 
