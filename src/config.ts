@@ -48,6 +48,24 @@ if (isProd && platformAdminEmail === DEV_PLATFORM_EMAIL) {
 // URL tabanı için kullanılır. Object içinde iki kez tekrar etmemek için üste alındı.
 const backendBaseUrl = process.env.BACKEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000';
 
+// CORS izinli origin listesi (Y-01). Varsayılan: lokal frontend.
+const DEFAULT_ALLOWED_ORIGINS = 'http://localhost:3001,http://127.0.0.1:3001';
+
+/**
+ * ALLOWED_ORIGINS env değerini CORS için origin dizisine çevirir.
+ * Virgülle ayırır, **her origin'in baş/son boşluğunu temizler** ve boşları atar.
+ * Boşluk toleransı olmazsa env'de `a.com, b.com` yazıldığında `" b.com"` origin'i
+ * CORS'ta HİÇ eşleşmez → tarayıcı isteği reddedilir, site sessizce açılmaz.
+ */
+export function parseAllowedOrigins(
+  raw: string | undefined = process.env.ALLOWED_ORIGINS,
+): string[] {
+  return (raw ?? DEFAULT_ALLOWED_ORIGINS)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -87,6 +105,9 @@ export const config = {
     // Canlıya istenmeyen mail gitmesi geri alınamaz → bilinçli opt-in.
     tenantNotificationsEnabled: process.env.TENANT_NOTIFICATIONS_ENABLED === 'true',
   },
+
+  // CORS izinli origin listesi (boşluk-toleranslı, Y-01)
+  allowedOrigins: parseAllowedOrigins(),
 
   // Frontend base URL — davet linkleri ve şifre sıfırlama URL'leri için kullanılır
   frontendBaseUrl: process.env.FRONTEND_URL ?? 'http://localhost:3001',
