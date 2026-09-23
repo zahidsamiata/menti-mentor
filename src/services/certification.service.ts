@@ -1,5 +1,6 @@
 import { CertificationStatus } from '@prisma/client';
 import { prisma } from '../db.js';
+import { selectExamQuestions } from './certExamSelection.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sertifika değerlendirme motoru — "ilk-deneme oranı + red-line" modeli.
@@ -282,12 +283,17 @@ export interface CertQuestionPublic {
  * GÜVENLİK: doğru cevabı sızdırmamak için explanation / outcome / competencyScore
  * DÖNMEZ — bunlar yalnızca bir seçim yapıldıktan sonra revealOption ile verilir.
  *
- * @param priorityTopics Önceki denemede geçilemeyen konular. Verilirse bu konular
- *   listenin BAŞINA alınır (ağırlıklı tekrar) — mentör önce zayıf olduğu konulara odaklanır.
+ * Seçim ve sıra kuralları `certExamSelection.ts`'tedir (kritik konu garantisi · yanlış
+ * konu önceliği · tekrar denemede sahne değişimi). Puanlama bu fonksiyondan ETKİLENMEZ.
+ *
+ * @param priorityTopics Önceki denemede geçilemeyen konular — listenin BAŞINA alınır.
+ * @param attemptNumber  Daha önce değerlendirilen sınav sayısı (certAttempts); her konunun
+ *   ilk gösterilen varyantı buna göre döner. 0 (varsayılan) = ilk sınav, davranış değişmez.
  */
 export async function getCertificationQuestions(
   tenantId: string,
   priorityTopics: string[] = [],
+  attemptNumber = 0,
 ): Promise<CertQuestionPublic[]> {
   const disabled = await getDisabledTopics(tenantId);
   const questions = await prisma.certificationQuestion.findMany({
@@ -306,13 +312,7 @@ export async function getCertificationQuestions(
     },
   });
   const active = questions.filter((q) => !q.topic || !disabled.has(q.topic));
-
-  if (priorityTopics.length === 0) return active;
-
-  // Ağırlıklı tekrar: yanlış konular başa (stabil — konu-içi mevcut sıra korunur).
-  const priority = new Set(priorityTopics);
-  const weight = (q: CertQuestionPublic) => (q.topic && priority.has(q.topic) ? 0 : 1);
-  return [...active].sort((a, b) => weight(a) - weight(b));
+  return selectExamQuestions(active, { priorityTopics, attemptNumber });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

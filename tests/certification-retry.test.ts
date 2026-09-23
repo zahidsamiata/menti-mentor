@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { agent, loginAs, tenantHeaders } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createMentor } from './helpers/factories.js';
 import {
@@ -20,9 +21,9 @@ import type { Tenant } from '@prisma/client';
 
 const SCORE_BY_KEY: Record<string, number> = { A: 3, B: 2, C: 1, D: 0 };
 
-async function createCertQuestion(code: string, topic: string) {
+async function createCertQuestion(code: string, topic: string, variant = 'A') {
   const q = await testPrisma.certificationQuestion.create({
-    data: { code, dimension: topic, topic, variant: 'A', scenario: `Senaryo ${code}`, isRedLine: false, isActive: true },
+    data: { code, dimension: topic, topic, variant, scenario: `Senaryo ${code}`, isRedLine: false, isActive: true },
   });
   for (const key of ['A', 'B', 'C', 'D']) {
     await testPrisma.certificationOption.create({
@@ -125,5 +126,59 @@ describe('Sertifika deneme döngüsü', () => {
     const weighted = await getCertificationQuestions(tenant.id, m!.certWrongTopics);
     // İlk iki soru yanlış konulara ait olmalı (başa alındı).
     expect(weighted.slice(0, 2).every((q) => wrong.includes(q.topic!))).toBe(true);
+  });
+});
+
+// madde 157 (I-07): yanlış yapılan konu bir sonraki sınavda başta ve DİĞER varyantıyla gelir.
+// Uçtan uca: evaluate → certWrongTopics/certAttempts → GET /certification/questions.
+describe('Tekrar sınavda yanlış konu farklı sahneyle gelir (HTTP)', () => {
+  let tenant: Tenant;
+  let token: string;
+  let mentorId: string;
+
+  beforeEach(async () => {
+    await cleanDb();
+    await testPrisma.certificationOption.deleteMany({});
+    await testPrisma.certificationQuestion.deleteMany({});
+    for (let i = 1; i <= 5; i++) {
+      await createCertQuestion(`Q_T${i}_A`, `topic${i}`, 'A');
+      await createCertQuestion(`Q_T${i}_B`, `topic${i}`, 'B');
+    }
+    tenant = await createTenant();
+    const mentor = await createMentor(tenant.id);
+    mentorId = mentor.id;
+    token = (await loginAs(agent(), mentor.email, mentor.rawPassword)).accessToken;
+  });
+
+  async function fetchExam() {
+    const res = await agent()
+      .get('/api/scoring/certification/questions')
+      .set(tenantHeaders(tenant.id, token))
+      .expect(200);
+    return res.body as { questions: { code: string; topic: string }[]; retryTopics: string[] };
+  }
+
+  it('ilk kez giren: sıra değişmez, her konu A ile başlar, retryTopics boş', async () => {
+    const exam = await fetchExam();
+    expect(exam.retryTopics).toEqual([]);
+    expect(exam.questions.map((q) => q.code)).toEqual(
+      [1, 2, 3, 4, 5].flatMap((i) => [`Q_T${i}_A`, `Q_T${i}_B`]),
+    );
+  });
+
+  it('başarısız denemeden sonra yanlış konu başta ve B sahnesiyle; retryTopics dolu', async () => {
+    await evaluateCertification(mentorId, tenant.id, [
+      { questionCode: 'Q_T1_A', optionKey: 'A' },
+      { questionCode: 'Q_T2_A', optionKey: 'A' },
+      { questionCode: 'Q_T3_A', optionKey: 'A' },
+      { questionCode: 'Q_T4_A', optionKey: 'D' }, // topic4 KALDI
+      { questionCode: 'Q_T5_A', optionKey: 'D' }, // topic5 KALDI
+    ]);
+    const exam = await fetchExam();
+    expect([...exam.retryTopics].sort()).toEqual(['topic4', 'topic5']);
+    // Yanlış iki konu başta; ilk gösterilen (puanlanan) varyant B — geçen seferki A değil.
+    expect(exam.questions.slice(0, 4).map((q) => q.code)).toEqual(['Q_T4_B', 'Q_T4_A', 'Q_T5_B', 'Q_T5_A']);
+    // Tüm konular hâlâ sınavda (puanlama paydası değişmedi).
+    expect(new Set(exam.questions.map((q) => q.topic)).size).toBe(5);
   });
 });
