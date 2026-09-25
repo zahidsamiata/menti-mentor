@@ -40,6 +40,20 @@ describe('assertSeedAllowed', () => {
     }
   });
 
+  it('IPv6 yerel adres kabul edilir; yerel görünen ama başka hedefi gösteren adresler reddedilir', () => {
+    expect(
+      assertSeedAllowed({ DATABASE_URL: 'postgresql://u:p@[::1]:5432/db', SEED_ALLOW_DESTRUCTIVE: SEED_CONFIRM_VALUE }),
+    ).toBe('[::1]');
+    const tricky = [
+      'postgresql://u:p@localhost:5432/db?host=ep-example.eu-west-2.aws.neon.tech',
+      'postgresql://localhost:p@db.example.com:5432/db',
+      'postgresql://u:p@localhost.example.com:5432/db',
+    ];
+    for (const DATABASE_URL of tricky) {
+      expect(() => assertSeedAllowed({ DATABASE_URL, SEED_ALLOW_DESTRUCTIVE: SEED_CONFIRM_VALUE })).toThrow(/SEED KİLİDİ/);
+    }
+  });
+
   it('NODE_ENV=production iken yerel host ve onay olsa bile reddeder', () => {
     expect(() =>
       assertSeedAllowed({ DATABASE_URL: LOCAL, SEED_ALLOW_DESTRUCTIVE: SEED_CONFIRM_VALUE, NODE_ENV: 'production' }),

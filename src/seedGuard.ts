@@ -35,11 +35,17 @@ export function assertSeedAllowed(env: SeedGuardEnv): string {
     throw new Error('SEED KİLİDİ: DATABASE_URL tanımlı değil.');
   }
 
-  let host: string;
+  let parsed: URL;
   try {
-    host = new URL(url).hostname.toLowerCase();
+    parsed = new URL(url);
   } catch {
     throw new Error('SEED KİLİDİ: DATABASE_URL çözümlenemedi; seed çalıştırılmadı.');
+  }
+  const host = parsed.hostname.toLowerCase();
+
+  // Postgres bağlantı adresi `?host=` parametresiyle asıl sunucuyu ezebilir → hostname tek başına güvenilmez.
+  if (parsed.searchParams.has('host')) {
+    throw new Error('SEED KİLİDİ: DATABASE_URL "host" parametresi içeriyor; hedef doğrulanamadı, seed çalıştırılmadı.');
   }
 
   if (!LOCAL_DB_HOSTS.has(host)) {
