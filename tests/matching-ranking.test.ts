@@ -99,12 +99,10 @@ describe('PS-07 · Mentor → menti aday sıralaması', () => {
     expect(scores).toEqual([...scores].sort((a, b) => b - a));
   });
 
-  // ⛔ ÜRÜN BULGUSU (PS-07, 2026-09-25) — bu test bugünkü kodla KIRMIZI, bilerek yeşile çevrilmedi.
-  //   CI kanıtı: menti-mentor PR #120 ilk koşusu — kişi kendi listesinde çıkıyor.
-  //   Neden: aday sorgusu (matching.ts rankMentisForMentor / rankMentorsForMenti) istekte bulunanın
-  //   kendi id'sini dışlamıyor; paylaşımlı havuzda kişinin öbür kurumdaki karşı-rol üyeliği onu
-  //   kendi havuzuna sokuyor. Düzeltme motor dosyasında (🟡) — ayrı iş. Düzeltilince `.skip` kaldırılır.
-  it.skip('mentor kendi aday listesinde asla yer almaz (başka kurumda menti üyeliği olsa bile)', async () => {
+  // Regresyon (PS-07 bulgusu, 2026-09-25): paylaşımlı havuzda kişinin öbür kurumdaki karşı-rol üyeliği
+  // onu kendi listesine sokuyordu (menti-mentor #120 ilk CI koşusu). Düzeltme: matching.ts aday sorgusu
+  // istekte bulunanın id'sini dışlar.
+  it('mentor kendi aday listesinde asla yer almaz (başka kurumda menti üyeliği olsa bile)', async () => {
     // Paylaşımlı havuzdaki iki kurum: kişi A kurumunda MENTOR, B kurumunda MENTI.
     // A kurumunda kendi aday listesini açtığında KENDİSİNİ görmemeli.
     const tenantA = await createTenant({ isSharedPoolActive: true });
@@ -183,12 +181,10 @@ describe('PS-07 · Menti → mentör uyum sıralaması', () => {
     expectBefore(ids, highDisc.id, lowDisc.id);
   });
 
-  // ⛔ ÜRÜN BULGUSU (PS-07, 2026-09-25) — bu test bugünkü kodla KIRMIZI, bilerek yeşile çevrilmedi.
-  //   CI kanıtı: menti-mentor PR #120 ilk koşusu — kişi kendi listesinde çıkıyor.
-  //   Neden: aday sorgusu (matching.ts rankMentisForMentor / rankMentorsForMenti) istekte bulunanın
-  //   kendi id'sini dışlamıyor; paylaşımlı havuzda kişinin öbür kurumdaki karşı-rol üyeliği onu
-  //   kendi havuzuna sokuyor. Düzeltme motor dosyasında (🟡) — ayrı iş. Düzeltilince `.skip` kaldırılır.
-  it.skip('menti kendi mentör listesinde asla yer almaz (başka kurumda mentör üyeliği olsa bile)', async () => {
+  // Regresyon (PS-07 bulgusu, 2026-09-25): paylaşımlı havuzda kişinin öbür kurumdaki karşı-rol üyeliği
+  // onu kendi listesine sokuyordu (menti-mentor #120 ilk CI koşusu). Düzeltme: matching.ts aday sorgusu
+  // istekte bulunanın id'sini dışlar.
+  it('menti kendi mentör listesinde asla yer almaz (başka kurumda mentör üyeliği olsa bile)', async () => {
     const tenantA = await createTenant({ isSharedPoolActive: true });
     const tenantB = await createTenant({ isSharedPoolActive: true });
     tenant = tenantA;

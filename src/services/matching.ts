@@ -148,6 +148,9 @@ export async function rankMentisForMentor(args: {
   // Filtreleme SIKILAŞTIRILDI: User.tenantId eligibility + per-tenant MENTI membership aktifliği.
   const candidates = await prisma.user.findMany({
     where: {
+      // Kendi kendine eşleşme yok (PS-07 bulgusu): paylaşımlı havuzda aynı kişi başka kurumda
+      // menti olabilir; aday listesinde kendini görmemeli (opt-in ucundaki SELF_MATCH_YASAK ile aynı kural).
+      id: { not: args.mentorId },
       isActive: true,
       approvalStatus: 'APPROVED',
       tenantId: { in: eligibleTenantIds },
@@ -381,6 +384,7 @@ export async function rankMentorsForMenti(args: {
 
   const mentors = await prisma.user.findMany({
     where: {
+      id: { not: args.mentiId }, // kendi kendine eşleşme yok (bkz. rankMentisForMentor)
       isActive: true,
       approvalStatus: 'APPROVED',
       tenantId: { in: eligibleTenantIds },
