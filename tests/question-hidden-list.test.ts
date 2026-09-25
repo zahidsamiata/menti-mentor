@@ -139,8 +139,14 @@ describe('E-3b — GET /api/questions/hidden', () => {
     expect((hiddenRes.body.items as Array<{ id: string }>).map((x) => x.id)).not.toContain(q.id);
 
     // Gizleme kaydı silindi → soru artık bu kurum için gizli değil.
-    // Not: GET /api/questions STK_CUSTOM soruları yanıta koymadığı için (stkQuestions hesaplanıyor ama
-    // dönmüyor — ayrı bulgu) geri dönüş DB'den doğrulanır.
+    // ⚠️ GÜNCELLEME (2026-09-25, E-3c): GET /api/questions artık ADMIN'e `stkQuestions` döndürüyor —
+    // geri açılan STK sorusu yönetici listesine de döner. DB doğrulaması ayrıca korunur.
+    const listRes = await http
+      .get('/api/questions')
+      .set(tenantHeaders(tenantA.id, adminAToken))
+      .expect(200);
+    expect((listRes.body.stkQuestions as Array<{ id: string }>).map((x) => x.id)).toContain(q.id);
+
     const hideRow = await testPrisma.questionHide.findFirst({
       where: { questionId: q.id, tenantId: tenantA.id },
     });
