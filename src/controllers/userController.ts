@@ -129,12 +129,14 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
  * (bkz. userRoutes.ts) ve istemci onu doğrudan çağırabilir — frontend guard tek başına yetmez.
  */
 export async function countApprovedMentors(req: RequestWithTenant, res: Response) {
-  const rawCount = await prisma.user.count({
+  // P-16: kurum-içi rol/sayım kaynağı TenantMembership.role (CLAUDE.md "Veri Modeli") —
+  // User.role değil. Bu kurumda aktif MENTOR üyeliği olan, aktif ve onaylı kullanıcılar sayılır.
+  const rawCount = await prisma.tenantMembership.count({
     where: {
-      tenantId:       req.tenant.tenantId,
-      role:           'MENTOR',
-      isActive:       true,
-      approvalStatus: 'APPROVED',
+      tenantId: req.tenant.tenantId,
+      role:     'MENTOR',
+      isActive: true,
+      user:     { isActive: true, approvalStatus: 'APPROVED' },
     },
   });
   return res.json(applyKAnonymity(rawCount));
