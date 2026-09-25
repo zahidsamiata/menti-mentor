@@ -279,7 +279,10 @@ export async function selfServeRegister(req: Request, res: Response) {
         name:               tenantName,
         slug,
         plan:               'FREE',
-        onboardingStep:     'TEMPLATE',
+        // KR-23 / KARAR-81 (PO, 2026-09-25): "kurulum tamamlandı" işareti kurum kaydıyla AYNI
+        // transaction'da yazılır. Önceden işaret ayrı bir PATCH ile (sihirbazın son adımı) yazılıyordu;
+        // o istek düşerse kurum taslakta kalıyor ve 96 saatlik taslak temizliği onu siliyordu.
+        onboardingStep:     'DONE',
         programTemplate,
         unsubscribeToken:   crypto.randomUUID(),
         kvkkConsentAt:      new Date(),
