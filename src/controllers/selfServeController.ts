@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
+import { logoUrlSchema } from '../services/logoUrl.js';
 import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { ensureMembership } from '../services/membership.js';
@@ -370,7 +371,7 @@ const ONBOARDING_STEPS = ['PENDING', 'TEMPLATE', 'LOGO', 'PREVIEW', 'DONE'] as c
 const UpdateOnboardingSchema = z
   .object({
     onboardingStep:  z.enum(ONBOARDING_STEPS).optional(),
-    logoUrl:         z.string().url('Geçerli bir URL girin').optional(),
+    logoUrl:         logoUrlSchema.optional(),
     primaryColor:    z
       .string()
       .regex(/^#[0-9a-fA-F]{6}$/, 'Geçerli bir hex renk kodu girin')

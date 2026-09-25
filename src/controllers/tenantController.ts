@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
+import { logoUrlSchema } from '../services/logoUrl.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 
 const CreateTenantSchema = z.object({
@@ -8,7 +9,7 @@ const CreateTenantSchema = z.object({
   slug: z.string().min(2).regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
   isSharedPoolActive: z.boolean().optional(),
   displayName: z.string().max(120).optional(),
-  logoUrl: z.string().url().optional(),
+  logoUrl: logoUrlSchema.optional(),
   primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Geçerli bir hex renk kodu girin').optional(),
   tenantVocabulary: z
     .object({ greeting: z.string().max(50).optional(), signOff: z.string().max(50).optional(), formalStyle: z.boolean().optional() })
@@ -79,7 +80,7 @@ const UpdateTenantSchema = z
   .object({
     name: z.string().min(2).optional(),
     displayName: z.string().max(120).nullable().optional(),
-    logoUrl: z.string().url().nullable().optional(),
+    logoUrl: logoUrlSchema.nullable().optional(),
     primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
     isSharedPoolActive: z.boolean().optional(),
     tenantVocabulary: TenantVocabularySchema,
