@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const CreateJobListingSchema = z.object({
   title: z.string().min(2),
@@ -11,10 +12,8 @@ const CreateJobListingSchema = z.object({
 });
 
 export async function createJobListing(req: RequestWithTenant, res: Response) {
-  const parsed = CreateJobListingSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateJobListingSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const listing = await prisma.jobListing.create({
     data: {
@@ -43,10 +42,8 @@ const ListJobListingsQuerySchema = z.object({
 });
 
 export async function listJobListings(req: RequestWithTenant, res: Response) {
-  const parsed = ListJobListingsQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ListJobListingsQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const { isActive, tag, page, limit } = parsed.data;
   const skip = (page - 1) * limit;
@@ -99,10 +96,8 @@ const UpdateJobListingSchema = z
   .strict();
 
 export async function updateJobListing(req: RequestWithTenant, res: Response) {
-  const parsed = UpdateJobListingSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateJobListingSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const existing = await prisma.jobListing.findFirst({
     where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },

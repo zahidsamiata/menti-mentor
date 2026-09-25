@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { extractBearerToken, verifyToken } from '../middleware/jwtAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { logger } from '../services/logger.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── Ortak Yardımcı: Tenant ADMIN JWT doğrulaması ────────────────────────────
 // selfServeController'daki extractAdminPayload ile aynı pattern.
@@ -88,10 +89,8 @@ export async function updateTenantSettings(req: Request, res: Response) {
     });
   }
 
-  const parsed = UpdateSettingsSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateSettingsSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const updated = await prisma.tenant.update({
     where: { id: tenantId },
@@ -147,10 +146,8 @@ export async function blockPair(req: Request, res: Response) {
     });
   }
 
-  const parsed = BlockPairSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(BlockPairSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { fromUserId, toUserId } = parsed.data;
 
@@ -301,10 +298,8 @@ const UpdateTenantStatusSchema = z.object({
 });
 
 export async function updateTenantStatus(req: Request, res: Response) {
-  const parsed = UpdateTenantStatusSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateTenantStatusSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const tenantId = req.params['id'] as string;
 
@@ -379,10 +374,8 @@ const VerifyTenantSchema = z.object({
 });
 
 export async function verifyTenant(req: Request, res: Response) {
-  const parsed = VerifyTenantSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(VerifyTenantSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const tenantId = req.params['id'] as string;
 

@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { logoUrlSchema } from '../services/logoUrl.js';
 import { invalidateTenant } from '../services/tenantCache.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const CreateTenantSchema = z.object({
   name: z.string().min(2),
@@ -17,10 +18,8 @@ const CreateTenantSchema = z.object({
 });
 
 export async function createTenant(req: Request, res: Response) {
-  const parsed = CreateTenantSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateTenantSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const tenant = await prisma.tenant.create({
     data: {
@@ -88,10 +87,8 @@ const UpdateTenantSchema = z
   .strict();
 
 export async function updateTenant(req: Request, res: Response) {
-  const parsed = UpdateTenantSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateTenantSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const existing = await prisma.tenant.findUnique({
     where: { id: req.params['id'] as string },

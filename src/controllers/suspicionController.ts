@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const CreateReportSchema = z.object({
   tenantName:   z.string().min(2).max(200),
@@ -12,10 +13,8 @@ const CreateReportSchema = z.object({
 
 // POST /api/suspicion-reports — public (auth gerektirmez)
 export async function createSuspicionReport(req: Request, res: Response) {
-  const parsed = CreateReportSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateReportSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const report = await prisma.suspicionReport.create({ data: parsed.data });
   return res.status(201).json({ id: report.id, ok: true });

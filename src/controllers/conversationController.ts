@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { sendNewChatMessageEmail } from '../services/emailService.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // Chat v1 — menti↔mentör talep mesajlaşma.
 // Güvenlik sınırı KATILIMCIDIR (tenant değil): shared-pool'da taraflar farklı
@@ -117,10 +118,8 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
-  const parsed = StartSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(StartSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const mentiId = req.auth.userId;
   const tenantId = req.tenant.tenantId;
@@ -197,10 +196,8 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
-  const parsed = MessageSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(MessageSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const convo = await prisma.conversation.findUnique({ where: { id: req.params['id'] as string } });
   if (!convo) {

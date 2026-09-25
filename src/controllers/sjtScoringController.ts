@@ -14,6 +14,7 @@ import {
   getTopicsOverview,
   CertTopicError,
 } from '../services/certification.service.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const SjtAnswerSchema = z.object({
   questionCode: z.string().min(1),
@@ -47,10 +48,8 @@ const FeedbackSchema = z.object({
 
 // POST /api/scoring/compute-profile
 export async function computeProfileHandler(req: RequestWithTenant, res: Response) {
-  const parsed = ComputeProfileSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ComputeProfileSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { userId, role, answers } = parsed.data;
 
@@ -89,10 +88,8 @@ export async function computeProfileHandler(req: RequestWithTenant, res: Respons
 
 // POST /api/scoring/rank-mentors
 export async function rankMentorsHandler(req: RequestWithTenant, res: Response) {
-  const parsed = RankMentorsSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(RankMentorsSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { mentiId, limit } = parsed.data;
 
@@ -190,10 +187,8 @@ export async function certTopicsListHandler(req: RequestWithTenant, res: Respons
 
 // PATCH /api/scoring/certification/topics — konu aç/kapat (ADMIN, yalnızca kendi tenant'ı)
 export async function certTopicSetHandler(req: RequestWithTenant, res: Response) {
-  const parsed = SetTopicSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(SetTopicSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
   try {
     await setCertificationTopic(req.tenant.tenantId, parsed.data.topic, parsed.data.enabled);
     const overview = await getTopicsOverview(req.tenant.tenantId);
@@ -210,10 +205,8 @@ export async function certTopicSetHandler(req: RequestWithTenant, res: Response)
 
 // POST /api/scoring/certification/answer — seçim sonrası açıklama (öğrenme anı)
 export async function certRevealHandler(req: RequestWithTenant, res: Response) {
-  const parsed = RevealAnswerSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(RevealAnswerSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
   try {
     const reveal = await revealOption(parsed.data.questionCode, parsed.data.optionKey);
     return res.status(200).json(reveal);
@@ -227,10 +220,8 @@ export async function certifyHandler(req: RequestWithTenant, res: Response) {
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
-  const parsed = CertifySchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CertifySchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   // IDOR koruması: yalnızca kimliği doğrulanmış kullanıcının kendi sertifikası.
   const result = await evaluateCertification(req.auth.userId, req.tenant.tenantId, parsed.data.answers);
@@ -255,10 +246,8 @@ export async function feedbackHandler(req: RequestWithTenant, res: Response) {
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
-  const parsed = FeedbackSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(FeedbackSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   // Kurum-içi rol kaynağı TenantMembership.role'dür, User.role DEĞİL (veri modeli kuralı):
   // aynı kişi farklı kurumlarda farklı rolde olabilir. certQuestionsHandler ile aynı desen.

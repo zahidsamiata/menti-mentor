@@ -10,6 +10,7 @@ import {
   isSoleActiveTenantAdmin,
   ACCOUNT_CLOSED_MESSAGE,
 } from '../services/gdprService.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const UserIdSchema = z.object({ id: z.string().min(5) });
 
@@ -21,10 +22,8 @@ const DeleteAccountSchema = z.object({
 
 // POST /api/users/:id/anonymize — KVKK anonimleştirme talebi
 export async function anonymizeUserHandler(req: RequestWithTenant, res: Response) {
-  const parsed = UserIdSchema.safeParse({ id: req.params['id'] });
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UserIdSchema, { id: req.params['id'] }, res);
+  if (!parsed.success) return parsed.response;
 
   if (!req.auth || req.auth.role !== 'ADMIN') {
     return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca tenant admin erişebilir.' });
@@ -37,10 +36,8 @@ export async function anonymizeUserHandler(req: RequestWithTenant, res: Response
 // DELETE /api/users/:id/hard-delete — "Silme" talebi ANONİMLEŞTİRMEYE yönlendirilir (madde 39, PO kararı).
 // Endpoint adı korunur (geriye uyum) ama dönen mesaj gerçeği söyler: silinmez, anonimleştirilir.
 export async function hardDeleteUserHandler(req: RequestWithTenant, res: Response) {
-  const parsed = UserIdSchema.safeParse({ id: req.params['id'] });
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UserIdSchema, { id: req.params['id'] }, res);
+  if (!parsed.success) return parsed.response;
 
   if (!req.auth || req.auth.role !== 'ADMIN') {
     return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca tenant admin erişebilir.' });
@@ -52,10 +49,8 @@ export async function hardDeleteUserHandler(req: RequestWithTenant, res: Respons
 
 // GET /api/users/:id/export — Veri taşınabilirliği (KVKK Md.11 / GDPR Md.20)
 export async function exportUserDataHandler(req: RequestWithTenant, res: Response) {
-  const parsed = UserIdSchema.safeParse({ id: req.params['id'] });
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UserIdSchema, { id: req.params['id'] }, res);
+  if (!parsed.success) return parsed.response;
 
   // Kullanıcı kendi verisini veya admin export edebilir
   const isSelf = req.auth?.userId === parsed.data.id;
@@ -88,10 +83,8 @@ export async function deleteMyAccountHandler(req: RequestWithTenant, res: Respon
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Bu işlem için giriş yapmalısınız.' });
   }
 
-  const parsed = DeleteAccountSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(DeleteAccountSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const userId = req.auth.userId;
   const tenantId = req.tenant.tenantId;

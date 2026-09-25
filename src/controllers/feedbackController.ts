@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { sendFeedbackReminderEmail } from '../services/emailService.js';
 import { persistMentorQualityMultiplier } from '../services/scoring.js';
 import { logger } from '../services/logger.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const FeedbackSchema = z.object({
   // Menti → Mentor (1-5)
@@ -29,10 +30,8 @@ const FeedbackSchema = z.object({
 
 export async function submitFeedback(req: RequestWithTenant, res: Response) {
   const meetingId = req.params['meetingId'] as string;
-  const parsed = FeedbackSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(FeedbackSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const meeting = await prisma.meeting.findFirst({
     where: { id: meetingId, tenantId: req.tenant.tenantId },

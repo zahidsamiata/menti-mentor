@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import type { LogLevel } from '@prisma/client';
+import { validateRequest } from '../middleware/validate.js';
 
 // Query parametre şeması
 const ListSystemLogsQuerySchema = z.object({
@@ -18,10 +19,8 @@ const ListSystemLogsQuerySchema = z.object({
  * Query: level (INFO|WARN|ERROR), category, limit (max 100, varsayılan 50)
  */
 export async function listSystemLogs(req: Request, res: Response) {
-  const parsed = ListSystemLogsQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ListSystemLogsQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const { level, category, limit } = parsed.data;
 

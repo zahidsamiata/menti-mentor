@@ -20,6 +20,7 @@ import {
   reorderTenantStages,
   type StageWriteInput,
 } from '../services/learningJourney.service.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── Şemalar ─────────────────────────────────────────────────────────────────
 
@@ -80,10 +81,8 @@ export async function adminListStages(req: RequestWithTenant, res: Response) {
 // ─── POST /api/admin/learning-journey/stages ─────────────────────────────────
 
 export async function adminCreateStage(req: RequestWithTenant, res: Response) {
-  const parsed = CreateStageSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateStageSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
   const created = await createTenantStage(req.tenant.tenantId, parsed.data as StageWriteInput);
   return res.status(201).json(created);
 }
@@ -92,10 +91,8 @@ export async function adminCreateStage(req: RequestWithTenant, res: Response) {
 
 export async function adminUpdateStage(req: RequestWithTenant, res: Response) {
   const stageId = req.params['stageId'] as string;
-  const parsed = UpdateStageSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateStageSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const result = await updateTenantStage(req.tenant.tenantId, stageId, parsed.data);
   if (!result.ok) return sendWriteError(res, result.code);
@@ -156,10 +153,8 @@ export async function adminUnhideStage(req: RequestWithTenant, res: Response) {
 // ─── POST /api/admin/learning-journey/stages/reorder ─────────────────────────
 
 export async function adminReorderStages(req: RequestWithTenant, res: Response) {
-  const parsed = ReorderSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ReorderSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
   const result = await reorderTenantStages(req.tenant.tenantId, parsed.data.order);
   if (!result.ok) {
     return res.status(403).json({

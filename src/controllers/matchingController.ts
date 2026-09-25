@@ -4,6 +4,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { rankMentisForMentor, rankMentorsForMenti, type RankedMenti, type RankedMentor } from '../services/matching.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // KARAR 3: qualityMultiplier kullanıcıya gösterilmez (gizli yorumları dolaylı sızdırır).
 // DISC tipi açıklanmaz; bunun yerine nitel uyum gerekçesi üretilir.
@@ -72,10 +73,8 @@ export async function getRankedMentisForMentor(req: RequestWithTenant, res: Resp
 
   if (await rejectIfCallerNotApproved(req, res)) return;
 
-  const parsed = RankQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(RankQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const result = await rankMentisForMentor({
     mentorId,
@@ -122,10 +121,8 @@ export async function getRankedMentorsForMenti(req: RequestWithTenant, res: Resp
 
   if (await rejectIfCallerNotApproved(req, res)) return;
 
-  const parsed = MentorMatchQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(MentorMatchQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const result = await rankMentorsForMenti({
     mentiId,
@@ -146,10 +143,8 @@ const OptInSchema = z.object({
 // Ice-breaker LLM çağrısı kaldırıldı — menti kendi requestMessage'ını MatchRequest aşamasında yazar.
 export async function setVisibilityOptIn(req: RequestWithTenant, res: Response) {
   const mentorId = req.params['mentorId'] as string;
-  const parsed = OptInSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(OptInSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const mentor = await prisma.user.findFirst({
     where: { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR', isActive: true },

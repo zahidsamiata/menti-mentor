@@ -18,6 +18,7 @@ import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { verifyInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
+import { validateRequest } from '../middleware/validate.js';
 
 
 // ─── Validation şemaları ──────────────────────────────────────────────────────
@@ -134,10 +135,8 @@ const REGISTER_MESSAGES = {
 
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
 export async function register(req: Request, res: Response) {
-  const parsed = RegisterSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(RegisterSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { email, password, fullName, role, tenantSlug, inviteToken } = parsed.data;
 
@@ -302,10 +301,8 @@ async function loadSessionTenant(tenantId: string) {
 }
 
 export async function login(req: Request, res: Response) {
-  const parsed = LoginSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(LoginSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { email, password } = parsed.data;
 
@@ -418,10 +415,8 @@ export async function login(req: Request, res: Response) {
  *    yönetici en son red gerekçesini görebilmeli). Test/DISC/profil verisine DOKUNULMAZ.
  */
 export async function reapply(req: Request, res: Response) {
-  const parsed = LoginSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(LoginSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
   const { email, password } = parsed.data;
 
   const user = await prisma.user.findUnique({
@@ -548,10 +543,8 @@ export async function logout(req: Request, res: Response) {
 
 // ─── POST /api/auth/forgot-password ──────────────────────────────────────────
 export async function forgotPassword(req: Request, res: Response) {
-  const parsed = ForgotPasswordSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ForgotPasswordSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const GENERIC_SUCCESS_MESSAGE = 'E-posta adresiniz kayıtlıysa şifre sıfırlama bağlantısı gönderildi.';
 
@@ -586,10 +579,8 @@ export async function forgotPassword(req: Request, res: Response) {
 
 // ─── POST /api/auth/reset-password ───────────────────────────────────────────
 export async function resetPassword(req: Request, res: Response) {
-  const parsed = ResetPasswordSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ResetPasswordSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { token, password } = parsed.data;
   const tokenHash = hashToken(token);
@@ -673,10 +664,8 @@ export async function oauthRedirect(req: Request, res: Response) {
     });
   }
 
-  const parsed = OAuthInitSchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(OAuthInitSchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const state = createOAuthState(parsed.data.tenantSlug, parsed.data.role, parsed.data.inviteToken);
   const authUrl = provider.buildAuthUrl(state);

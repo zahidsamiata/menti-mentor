@@ -4,6 +4,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { parsePagination, LIST_PAGE } from '../services/pagination.js';
 import { Prisma } from '@prisma/client';
+import { validateRequest } from '../middleware/validate.js';
 
 // ---------------------------------------------------------------------------
 // Zod şemaları
@@ -53,10 +54,8 @@ function isPrismaUniqueError(err: unknown): boolean {
 
 /** POST /api/clubs — Yeni kulüp oluştur (ADMIN) */
 export async function createClub(req: RequestWithTenant, res: Response) {
-  const parsed = CreateClubSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateClubSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   try {
     const club = await prisma.club.create({
@@ -83,10 +82,8 @@ export async function createClub(req: RequestWithTenant, res: Response) {
 
 /** GET /api/clubs — Tenant'ın kulüplerini listele (?type, ?isActive filtresi) */
 export async function listClubs(req: RequestWithTenant, res: Response) {
-  const parsed = ListClubsQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ListClubsQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], LIST_PAGE);
   const where = {
@@ -131,10 +128,8 @@ export async function getClub(req: RequestWithTenant, res: Response) {
 
 /** PATCH /api/clubs/:id — Kulüp güncelle (ADMIN) */
 export async function updateClub(req: RequestWithTenant, res: Response) {
-  const parsed = UpdateClubSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateClubSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   // Kulübün bu tenant'a ait olduğunu doğrula
   const existing = await prisma.club.findFirst({
@@ -160,10 +155,8 @@ export async function updateClub(req: RequestWithTenant, res: Response) {
 
 /** POST /api/clubs/:id/members — Kulübe üye ekle */
 export async function addClubMember(req: RequestWithTenant, res: Response) {
-  const parsed = AddMemberSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(AddMemberSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const tenantId = req.tenant.tenantId;
   const clubId = req.params['id'] as string;

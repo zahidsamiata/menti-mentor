@@ -20,6 +20,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { logger } from '../services/logger.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── Validasyon şemaları ──────────────────────────────────────────────────────
 
@@ -58,10 +59,8 @@ export async function suggestTag(req: RequestWithTenant, res: Response) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
   }
 
-  const parsed = SuggestTagSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(SuggestTagSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { value } = parsed.data;
   const tenantId = req.tenant.tenantId;
@@ -89,10 +88,8 @@ export async function suggestTag(req: RequestWithTenant, res: Response) {
 
 /** Admin: bekleyen etiket kuyruğunu listele. */
 export async function listPendingTags(req: RequestWithTenant, res: Response) {
-  const parsed = PendingTagListSchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(PendingTagListSchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const { status, page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
@@ -171,10 +168,8 @@ export async function approveTag(req: RequestWithTenant, res: Response) {
 export async function mergeTag(req: RequestWithTenant, res: Response) {
   const tagId = req.params['id'] as string;
 
-  const parsed = MergeTagSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(MergeTagSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { targetTag } = parsed.data;
 

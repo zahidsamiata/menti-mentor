@@ -11,6 +11,7 @@ import { notifyTenantVerification } from '../services/tenantNotifications.js';
 import { maskName, maskContact, maskEmail } from '../services/mask.js';
 import { parsePagination, REPORT_PAGE } from '../services/pagination.js';
 import { verifyTransporter, getSmtpStatus } from '../services/emailService.js';
+import { validateRequest } from '../middleware/validate.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -354,10 +355,8 @@ export async function requestTenantCorrection(req: Request, res: Response) {
     });
   }
 
-  const parsed = RequestCorrectionSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(RequestCorrectionSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   await prisma.tenant.update({
     where: { id: tenant.id },
@@ -521,8 +520,8 @@ const PlatformReviewReportSchema = z.object({
 });
 
 export async function reviewUserReport(req: Request, res: Response) {
-  const parsed = PlatformReviewReportSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  const parsed = validateRequest(PlatformReviewReportSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const report = await prisma.userReport.findUnique({ where: { id: req.params['id'] as string }, select: { id: true } });
   if (!report) return res.status(404).json({ error: 'NOT_FOUND' });

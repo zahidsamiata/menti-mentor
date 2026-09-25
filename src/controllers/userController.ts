@@ -9,6 +9,7 @@ import { ensureMembershipSafe } from '../services/membership.js';
 import { canViewerSeeDiscType } from '../services/discVisibility.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { applyKAnonymity } from '../services/mask.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── Security: Tag Poisoning Prevention ───────────────────────────────────────
 // Etiketlerdeki XSS, injection ve kimlik gizleme girişimlerini önler.
@@ -57,10 +58,8 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
     }
   }
 
-  const parsed = ListUsersQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ListUsersQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const { role, isActive, page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
@@ -269,10 +268,8 @@ const UpdateUserSchema = z.object({
 }).strict();
 
 export async function updateUser(req: RequestWithTenant, res: Response) {
-  const parsed = UpdateUserSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateUserSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const existing = await prisma.user.findFirst({
     where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
@@ -354,10 +351,8 @@ const UpdateMyProfileSchema = z.object({
 export async function updateMyProfile(req: RequestWithTenant, res: Response) {
   if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
 
-  const parsed = UpdateMyProfileSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateMyProfileSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const user = await prisma.user.findFirst({
     where: { id: req.auth.userId, tenantId: req.tenant.tenantId },
@@ -440,10 +435,8 @@ export async function patchSelfProfile(req: RequestWithTenant, res: Response) {
 }
 
 export async function createUser(req: RequestWithTenant, res: Response) {
-  const parsed = CreateUserSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateUserSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const user = await prisma.user.create({
     data: {

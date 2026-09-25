@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { parsePagination, LIST_PAGE } from '../services/pagination.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // Not: requesterUserId body'de ALINMAZ — talep sahibi kimliği doğrulanmış kullanıcıdır
 // (IDOR önleme). Aksi halde bir kullanıcı başkası adına talep oluşturabilirdi.
@@ -21,10 +22,8 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
-  const parsed = CreateRequestSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateRequestSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   // Talep sahibi = kimliği doğrulanmış kullanıcı (body'den değil), kendi tenant'ında aktif.
   const requester = await prisma.user.findFirst({
@@ -82,10 +81,8 @@ const ListRequestsQuerySchema = z.object({
 });
 
 export async function listRequests(req: RequestWithTenant, res: Response) {
-  const parsed = ListRequestsQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ListRequestsQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   // Yetki (Y1/3b-2): admin dışı kullanıcı YALNIZ taraf olduğu talepleri görür — gönderen
   // (requesterUserId) VEYA hedef mentör (targetType=USER, targetId). Aksi halde tüm tenant'ın
