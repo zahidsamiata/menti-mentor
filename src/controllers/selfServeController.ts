@@ -9,6 +9,7 @@ import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAut
 import { invalidateTenant } from '../services/tenantCache.js';
 import { ensureMembership } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
+import { hashRefreshToken } from '../services/refreshToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
 
@@ -334,7 +335,7 @@ export async function selfServeRegister(req: Request, res: Response) {
   const rawRefresh = generateRefreshToken();
   await prisma.refreshToken.create({
     data: {
-      token:     rawRefresh,
+      token:     hashRefreshToken(rawRefresh),
       userId:    user.id,
       expiresAt: refreshTokenExpiresAt(),
     },

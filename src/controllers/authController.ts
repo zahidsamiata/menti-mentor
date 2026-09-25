@@ -16,6 +16,7 @@ import { ensureMembershipSafe } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
+import { hashRefreshToken, refreshTokenWhere } from '../services/refreshToken.js';
 import { verifyInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
@@ -92,13 +93,11 @@ function getRefreshTokenFromCookie(req: Request): string | undefined {
 
 /**
  * Token güvenlik modeli:
- *  - refreshToken  : 512-bit entropi (64 byte → 128 hex char) — DB'de plaintext
+ *  - refreshToken  : 512-bit entropi (64 byte → 128 hex char) — DB'de SHA-256 hash (GV-13)
  *  - resetToken    : 256-bit entropi (32 byte → 64 hex char) — DB'de SHA-256 hash
  *
- * resetToken neden hash'leniyor?
- *  DB sızıntısında saldırgan hash'ten raw token'ı üretemez.
- *  refreshToken hash'lenmiyor çünkü ömrü 7 gün ve rotasyon var;
- *  resetToken ise e-posta ile iletilir, daha uzun süre oturabilir.
+ * Neden hash? DB sızıntısında hash'ten raw token üretilemez. refreshToken için saklama/arama
+ * kuralı ve eski açık-metin kayıtlarla geçiş uyumluluğu: services/refreshToken.ts.
  */
 function generateRefreshToken(): string {
   return crypto.randomBytes(64).toString('hex');
@@ -385,7 +384,7 @@ export async function login(req: Request, res: Response) {
   const refreshTokenValue = generateRefreshToken();
   await prisma.refreshToken.create({
     data: {
-      token: refreshTokenValue,
+      token: hashRefreshToken(refreshTokenValue),
       userId: user.id,
       expiresAt: refreshTokenExpiresAt(),
     },
@@ -463,8 +462,9 @@ export async function refresh(req: Request, res: Response) {
     });
   }
 
-  const stored = await prisma.refreshToken.findUnique({
-    where: { token: refreshToken },
+  // Özetli kayıt ya da (geçiş dönemi) eski açık-metin kayıt — bkz. services/refreshToken.ts.
+  const stored = await prisma.refreshToken.findFirst({
+    where: refreshTokenWhere(refreshToken),
     include: {
       user: {
         select: {
@@ -485,7 +485,7 @@ export async function refresh(req: Request, res: Response) {
 
   if (!stored || stored.expiresAt < new Date()) {
     if (stored) {
-      await prisma.refreshToken.delete({ where: { token: refreshToken } });
+      await prisma.refreshToken.delete({ where: { id: stored.id } });
     }
     return res.status(401).json({
       error: 'REFRESH_TOKEN_GECERSIZ',
@@ -497,13 +497,14 @@ export async function refresh(req: Request, res: Response) {
     return res.status(401).json({ error: 'HESAP_PASIF', message: 'Hesabınız aktif değil.' });
   }
 
-  // Token rotasyonu: eski token silinir, yeni token verilir (replay attack önlemi)
-  await prisma.refreshToken.delete({ where: { token: refreshToken } });
+  // Token rotasyonu: eski token silinir, yeni token verilir (replay attack önlemi).
+  // Eski kayıt açık metinse bu adım onu özetli kayda dönüştürmüş olur (GV-13 geçişi).
+  await prisma.refreshToken.delete({ where: { id: stored.id } });
 
   const newRefreshTokenValue = generateRefreshToken();
   await prisma.refreshToken.create({
     data: {
-      token: newRefreshTokenValue,
+      token: hashRefreshToken(newRefreshTokenValue),
       userId: stored.user.id,
       expiresAt: refreshTokenExpiresAt(),
     },
@@ -534,7 +535,7 @@ export async function logout(req: Request, res: Response) {
   const refreshToken = getRefreshTokenFromCookie(req);
 
   if (refreshToken) {
-    await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
+    await prisma.refreshToken.deleteMany({ where: refreshTokenWhere(refreshToken) });
   }
 
   clearRefreshCookie(res);
