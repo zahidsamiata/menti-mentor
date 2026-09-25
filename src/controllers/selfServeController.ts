@@ -5,7 +5,8 @@ import jwt from 'jsonwebtoken';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { logoUrlSchema } from '../services/logoUrl.js';
-import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAuth.js';
+import { signToken } from '../middleware/jwtAuth.js';
+import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { ensureMembership } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
@@ -56,22 +57,6 @@ function classifyEmailDomain(email: string): DomainTier {
   if (GENERIC_EMAIL_DOMAINS.has(domain)) return 'GENERIC';
   if (domain.endsWith('.edu.tr')) return 'EDU';
   return 'INSTITUTION';
-}
-
-// JWT'yi doğrula ve ADMIN olduğunu kontrol et.
-// X-Tenant-Id header'ı gerektirmeyen self-serve akışı için kullanılır.
-function extractAdminPayload(req: Request, res: Response) {
-  const token = extractBearerToken(req.header('Authorization'));
-  if (!token) {
-    res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'JWT token gereklidir.' });
-    return null;
-  }
-  const payload = verifyToken(token);
-  if (!payload || payload.role !== 'ADMIN') {
-    res.status(403).json({ error: 'YETKI_YOK', message: 'Bu işlem için yönetici yetkisi gereklidir.' });
-    return null;
-  }
-  return payload;
 }
 
 // ─── DISC Önizleme Motoru (kural tabanlı, LLM yok) ───────────────────────────
@@ -383,7 +368,7 @@ const UpdateOnboardingSchema = z
   .strict();
 
 export async function updateOnboarding(req: Request, res: Response) {
-  const payload = extractAdminPayload(req, res);
+  const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
 
   const tenantId = req.params['id'] as string;
@@ -432,7 +417,7 @@ export async function updateOnboarding(req: Request, res: Response) {
 // ─── POST /api/tenants/self-serve/resubmit ───────────────────────────────────
 // #37: Platform admin "düzeltme iste" dedikten sonra kurum yöneticisi bilgilerini revize edip
 // başvurusunu TEKRAR gönderir. Durum CORRECTION_REQUESTED → PENDING_REVIEW. Yalnız kurumun kendi
-// ADMIN'i (extractAdminPayload → payload.tenantId, IDOR-safe). correctionNote SİLİNMEZ (geçmiş korunur).
+// ADMIN'i (authenticateTenantAdmin → payload.tenantId, IDOR-safe). correctionNote SİLİNMEZ (geçmiş korunur).
 const ResubmitSchema = z.object({
   institutionRole:  z.string().trim().max(200).optional(),
   // Güncellenmiş başvuru kanıtı (görev/ispat). En az 1, en fazla 1000 karakter.
@@ -440,7 +425,7 @@ const ResubmitSchema = z.object({
 });
 
 export async function resubmitTenantApplication(req: Request, res: Response) {
-  const payload = extractAdminPayload(req, res);
+  const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
 
   const parsed = validateRequest(ResubmitSchema, req.body, res);
@@ -486,7 +471,7 @@ export async function resubmitTenantApplication(req: Request, res: Response) {
 // ─── GET /api/tenants/:slug/preview ──────────────────────────────────────────
 
 export async function getTenantPreview(req: Request, res: Response) {
-  const payload = extractAdminPayload(req, res);
+  const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
 
   const slug = req.params['slug'] as string;
@@ -589,7 +574,7 @@ const CreateInvitationSchema = z.object({
 });
 
 export async function createInvitation(req: Request, res: Response) {
-  const payload = extractAdminPayload(req, res);
+  const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
 
   const tenantId = req.params['id'] as string;
@@ -731,7 +716,7 @@ const SaveTemplateSchema = z.object({
 
 // GET /api/tenants/:id/invitation-templates
 export async function getInvitationTemplates(req: Request, res: Response) {
-  const payload = extractAdminPayload(req, res);
+  const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
 
   const tenantId = req.params['id'] as string;
@@ -745,7 +730,7 @@ export async function getInvitationTemplates(req: Request, res: Response) {
 
 // PUT /api/tenants/:id/invitation-templates
 export async function saveInvitationTemplate(req: Request, res: Response) {
-  const payload = extractAdminPayload(req, res);
+  const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
 
   const tenantId = req.params['id'] as string;
