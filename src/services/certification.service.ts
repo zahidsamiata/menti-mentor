@@ -67,10 +67,15 @@ export class CertTopicError extends Error {
 // === 3 → >= 2. Kritik 4 konuda 3 VE 2 geçer, 1 ve 0 eler.
 // Red-line'ın diğer iki işlevi KORUNUR: garantili gelme
 // (madde 149) + RED_LINE_FAILED ayrı eleme işareti.
-// ⚠️ Sertifika içeriğinin 88 şıkkı bu eşiğe göre yazıldı
-// (1↔2 çizgisi = prensip uygulandı mı). Detay: madde 164/72.
-/** Bir seçeneğin ilk-denemede "geçer" olup olmadığı (konunun kritikliğine göre). */
-export function isFirstAttemptPass(competencyScore: number, isRedLine: boolean): boolean {
+// ⚠️ Yazılı sertifika içeriğinin 88 şıkkı (docs/raporlar/icerik/sertifika-oturum1-3,
+// KARAR-46 bekliyor) bu eşiğe göre yazıldı (1↔2 çizgisi = prensip uygulandı mı);
+// bugünkü seed'de (prisma/seed-certification.ts) 84 şık var. Detay: madde 164/72.
+/**
+ * Bir seçeneğin ilk-denemede "geçer" olup olmadığı.
+ * `_isRedLine` bugün eşiği ETKİLEMEZ (2026-09-04 kararı kritik ve normal konuda eşiği
+ * birleştirdi); eşik yeniden ayrışırsa çağıranlar değişmesin diye imzada tutuluyor.
+ */
+export function isFirstAttemptPass(competencyScore: number, _isRedLine: boolean): boolean {
   return competencyScore >= 2;
 }
 
@@ -90,7 +95,7 @@ export interface CertAnswer {
 
 export type CertFailReason =
   | 'BELOW_THRESHOLD'   // aktif konuların %80'i geçilemedi
-  | 'RED_LINE_FAILED'   // en az bir açık red-line konu ilk-denemede 3 ile geçilemedi
+  | 'RED_LINE_FAILED'   // en az bir açık red-line konu ilk denemede geçilemedi (eşik: 2 ve üstü)
   | 'NO_ACTIVE_TOPICS'  // kurumda açık konu yok (değerlendirilemez)
   | 'COOLDOWN_ACTIVE'   // bekleme süresi dolmadan yeni deneme yapılamaz
   | null;
