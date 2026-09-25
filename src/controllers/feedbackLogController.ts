@@ -50,6 +50,23 @@ export async function createFeedbackLog(req: RequestWithTenant, res: Response) {
 
   const { mentorId, mentiId, phase, starRating, difficulty, npsScore, goalAchieved } = parsed.data;
 
+  // GV-05: MENTOR yalnız KENDİ adına ve tarafı olduğu çift için yazar — kimlik oturumdan
+  // (komşu uçlar: feedbackController.submitFeedback taraf kontrolü, bu dosyadaki okuma uçları).
+  // ADMIN yolu değişmedi. Reddedilen istekte DISC kombinasyon skoru DEĞİŞMEZ (sinyal aşağıda).
+  if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
+  if (req.auth.role === 'MENTOR') {
+    if (mentorId !== req.auth.userId) {
+      return res.status(403).json({ error: 'YETKI_YETERSIZ', message: 'Yalnızca kendi adınıza geri bildirim yazabilirsiniz.' });
+    }
+    const pairMeeting = await prisma.meeting.findFirst({
+      where:  { tenantId: req.tenant.tenantId, mentorUserId: mentorId, mentiUserId: mentiId },
+      select: { id: true },
+    });
+    if (!pairMeeting) {
+      return res.status(403).json({ error: 'YETKI_YETERSIZ', message: 'Yalnızca görüştüğünüz menti için geri bildirim yazabilirsiniz.' });
+    }
+  }
+
   // Mentor ve menti aynı tenant'ta olmalı
   const [mentor, menti] = await Promise.all([
     prisma.user.findFirst({
