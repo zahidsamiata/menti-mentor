@@ -15,6 +15,7 @@ import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 import { send as sendEmail } from './emailService.js';
+import { escapeHtml } from './htmlEscape.js';
 
 export type TenantNotificationKind = 'APPROVED' | 'REJECTED' | 'CORRECTION_REQUESTED';
 
@@ -33,26 +34,28 @@ export function buildTenantNotification(args: {
   note?: string;
 }): { subject: string; html: string } {
   const { kind, tenantName, adminName, note } = args;
-  const greeting = `<p>Merhaba ${adminName},</p>`;
+  // GV-15: konu düz metin (ham ad); HTML gövdesine giren kurum/yönetici adı ve not kaçırılır.
+  const safeTenantName = escapeHtml(tenantName);
+  const greeting = `<p>Merhaba ${escapeHtml(adminName)},</p>`;
 
   if (kind === 'APPROVED') {
     return {
       subject: `[${tenantName}] Başvurunuz Onaylandı`,
       html:
         greeting +
-        `<p><strong>${tenantName}</strong> kurum başvurunuz onaylandı. Artık platformu kullanmaya başlayabilir, ` +
+        `<p><strong>${safeTenantName}</strong> kurum başvurunuz onaylandı. Artık platformu kullanmaya başlayabilir, ` +
         `mentör ve menti davetleri gönderebilirsiniz.</p>` +
         `<p>Aramıza hoş geldiniz!</p>`,
     };
   }
 
   if (kind === 'CORRECTION_REQUESTED') {
-    const noteBlock = note ? `<p><strong>Güncellenmesi istenenler:</strong> ${note}</p>` : '';
+    const noteBlock = note ? `<p><strong>Güncellenmesi istenenler:</strong> ${escapeHtml(note)}</p>` : '';
     return {
       subject: `[${tenantName}] Başvurunuz Hakkında — Bilgi Güncellemesi`,
       html:
         greeting +
-        `<p><strong>${tenantName}</strong> kurum başvurunuzu inceledik. Başvurunuzu tamamlayabilmemiz için ` +
+        `<p><strong>${safeTenantName}</strong> kurum başvurunuzu inceledik. Başvurunuzu tamamlayabilmemiz için ` +
         `bazı bilgileri güncellemenizi rica ediyoruz — <strong>başvurunuz reddedilmedi</strong>, yalnızca ` +
         `küçük bir düzenleme gerekiyor.</p>` +
         noteBlock +
@@ -63,12 +66,12 @@ export function buildTenantNotification(args: {
   }
 
   // REJECTED — destekleyici dil
-  const noteBlock = note ? `<p><strong>Değerlendirme notu:</strong> ${note}</p>` : '';
+  const noteBlock = note ? `<p><strong>Değerlendirme notu:</strong> ${escapeHtml(note)}</p>` : '';
   return {
     subject: `[${tenantName}] Başvurunuz Hakkında`,
     html:
       greeting +
-      `<p><strong>${tenantName}</strong> kurum başvurunuz şu aşamada onaylanamadı.</p>` +
+      `<p><strong>${safeTenantName}</strong> kurum başvurunuz şu aşamada onaylanamadı.</p>` +
       noteBlock +
       `<p>Sorularınız veya itirazınız için bizimle iletişime geçebilirsiniz. İlginiz için teşekkür ederiz.</p>`,
   };
