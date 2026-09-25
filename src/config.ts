@@ -54,6 +54,23 @@ if (isProd && platformAdminEmail === DEV_PLATFORM_EMAIL) {
   );
 }
 
+// Yükleme boyutu sınırı (GV-22). Ayar yanlış yazılırsa (`5MB`, boş, negatif) `Number()` NaN/0
+// üretir; multer'ın `fileSize` sınırı NaN ile karşılaştırmada hiç tetiklenmez → sınır sessizce
+// kalkar. Geçersiz değerde varsayılana düşülür ve açılışta uyarı yazılır (console.warn: yukarıdaki
+// PLATFORM_ADMIN_EMAIL uyarısıyla aynı gerekçe).
+export const DEFAULT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
+
+export function parseUploadMaxBytes(raw: string | undefined = process.env.UPLOAD_MAX_BYTES): number {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_UPLOAD_MAX_BYTES;
+  const value = Number(raw);
+  if (Number.isSafeInteger(value) && value > 0) return value;
+  console.warn(
+    `[UYARI] UPLOAD_MAX_BYTES geçersiz (bayt cinsinden pozitif tam sayı olmalı) — ` +
+      `varsayılan ${DEFAULT_UPLOAD_MAX_BYTES} bayt kullanılıyor.`,
+  );
+  return DEFAULT_UPLOAD_MAX_BYTES;
+}
+
 // Backend base URL — hem config.backendBaseUrl hem de yüklenen avatar'ın public
 // URL tabanı için kullanılır. Object içinde iki kez tekrar etmemek için üste alındı.
 const backendBaseUrl = process.env.BACKEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000';
@@ -143,7 +160,7 @@ export const config = {
   upload: {
     dir: process.env.UPLOAD_DIR ?? resolve(process.cwd(), 'uploads'),
     publicBaseUrl: (process.env.UPLOAD_PUBLIC_BASE_URL ?? backendBaseUrl).replace(/\/+$/, ''),
-    maxBytes: Number(process.env.UPLOAD_MAX_BYTES ?? 5 * 1024 * 1024),
+    maxBytes: parseUploadMaxBytes(),
   },
 
   /**
