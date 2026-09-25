@@ -1,6 +1,8 @@
 import { config as dotenvConfig } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+// Zod Türkçe varsayılan mesajları (IC-05) — config her giriş noktasının ilk yüklediği modül.
+import './zodLocale.js';
 // .env, backend kökündedir (backend/.env). Bu dosya backend/src/config.ts olduğundan
 // doğru göreli yol '../.env' (bir üst); '../../.env' repo köküne çıkıp dosyayı bulamaz
 // ve tüm config sessizce varsayılanlara düşerdi. Prod'da (Docker) dosya yoktur, env
