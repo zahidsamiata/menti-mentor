@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { clearRefreshCookie } from './authController.js';
 import {
   anonymizeUser,
   hardDeleteUser,
@@ -17,8 +18,6 @@ const UserIdSchema = z.object({ id: z.string().min(5) });
 const DeleteAccountSchema = z.object({
   confirmEmail: z.string().trim().email('Geçerli bir e-posta adresi girin'),
 });
-
-const REFRESH_COOKIE_NAME = 'mm_refresh';
 
 // POST /api/users/:id/anonymize — KVKK anonimleştirme talebi
 export async function anonymizeUserHandler(req: RequestWithTenant, res: Response) {
@@ -126,7 +125,7 @@ export async function deleteMyAccountHandler(req: RequestWithTenant, res: Respon
   const result = await hardDeleteUser(userId, tenantId);
 
   // Oturum sonlandır: anonymizeUser üyeliği pasife alıp refresh token'ları sildi; refresh cookie'sini de temizle.
-  res.clearCookie(REFRESH_COOKIE_NAME);
+  clearRefreshCookie(res);
 
   return res.json({ message: ACCOUNT_CLOSED_MESSAGE, ...result });
 }

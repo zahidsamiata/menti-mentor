@@ -70,7 +70,9 @@ function setRefreshCookie(res: Response, token: string): void {
   });
 }
 
-function clearRefreshCookie(res: Response): void {
+// Oturum çerezini temizleyen tek yol: seçenekler set ile birebir aynı olmalı, yoksa tarayıcı
+// çerezi silmeyebilir (GV-23 — hesap kapatma da bunu kullanır).
+export function clearRefreshCookie(res: Response): void {
   res.clearCookie(REFRESH_COOKIE_NAME, { httpOnly: true, secure: isProd, sameSite: 'strict' });
 }
 
