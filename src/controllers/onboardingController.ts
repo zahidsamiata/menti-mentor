@@ -203,7 +203,9 @@ interface DiscResult {
   scores:   Record<DiscDimension, number>; // ham sayım
 }
 
-// Eşit skor durumunda tiebreak sırası: D > I > S > C (temperamentAnalysis.ts ile tutarlı).
+// Eşit skor durumunda tiebreak sırası: D > I > S > C.
+// ⚠️ temperamentAnalysis.ts farklı sıra kullanıyor (D > I > C > S) — iki yol eşitlikte farklı
+// baskın tip üretebilir; eşitleme ayrı iş (AN-11 notu, kuyrukta).
 // Sabit sıra, JavaScript sort kararlılığına güvenmemek için explicit olarak uygulanır.
 const DISC_TIEBREAK_ORDER: DiscDimension[] = ['D', 'I', 'S', 'C'];
 
@@ -366,7 +368,8 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
 // User modelinde ZATEN VAR (backend #62); bu uç yalnız doldurur (migration YOK).
 // ⚠️ EK2 (PO kararı): dördü de OPSİYONEL kalır — S1 (mentiNeeds/mentorStrengths) BOŞ
 // bırakılabilir ("henüz netleşmedi" dürüst cevaptır; zorla seçtirmek rastgele sinyal
-// üretir, motor onu %45 ağırlıkla ciddiye alır). S2/S3 zorunluluğu FE katmanında; backend
+// üretir; eşleşme motoru bu alanı kullanmaya başlarsa o sinyali ciddiye alır — bugün
+// src/services altında okuyan yok). S2/S3 zorunluluğu FE katmanında; backend
 // nullable. "≤2 seçim" hem burada (.max(2)) hem FE'de zorlanır.
 const MENTI_NEEDS      = ['KARAR_VEREMIYORUM', 'BECERIDE_TAKILDIM', 'GUVENMIYORUM', 'INSANLARI_TANIMIYORUM', 'KONUSACAK_BIRI'] as const;
 const MENTOR_STRENGTHS = ['YON_BULMA', 'BECERI', 'OZGUVEN', 'AG_KURMA', 'DINLEME'] as const;
