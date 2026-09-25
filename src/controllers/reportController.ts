@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { parsePagination, REPORT_PAGE } from '../services/pagination.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const REPORT_REASONS = ['SPAM', 'HARASSMENT', 'INAPPROPRIATE', 'NO_SHOW', 'OTHER'] as const;
 
@@ -23,10 +24,8 @@ export async function createReport(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'GECERSIZ_HEDEF', message: 'Kendinizi şikayet edemezsiniz.' });
   }
 
-  const parsed = CreateReportSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateReportSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const tenantId = req.tenant.tenantId;
   const target = await prisma.user.findFirst({
@@ -77,8 +76,8 @@ const REPORT_SELECT = {
 
 /** GET /api/admin/reports — ADMIN kendi tenant'ının şikayetlerini görür. */
 export async function listTenantReports(req: RequestWithTenant, res: Response) {
-  const parsed = ReportListSchema.safeParse(req.query);
-  if (!parsed.success) return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  const parsed = validateRequest(ReportListSchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], REPORT_PAGE);
   const where = { tenantId: req.tenant.tenantId, ...(parsed.data.status ? { status: parsed.data.status } : {}) };
@@ -105,8 +104,8 @@ const ReviewReportSchema = z.object({
 export async function reviewTenantReport(req: RequestWithTenant, res: Response) {
   if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
 
-  const parsed = ReviewReportSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  const parsed = validateRequest(ReviewReportSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   // Tenant izolasyonu: rapor bu tenant'a ait olmalı.
   const report = await prisma.userReport.findFirst({

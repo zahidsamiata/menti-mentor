@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { parsePagination, LIST_PAGE } from '../services/pagination.js';
 import { applyFeedbackSignal } from '../services/rewardPenalty.js';
 import { logger } from '../services/logger.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const DIFFICULTY_VALUES = [
   'ZAMAN_UYUMSUZLUGU',
@@ -44,10 +45,8 @@ const ListFeedbackLogQuerySchema = z.object({
 
 // POST /api/feedback-logs
 export async function createFeedbackLog(req: RequestWithTenant, res: Response) {
-  const parsed = CreateFeedbackLogSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateFeedbackLogSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { mentorId, mentiId, phase, starRating, difficulty, npsScore, goalAchieved } = parsed.data;
 
@@ -123,10 +122,8 @@ export async function createFeedbackLog(req: RequestWithTenant, res: Response) {
 //   MENTOR → yalnızca kendi yazdığı kayıtlar (mentorId === userId)
 //   MENTI  → FeedbackLog'lar mentor tarafından yazılır; menti göremez
 export async function listFeedbackLogs(req: RequestWithTenant, res: Response) {
-  const parsed = ListFeedbackLogQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ListFeedbackLogQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const role   = req.auth?.role;
   const userId = req.auth?.userId;

@@ -17,6 +17,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { logger } from '../services/logger.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const CreateAgreementSchema = z.object({
   mentorId: z.string().min(1),
@@ -41,10 +42,8 @@ const ENDABLE_AGREEMENT_STATUSES: readonly string[] = ['ACTIVE', 'RENEWAL_PENDIN
 export async function createAgreement(req: RequestWithTenant, res: Response) {
   if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
 
-  const parsed = CreateAgreementSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateAgreementSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const d = parsed.data;
   const tenantId = req.tenant.tenantId;

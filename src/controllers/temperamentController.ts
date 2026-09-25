@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { analyzeTemperament } from '../services/temperamentAnalysis.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const QuestionAnswerSchema = z.object({
   questionId: z.number().int().min(1).max(7),
@@ -25,10 +26,8 @@ const TemperamentTestBodySchema = z.object({
 
 // POST /api/users/:id/temperament-test
 export async function submitTemperamentTest(req: RequestWithTenant, res: Response) {
-  const parsed = TemperamentTestBodySchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(TemperamentTestBodySchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const userId  = req.params['id'] as string;
   const isAdmin = req.auth?.role === 'ADMIN';

@@ -31,6 +31,7 @@ import {
 import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { wasRecentlyNudged, sendNudge, NUDGE_COOLDOWN_HOURS } from '../services/nudgeService.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────
 
@@ -143,10 +144,8 @@ const HealthMetricsQuerySchema = z.object({
  * Eşikler opsiyonel query ile ayarlanabilir (passiveDays, staleDays); makul default'lar serviste.
  */
 export async function getHealthMetrics(req: RequestWithTenant, res: Response) {
-  const parsed = HealthMetricsQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(HealthMetricsQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const metrics = await computeHealthMetrics(req.tenant.tenantId, {
     passiveDays: parsed.data.passiveDays,
@@ -176,10 +175,8 @@ const NudgeSchema = z.object({
 export async function nudgeUser(req: RequestWithTenant, res: Response) {
   if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
 
-  const parsed = NudgeSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(NudgeSchema, req.body ?? {}, res);
+  if (!parsed.success) return parsed.response;
 
   const targetId = req.params['id'] as string;
   const tenantId = req.tenant.tenantId;
@@ -240,10 +237,8 @@ const AdminUserListSchema = z.object({
  * Compliance: discVector, selfProfile, temperamentJson hariç tutulur.
  */
 export async function adminListUsers(req: RequestWithTenant, res: Response) {
-  const parsed = AdminUserListSchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(AdminUserListSchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const { role, isActive, rematchOnly, approvalStatus, page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
@@ -358,10 +353,8 @@ const AdminMatchListSchema = z.object({
  * + skor gösterilir; ham discVector/email DÖNMEZ.
  */
 export async function adminListMatches(req: RequestWithTenant, res: Response) {
-  const parsed = AdminMatchListSchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(AdminMatchListSchema, req.query, res);
+  if (!parsed.success) return parsed.response;
   const { status, page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
 
@@ -455,10 +448,8 @@ const AdminCertResultsSchema = z.object({
  * Kaynak: TenantMembership (kurum-içi rol/sertifika kaynağı).
  */
 export async function adminListCertResults(req: RequestWithTenant, res: Response) {
-  const parsed = AdminCertResultsSchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(AdminCertResultsSchema, req.query, res);
+  if (!parsed.success) return parsed.response;
   const { status, page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
 
@@ -514,10 +505,8 @@ const RematchSchema = z.object({
 export async function triggerRematch(req: RequestWithTenant, res: Response) {
   const userId = req.params['id'] as string;
 
-  const parsed = RematchSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(RematchSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId, isActive: true },
@@ -685,10 +674,8 @@ const CorrectionSchema = z.object({
 export async function requestCorrection(req: RequestWithTenant, res: Response) {
   const userId = req.params['id'] as string;
 
-  const parsed = CorrectionSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CorrectionSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },
@@ -742,10 +729,8 @@ const RejectSchema = z.object({
 export async function rejectUser(req: RequestWithTenant, res: Response) {
   const userId = req.params['id'] as string;
 
-  const parsed = RejectSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(RejectSchema, req.body ?? {}, res);
+  if (!parsed.success) return parsed.response;
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },

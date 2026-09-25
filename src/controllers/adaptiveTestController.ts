@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { getNextQuestion, previewDiscVector } from '../services/adaptiveTestEngine.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── Sonraki soru ─────────────────────────────────────────────────────────────
 
@@ -59,10 +60,8 @@ export async function submitAdaptiveAnswer(req: RequestWithTenant, res: Response
     return res.status(403).json({ error: 'YETKI_YETERSIZ' });
   }
 
-  const parsed = SubmitAnswerSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(SubmitAnswerSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId, isActive: true },

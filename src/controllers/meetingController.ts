@@ -6,6 +6,7 @@ import { isHttpUrl } from '../services/safeUrl.js';
 import { UserRole, MeetingFormat, MeetingStatus, Weekday } from '@prisma/client';
 import { sendMeetingRequestEmail, sendMeetingApprovalEmail } from '../services/emailService.js';
 import { logger } from '../services/logger.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
@@ -173,10 +174,8 @@ async function checkOrientationLock(mentiId: string, res: Response): Promise<boo
 }
 
 export async function createMeeting(req: RequestWithTenant, res: Response) {
-  const parsed = CreateMeetingSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateMeetingSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { mentorId, mentiId, scheduledAt, endsAt } = parsed.data;
 
@@ -246,10 +245,8 @@ const ListMeetingsQuerySchema = z.object({
 });
 
 export async function listMeetings(req: RequestWithTenant, res: Response) {
-  const parsed = ListMeetingsQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ListMeetingsQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const { mentorId, mentiId, status, pendingFeedback } = parsed.data;
 
@@ -286,10 +283,8 @@ const UpdateMeetingSchema = z.object({
 
 export async function updateMeetingStatus(req: RequestWithTenant, res: Response) {
   const meetingId = req.params['id'] as string;
-  const parsed = UpdateMeetingSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateMeetingSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const existing = await prisma.meeting.findFirst({
     where:   { id: meetingId, tenantId: req.tenant.tenantId },
@@ -444,10 +439,8 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   if (!ctx) return res.status(401).json({ error: 'Kimlik veya tenant bağlamı yok.' });
   const { userId, tenantId } = ctx;
 
-  const parsed = BookMeetingSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(BookMeetingSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const {
     matchId, mentorUserId, format,

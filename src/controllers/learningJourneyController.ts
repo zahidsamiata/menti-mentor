@@ -22,6 +22,7 @@ import {
   getJourneyStatus,
   LEARNING_JOURNEY_FRAME,
 } from '../services/learningJourney.service.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const SelectChoiceSchema = z.object({
   choiceKey: z.string().min(1).max(8),
@@ -58,10 +59,8 @@ export async function selectChoice(req: RequestWithTenant, res: Response) {
   }
 
   const stageId = req.params['stageId'] as string;
-  const parsed = SelectChoiceSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(SelectChoiceSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const result = await resolveChoice(req.tenant.tenantId, audience, stageId, parsed.data.choiceKey);
   if (!result) {

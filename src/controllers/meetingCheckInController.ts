@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { applyFeedbackSignal } from '../services/rewardPenalty.js';
 import { computePairSignalFromCheckIns, PAIR_SIGNAL_CONFIG } from '../services/pairSignal.service.js';
 import { logger } from '../services/logger.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── Katman 1: Zorunlu kısa değerlendirme ────────────────────────────────────
 
@@ -30,10 +31,8 @@ export async function submitCheckIn(req: RequestWithTenant, res: Response) {
   if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
 
   const meetingId = req.params['meetingId'] as string;
-  const parsed = CheckInSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CheckInSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const meeting = await prisma.meeting.findFirst({
     where: { id: meetingId, tenantId: req.tenant.tenantId },

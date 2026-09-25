@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { socialUrlSchema } from '../services/socialUrl.js';
+import { validateRequest } from '../middleware/validate.js';
 
 // ─── Sektor Tag Sanitizasyonu (userController.ts ile aynı kural seti) ─────────
 const SECTOR_TAG_SCHEMA = z
@@ -286,10 +287,8 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
     });
   }
 
-  const parsed = CompleteProfileSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CompleteProfileSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const {
     sector, skills, experienceYears, expectationCategories, timeCommitment, interactionStyle,
@@ -392,10 +391,8 @@ export async function submitMatchingPreferences(req: RequestWithTenant, res: Res
     });
   }
 
-  const parsed = MatchingPreferencesSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(MatchingPreferencesSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
   const { mentiNeeds, mentorStrengths, supportApproach, priorityValue } = parsed.data;
 
   // Rol uyumu: menti mentör-gücü, mentör menti-ihtiyacı GÖNDEREMEZ (yanlış-rol sinyalini reddet).
@@ -458,10 +455,8 @@ export async function submitDiscTest(req: RequestWithTenant, res: Response) {
     });
   }
 
-  const parsed = SubmitDiscSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(SubmitDiscSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const result     = calculateDiscResult(parsed.data.answers);
   const resultCard = DISC_RESULT_CARDS[result.dominant];
@@ -531,10 +526,8 @@ export async function updateSocialProfile(req: RequestWithTenant, res: Response)
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
   }
 
-  const parsed = SocialProfileSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(SocialProfileSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const updated = await prisma.user.update({
     where: { id: req.auth.userId },

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const UpsertFilterSchema = z.object({
   minCompatibilityScore: z.number().int().min(0).max(100).default(0),
@@ -48,10 +49,8 @@ export async function upsertMentorFilter(req: RequestWithTenant, res: Response) 
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Mentor bulunamadı.' });
   }
 
-  const parsed = UpsertFilterSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpsertFilterSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const filter = await prisma.mentorFilter.upsert({
     where: { mentorId },

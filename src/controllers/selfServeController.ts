@@ -10,6 +10,7 @@ import { invalidateTenant } from '../services/tenantCache.js';
 import { ensureMembership } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
 import { config } from '../config.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const BCRYPT_ROUNDS = 12;
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
@@ -236,10 +237,8 @@ const SelfServeRegisterSchema = z.object({
 });
 
 export async function selfServeRegister(req: Request, res: Response) {
-  const parsed = SelfServeRegisterSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(SelfServeRegisterSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { email, password, name, tenantName, slug, programTemplate, institutionRole, verificationNote } = parsed.data;
 
@@ -393,10 +392,8 @@ export async function updateOnboarding(req: Request, res: Response) {
     });
   }
 
-  const parsed = UpdateOnboardingSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(UpdateOnboardingSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { onboardingStep, logoUrl, primaryColor, limits } = parsed.data;
 
@@ -443,10 +440,8 @@ export async function resubmitTenantApplication(req: Request, res: Response) {
   const payload = extractAdminPayload(req, res);
   if (!payload) return;
 
-  const parsed = ResubmitSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(ResubmitSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const tenant = await prisma.tenant.findUnique({
     where:  { id: payload.tenantId },
@@ -603,10 +598,8 @@ export async function createInvitation(req: Request, res: Response) {
     });
   }
 
-  const parsed = CreateInvitationSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(CreateInvitationSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const tenant = await prisma.tenant.findUnique({
     where:  { id: tenantId },
@@ -757,10 +750,8 @@ export async function saveInvitationTemplate(req: Request, res: Response) {
     return res.status(403).json({ error: 'YETKI_YOK' });
   }
 
-  const parsed = SaveTemplateSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(SaveTemplateSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
 
   const { role, format, content } = parsed.data;
   const template = await prisma.invitationTemplate.upsert({
