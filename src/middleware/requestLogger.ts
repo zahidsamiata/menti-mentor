@@ -2,9 +2,11 @@
  * HTTP erişim log middleware.
  * Her isteği yapısal JSON formatında loglar.
  * Hassas header'lar (Authorization) loglanmaz.
+ * URL'deki gizli değerler (davet token'ı, OAuth code/state, ?token=…) `maskUrlForLog` ile maskelenir (GV-14).
  */
 
 import type { NextFunction, Request, Response } from 'express';
+import { maskUrlForLog } from '../services/logUrl.js';
 
 export function requestLogger(req: Request, res: Response, next: NextFunction) {
   const start = Date.now();
@@ -19,7 +21,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
       level,
       category: 'HTTP',
       method,
-      url: originalUrl,
+      url: maskUrlForLog(originalUrl),
       status: res.statusCode,
       ms,
       tenantId,
