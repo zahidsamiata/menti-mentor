@@ -139,6 +139,13 @@ export async function sendNewChatMessageEmail(args: {
   );
 }
 
+// IC-03: e-postada ham rol kodu (MENTOR/MENTI/ADMIN) yerine Türkçe ad. Bilinmeyen değer olduğu gibi.
+const ROLE_LABELS: Record<string, string> = { ADMIN: 'Kurum Yöneticisi', MENTOR: 'Mentör', MENTI: 'Menti' };
+
+export function roleLabel(role: string): string {
+  return ROLE_LABELS[role] ?? role;
+}
+
 export async function sendAdminNewUserNotification(args: {
   toEmail: string;
   adminName: string;
@@ -150,7 +157,7 @@ export async function sendAdminNewUserNotification(args: {
     args.toEmail,
     `[${args.tenantName}] Onay Bekleyen Yeni Kayıt`,
     `<p>Merhaba ${args.adminName},</p>
-     <p><strong>${args.newUserFullName}</strong> adlı yeni bir <strong>${args.newUserRole}</strong> kaydı sisteme girdi.</p>
+     <p><strong>${args.newUserFullName}</strong> adlı yeni bir <strong>${roleLabel(args.newUserRole)}</strong> kaydı sisteme girdi.</p>
      <p>Kullanıcı eşleşme havuzuna dahil edilebilmesi için onayınızı bekliyor.</p>
      <p>Lütfen admin panelinizden inceleyip onaylayın veya reddedin.</p>`,
   );
@@ -205,7 +212,7 @@ export async function sendAdminTestCompletedNotification(args: {
     args.toEmail,
     `[${args.tenantName}] Kullanıcı DISC Testini Tamamladı — Onay Bekliyor`,
     `<p>Merhaba ${args.adminName},</p>
-     <p><strong>${args.userName}</strong> (${args.userRole}) DISC karakter analizini tamamladı.</p>
+     <p><strong>${args.userName}</strong> (${roleLabel(args.userRole)}) DISC karakter analizini tamamladı.</p>
      <p>Kullanıcı eşleşme havuzuna dahil edilebilmesi için onayınızı bekliyor.</p>
      <p>Lütfen admin panelinizden inceleyip onaylayın veya reddedin.</p>`,
   );
