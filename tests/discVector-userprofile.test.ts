@@ -12,16 +12,18 @@ import { recalcDiscVector } from '../src/services/discVectorService.js';
 
 describe('recalcDiscVector → UserProfile.disc*', () => {
   let userId: string;
+  let tenantId: string;
 
   beforeEach(async () => {
     await cleanDb();
     const tenant = await createTenant();
     const user = await createUser({ tenantId: tenant.id, role: 'MENTI' });
     userId = user.id;
+    tenantId = tenant.id;
   });
 
   it('UserProfile yoksa oluşturur ve DISC bileşenlerini yazar', async () => {
-    const vector = await recalcDiscVector(userId);
+    const vector = await recalcDiscVector(userId, tenantId);
 
     const profile = await testPrisma.userProfile.findUnique({ where: { userId } });
     expect(profile).not.toBeNull();
@@ -36,7 +38,7 @@ describe('recalcDiscVector → UserProfile.disc*', () => {
   it('mevcut UserProfile DISC-dışı alanlarını korur (yalnızca DISC güncellenir)', async () => {
     await createUserProfile(userId, { skillTags: ['react'], industryCode: 'TEK', yearsExp: 4 });
 
-    await recalcDiscVector(userId);
+    await recalcDiscVector(userId, tenantId);
 
     const profile = await testPrisma.userProfile.findUnique({ where: { userId } });
     expect(profile!.skillTags).toEqual(['react']);

@@ -52,36 +52,47 @@ function parseDiscVector(raw: unknown): DiscVector | null {
 // ─── Dinamik güven hedefi — TTL cache ────────────────────────────────────────
 
 /**
- * Aktif boyutsal soru sayısı için 5 dakikalık in-memory cache.
+ * Aktif boyutsal soru sayısı için 5 dakikalık in-memory cache — KURUM BAŞINA.
  *
  * Tasarım kararı: Soru havuzu nadiren değişir (admin işlemi); her yanıt
  * kaydında DB'ye sorgu atmak orantısız bir yük oluşturur. 5 dk TTL ile:
  *  - Admin soru eklerse/silerse maksimum 5 dk gecikmeli yansır (kabul edilebilir)
  *  - Yoğun test oturumlarında N kez DB sorgusu yerine 1 sorgu + cache hit
+ *
+ * Kurum izolasyonu (PS-06): payda = global sorular (tenantId null) + YALNIZ
+ * kullanıcının kurumunun soruları. Kurum admini kendi kurumuna boyutlu soru
+ * ekleyebildiği için (questionController.createQuestion) tek global sayaç başka
+ * kurumun sorularını paydaya katıyor, güveni olduğundan düşük gösteriyordu.
+ * Havuz tanımı `validateQuestionIds` / `buildQuestionList` ile aynı OR filtresidir.
+ * Cache anahtarı bu yüzden tenantId'dir — bir kurumun sayısı diğerine dönmez.
  */
-const dimensionalCountCache: { value: number | null; expiresAt: number } = {
-  value: null,
-  expiresAt: 0,
-};
+const dimensionalCountCache = new Map<string, { value: number; expiresAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 dakika
 
-async function getDimensionalQuestionCount(): Promise<number> {
+async function getDimensionalQuestionCount(tenantId: string): Promise<number> {
   const now = Date.now();
-  if (dimensionalCountCache.value !== null && now < dimensionalCountCache.expiresAt) {
-    return dimensionalCountCache.value;
+  const cached = dimensionalCountCache.get(tenantId);
+  if (cached && now < cached.expiresAt) {
+    return cached.value;
   }
   const count = await prisma.question.count({
-    where: { isActive: true, discDimension: { not: 'GENERAL' } },
+    where: {
+      isActive: true,
+      discDimension: { not: 'GENERAL' },
+      OR: [{ tenantId: null }, { tenantId }],
+    },
   });
-  dimensionalCountCache.value = count;
-  dimensionalCountCache.expiresAt = now + CACHE_TTL_MS;
+  dimensionalCountCache.set(tenantId, { value: count, expiresAt: now + CACHE_TTL_MS });
   return count;
 }
 
-/** Cache'i manuel geçersiz kıl — soru eklenip/silindiğinde çağrılabilir. */
+/**
+ * Cache'i manuel geçersiz kıl — soru eklenip/silindiğinde çağrılabilir.
+ * Tüm kurumların girdisini temizler: global soru değişimi herkesi etkiler,
+ * ayrıca soru nadiren değiştiği için hedefli silmenin kazancı yok.
+ */
 export function invalidateDimensionalCountCache(): void {
-  dimensionalCountCache.value = null;
-  dimensionalCountCache.expiresAt = 0;
+  dimensionalCountCache.clear();
 }
 
 // ─── Vektör hesaplama ─────────────────────────────────────────────────────────
@@ -90,15 +101,16 @@ export function invalidateDimensionalCountCache(): void {
  * Kullanıcının tüm yanıtlarından DISC vektörünü yeniden hesaplar ve DB'e yazar.
  *
  * @param userId - Hesaplama yapılacak kullanıcı ID'si
+ * @param tenantId - İsteğin kurumu; güven paydası bu kurumun havuzuna göre hesaplanır
  * @returns Güncellenmiş DiscVector
  */
-export async function recalcDiscVector(userId: string): Promise<DiscVector> {
+export async function recalcDiscVector(userId: string, tenantId: string): Promise<DiscVector> {
   const [responses, dimensionalTotal] = await Promise.all([
     prisma.userResponse.findMany({
       where: { userId },
       include: { question: { select: { discDimension: true, isActive: true } } },
     }),
-    getDimensionalQuestionCount(),
+    getDimensionalQuestionCount(tenantId),
   ]);
 
   // Yalnızca aktif sorulara verilen yanıtlar hesaba katılır.
