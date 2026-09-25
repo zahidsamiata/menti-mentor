@@ -10,6 +10,7 @@
  *   POST /api/questions/:questionId/respond → respondToQuestion (tek soru yanıtı)
  *   POST /api/questions/respond            → submitResponses  (toplu yanıt — ileride kullanım)
  *   GET  /api/questions/my-responses       → getMyResponses  (tamamlanma durumu)
+ *   GET  /api/questions/hidden             → listHiddenGlobalQuestions (ADMIN — kurumun gizledikleri)
  *
  * Neden iki respond endpoint'i var?
  *   - Tek soru (:questionId/respond): frontend tarafından kullanılır; her cevap
@@ -27,6 +28,7 @@ import {
   calcAdaptiveProgress,
   upsertSingleResponse,
   validateQuestionIds,
+  listHiddenQuestions,
 } from '../services/questionService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { sendAdminTestCompletedNotification } from '../services/emailService.js';
@@ -255,6 +257,14 @@ export async function hideGlobalQuestion(req: RequestWithTenant, res: Response) 
   });
 
   return res.status(201).json(hide);
+}
+
+// ─── GET /api/questions/hidden ───────────────────────────────────────────────
+
+/** Admin: kendi kurumunun gizlediği global soruları listeler (geri açabilmek için). */
+export async function listHiddenGlobalQuestions(req: RequestWithTenant, res: Response) {
+  const items = await listHiddenQuestions(req.tenant.tenantId);
+  return res.json({ items, total: items.length });
 }
 
 // ─── DELETE /api/questions/:id/hide ──────────────────────────────────────────

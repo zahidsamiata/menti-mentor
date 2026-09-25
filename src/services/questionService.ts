@@ -100,6 +100,27 @@ export async function buildQuestionList(tenantId: string) {
 }
 
 /**
+ * Bu kurumun gizlediği global soruları listeler (yönetici "Gizlenen sorular" bölümü).
+ *
+ * Neden: buildQuestionList gizlenenleri listeden çıkarır; yönetici bir soruyu gizleyince onu
+ * ekranda bir daha göremez ve geri açamazdı (DELETE /:questionId/hide vardı ama ekrana bağlı değildi).
+ * Yalnız verilen tenant'ın gizleme kayıtları döner (tenant izolasyonu); explicit select.
+ */
+export async function listHiddenQuestions(tenantId: string) {
+  const rows = await prisma.questionHide.findMany({
+    where:   { tenantId },
+    orderBy: { hiddenAt: 'desc' },
+    select:  {
+      hiddenAt: true,
+      question: {
+        select: { id: true, tenantId: true, text: true, type: true, discDimension: true, order: true, category: true },
+      },
+    },
+  });
+  return rows.map((r) => ({ ...r.question, hiddenAt: r.hiddenAt }));
+}
+
+/**
  * Soru listesinden pool meta verisini türetir.
  * Ayrı bir DB sorgusu gerektirmez; mevcut liste üzerinden hesaplanır.
  */

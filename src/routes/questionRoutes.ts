@@ -4,6 +4,7 @@
  * Route sırası önemlidir:
  *   /respond (POST, sabit)    — toplu endpoint; /:questionId/respond'dan önce tanımlanmalı
  *   /my-responses (GET, sabit) — /:questionId parametresi ile çakışmaması için önce gelir
+ *   /hidden (GET, sabit)       — aynı sebeple parametrik route'lardan önce
  *   /:questionId/respond (POST, parametrik) — frontend tarafından kullanılan tek soru endpoint'i
  *
  * Bu sıralama Express'in route'ları üstten aşağıya eşleştirmesi nedeniyle zorunludur.
@@ -22,6 +23,7 @@ import {
   deleteQuestion,
   hideGlobalQuestion,
   unhideGlobalQuestion,
+  listHiddenGlobalQuestions,
 } from '../controllers/questionController.js';
 
 const router = Router();
@@ -45,6 +47,9 @@ router.post('/respond', requireAuth(), submitResponses as unknown as RequestHand
 
 /** GET /api/questions/my-responses — kullanıcının adaptif ilerleme durumu (kimlik doğrulaması zorunlu) */
 router.get('/my-responses', requireAuth(), getMyResponses as unknown as RequestHandler);
+
+/** GET /api/questions/hidden — bu kurumun gizlediği global sorular (yalnız ADMIN, tenant-scoped) */
+router.get('/hidden', requireRole('ADMIN'), listHiddenGlobalQuestions as unknown as RequestHandler);
 
 // ── Soru Yönetimi (ADMIN — sabit path'lerden sonra, parametrik'ten önce) ─────
 
