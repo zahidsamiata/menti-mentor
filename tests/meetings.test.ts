@@ -302,3 +302,46 @@ describe('listMeetings — PENDING kuyruğunda requestMessage görünür', () =>
     expect(typeof items[0]!.requestMessage).toBe('string');
   });
 });
+
+// madde 156 (I-05): kurumun haftalık görüşme sıklığı kurum üyesine okunur.
+describe('GET /api/meetings/weekly-limit — görüşme sıklığı bilgisi', () => {
+  let http: TestAgent;
+  let tenant: Tenant;
+  let mentiToken: string;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http   = agent();
+    tenant = await createTenant();
+    const menti = await createMenti(tenant.id);
+    ({ accessToken: mentiToken } = await loginAs(http, menti.email, menti.rawPassword));
+  });
+
+  it('menti kendi kurumunun ayarını görür (varsayılan 2)', async () => {
+    const res = await http.get('/api/meetings/weekly-limit').set(tenantHeaders(tenant.id, mentiToken)).expect(200);
+    expect(res.body).toEqual({ maxMeetingsPerWeek: 2 });
+  });
+
+  it('yönetici ayarı değiştirince yeni değer döner', async () => {
+    await testPrisma.tenant.update({ where: { id: tenant.id }, data: { maxMeetingsPerWeek: 4 } });
+    const res = await http.get('/api/meetings/weekly-limit').set(tenantHeaders(tenant.id, mentiToken)).expect(200);
+    expect(res.body.maxMeetingsPerWeek).toBe(4);
+  });
+
+  it('geçersiz ayar (0) → null (limit yok kuralıyla aynı)', async () => {
+    await testPrisma.tenant.update({ where: { id: tenant.id }, data: { maxMeetingsPerWeek: 0 } });
+    const res = await http.get('/api/meetings/weekly-limit').set(tenantHeaders(tenant.id, mentiToken)).expect(200);
+    expect(res.body.maxMeetingsPerWeek).toBeNull();
+  });
+
+  it('token olmadan 401', async () => {
+    await http.get('/api/meetings/weekly-limit').set({ 'X-Tenant-Id': tenant.id }).expect(401);
+  });
+
+  it('başka kurumun başlığıyla istek kendi kurumu dışına sızmaz (tenant izolasyonu)', async () => {
+    const other = await createTenant();
+    await testPrisma.tenant.update({ where: { id: other.id }, data: { maxMeetingsPerWeek: 5 } });
+    const res = await http.get('/api/meetings/weekly-limit').set(tenantHeaders(other.id, mentiToken));
+    expect(res.status).not.toBe(200);
+  });
+});

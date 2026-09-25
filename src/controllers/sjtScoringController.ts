@@ -157,20 +157,24 @@ const RevealAnswerSchema = z.object({
 });
 
 // GET /api/scoring/certification/questions — öğrenme akışı senaryoları (cevap sızdırmaz)
-// Önceki denemede geçilemeyen konular (certWrongTopics) varsa listenin başına alınır.
+// Önceki denemede geçilemeyen konular (certWrongTopics) listenin başına alınır ve
+// tekrar denemede her konunun diğer varyantı (farklı sahne) önce gelir (certAttempts).
+// retryTopics: ekranın "geçen sefer zorlandığın konu" işareti için — kişinin KENDİ verisi.
 export async function certQuestionsHandler(req: RequestWithTenant, res: Response) {
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
   const membership = await prisma.tenantMembership.findUnique({
     where:  { userId_tenantId: { userId: req.auth.userId, tenantId: req.tenant.tenantId } },
-    select: { certWrongTopics: true },
+    select: { certWrongTopics: true, certAttempts: true },
   });
+  const retryTopics = membership?.certWrongTopics ?? [];
   const questions = await getCertificationQuestions(
     req.tenant.tenantId,
-    membership?.certWrongTopics ?? [],
+    retryTopics,
+    membership?.certAttempts ?? 0,
   );
-  return res.status(200).json({ questions });
+  return res.status(200).json({ questions, retryTopics });
 }
 
 const SetTopicSchema = z.object({

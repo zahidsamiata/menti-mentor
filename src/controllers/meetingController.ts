@@ -128,6 +128,25 @@ async function checkWeeklyMeetingLimit(
 
 const WEEKLY_LIMIT_MESSAGE = 'Bu hafta için görüşme limitinize ulaştınız.';
 
+/**
+ * GET /api/meetings/weekly-limit — kurumun haftalık görüşme sıklığını kurum üyesine gösterir
+ * (madde 156, I-05). Menti "neden görüşemiyorum" diye takılmasın; talep ekranında ve
+ * profilinde görür. Yalnız kurum ayarı döner (analitik, PII yok); tenant = oturumun tenant'ı.
+ * Ayar tanımsız/geçersizse `null` döner — checkWeeklyMeetingLimit ile aynı kural (limit yok).
+ */
+export async function getWeeklyMeetingLimit(req: RequestWithTenant, res: Response) {
+  const ctx = getCtx(req);
+  if (!ctx) return res.status(401).json({ error: 'Kimlik veya tenant bağlamı yok.' });
+
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: ctx.tenantId },
+    select: { maxMeetingsPerWeek: true },
+  });
+  const limit = tenant?.maxMeetingsPerWeek;
+  const valid = typeof limit === 'number' && Number.isFinite(limit) && limit > 0;
+  return res.status(200).json({ maxMeetingsPerWeek: valid ? limit : null });
+}
+
 // ─── Eski handler'lar (mevcut rotalar bunları kullanıyor) ────────────────────
 
 const CreateMeetingSchema = z.object({

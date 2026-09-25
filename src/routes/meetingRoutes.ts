@@ -9,6 +9,7 @@ import {
   getAvailability,
   bookMeeting,
   getActiveMeetings,
+  getWeeklyMeetingLimit,
   markFeedbackPrompted,
   approveMeetingByMentor,
   rejectMeetingByMentor,
@@ -54,6 +55,12 @@ router.get(
   '/active',
   requireAuth(),
   getActiveMeetings as unknown as RequestHandler,
+);
+// GET   /weekly-limit  → Kurumun haftalık görüşme sıklığı (madde 156) — her kurum üyesi görür
+router.get(
+  '/weekly-limit',
+  requireAuth(),
+  getWeeklyMeetingLimit as unknown as RequestHandler,
 );
 // POST  /:meetingId/feedback-prompted  → Feedback kartı gösterilince işaretle
 router.post(
