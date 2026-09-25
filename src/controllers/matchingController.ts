@@ -15,6 +15,25 @@ function buildPublicItem(item: RankedMenti) {
   return { ...rest, compatibilityReason: reasons.join(' · ') || 'Genel profil uyumu' };
 }
 
+/**
+ * U-08: onay kapısı — yöneticisi olmayan çağıran APPROVED değilse eşleşme verisi dönmez.
+ * Komşu uç userController.listUsers ile aynı kural ve aynı yanıt (403 ONAY_BEKLENIYOR).
+ * true dönerse yanıt yazılmıştır, çağıran return etmeli.
+ */
+async function rejectIfCallerNotApproved(req: RequestWithTenant, res: Response): Promise<boolean> {
+  if (!req.auth || req.auth.role === 'ADMIN') return false;
+  const caller = await prisma.user.findFirst({
+    where:  { id: req.auth.userId, tenantId: req.tenant.tenantId },
+    select: { approvalStatus: true },
+  });
+  if (caller?.approvalStatus === 'APPROVED') return false;
+  res.status(403).json({
+    error: 'ONAY_BEKLENIYOR',
+    message: 'Eşleşme önerilerini görmek için yönetici onayı gerekli.',
+  });
+  return true;
+}
+
 const DISC_VALUES = ['D', 'I', 'S', 'C'] as const;
 
 const RankQuerySchema = z.object({
@@ -50,6 +69,8 @@ export async function getRankedMentisForMentor(req: RequestWithTenant, res: Resp
       message: 'Yalnızca kendi aday listenizi görüntüleyebilirsiniz.',
     });
   }
+
+  if (await rejectIfCallerNotApproved(req, res)) return;
 
   const parsed = RankQuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -98,6 +119,8 @@ const MentorMatchQuerySchema = z.object({
 // listesi görülemez). SALT-OKUMA; canlı eşleştirme yolunu (rankMentisForMentor) değiştirmez.
 export async function getRankedMentorsForMenti(req: RequestWithTenant, res: Response) {
   const mentiId = req.params['mentiId'] as string;
+
+  if (await rejectIfCallerNotApproved(req, res)) return;
 
   const parsed = MentorMatchQuerySchema.safeParse(req.query);
   if (!parsed.success) {
