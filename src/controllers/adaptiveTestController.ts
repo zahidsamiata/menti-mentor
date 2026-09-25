@@ -116,6 +116,16 @@ export async function previewAdaptiveResult(req: RequestWithTenant, res: Respons
     return res.status(403).json({ error: 'YETKI_YETERSIZ' });
   }
 
+  // KR-04: hedef kullanıcı çağıranın KURUMUNDA olmalı — aynı dosyadaki komşu uçlarla
+  // (getNextAdaptiveQuestion / submitAdaptiveAnswer) aynı desen. Başka kurum → 404.
+  const user = await prisma.user.findFirst({
+    where: { id: userId, tenantId: req.tenant.tenantId, isActive: true },
+    select: { id: true },
+  });
+  if (!user) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+  }
+
   const vector = await previewDiscVector(userId);
   return res.json({ discVector: vector, note: 'Bu bir anlık tahmindir; test tamamlandığında güncellenir.' });
 }
