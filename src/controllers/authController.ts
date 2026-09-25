@@ -26,7 +26,7 @@ const RegisterSchema = z.object({
   email: z.string().email('Geçerli bir e-posta adresi girin'),
   password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
   fullName: z.string().min(2, 'Ad soyad zorunlu').max(120),
-  role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol MENTOR veya MENTI olmalı' }),
+  role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol mentör ya da menti olmalı.' }),
   tenantSlug: z.string().min(1, 'Kuruluş kodu zorunlu'),
   // KVKK Md.5 — bireysel kullanıcı açık rızası; frontend checkbox zorunlu,
   // backend de enforce eder (API doğrudan çağrılırsa da consent şart).
@@ -644,8 +644,8 @@ function isOAuthProviderKey(key: unknown): key is OAuthProviderKey {
 }
 
 const OAuthInitSchema = z.object({
-  tenantSlug: z.string().min(1, 'tenantSlug zorunlu'),
-  role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol MENTOR veya MENTI olmalı' }),
+  tenantSlug: z.string().min(1, 'Kurum bilgisi eksik. Lütfen kurumunuzun giriş bağlantısını kullanın.'),
+  role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol mentör ya da menti olmalı.' }),
   // U-06: kayıt sayfasındaki davet token'ı — callback'te doğrulanır (burada yalnız biçim sınırı).
   inviteToken: z.string().min(1).max(2048).optional(),
 });

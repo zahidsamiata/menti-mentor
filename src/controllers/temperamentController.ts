@@ -13,13 +13,13 @@ const QuestionAnswerSchema = z.object({
 const TemperamentTestBodySchema = z.object({
   answers: z
     .array(QuestionAnswerSchema)
-    .length(7, 'Exactly 7 answers are required.')
+    .length(7, 'Mizaç testinde 7 sorunun hepsi yanıtlanmalı.')
     .refine(
       (answers) => {
         const ids = answers.map((a) => a.questionId);
         return new Set(ids).size === 7;
       },
-      { message: 'Each questionId (1-7) must appear exactly once.' },
+      { message: 'Her soru (1-7) yalnız bir kez yanıtlanmalı.' },
     ),
 });
 
