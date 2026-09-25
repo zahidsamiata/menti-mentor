@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { parsePagination, LIST_PAGE } from '../services/pagination.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
 
@@ -93,18 +94,25 @@ export async function listRequests(req: RequestWithTenant, res: Response) {
   const isAdmin = req.auth?.role === 'ADMIN';
   const meId = req.auth?.userId;
 
-  const items = await prisma.matchRequest.findMany({
-    where: {
-      tenantId: req.tenant.tenantId,
-      ...(isAdmin
-        ? (parsed.data.requesterUserId !== undefined && { requesterUserId: parsed.data.requesterUserId })
-        : { OR: [{ requesterUserId: meId }, { targetType: 'USER', targetId: meId }] }),
-      ...(parsed.data.targetType !== undefined && { targetType: parsed.data.targetType }),
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], LIST_PAGE);
+  const where = {
+    tenantId: req.tenant.tenantId,
+    ...(isAdmin
+      ? (parsed.data.requesterUserId !== undefined && { requesterUserId: parsed.data.requesterUserId })
+      : { OR: [{ requesterUserId: meId }, { targetType: 'USER' as const, targetId: meId }] }),
+    ...(parsed.data.targetType !== undefined && { targetType: parsed.data.targetType }),
+  };
+  const [items, total] = await Promise.all([
+    prisma.matchRequest.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: offset,
+    }),
+    prisma.matchRequest.count({ where }),
+  ]);
 
-  return res.json({ items, total: items.length });
+  return res.json({ items, total, limit, offset });
 }
 
 export async function getRequest(req: RequestWithTenant, res: Response) {

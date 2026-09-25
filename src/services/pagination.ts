@@ -25,3 +25,6 @@ export function parsePagination(
 
 // Şikâyet listeleri (kurum yöneticisi + platform) — aynı sayfa boyutu.
 export const REPORT_PAGE: PageBounds = { defaultLimit: 50, maxLimit: 100 };
+
+// Y-04: sayfalamasız kalmış genel liste uçları (talepler, geri bildirim kayıtları, kulüpler).
+export const LIST_PAGE: PageBounds = { defaultLimit: 50, maxLimit: 100 };

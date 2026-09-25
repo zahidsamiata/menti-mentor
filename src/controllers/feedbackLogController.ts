@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { parsePagination, LIST_PAGE } from '../services/pagination.js';
 import { applyFeedbackSignal } from '../services/rewardPenalty.js';
 import { logger } from '../services/logger.js';
 
@@ -139,21 +140,28 @@ export async function listFeedbackLogs(req: RequestWithTenant, res: Response) {
   // MENTOR: yalnızca kendi kayıtları; dışarıdan gelen mentorId query param'ı görmezden gel
   const effectiveMentorId = role === 'MENTOR' ? userId : mentorId;
 
-  const logs = await prisma.feedbackLog.findMany({
-    where: {
-      tenantId: req.tenant.tenantId,
-      ...(effectiveMentorId && { mentorId: effectiveMentorId }),
-      ...(role === 'ADMIN' && mentiId  && { mentiId }),
-      ...(phase && { phase }),
-    },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      mentor: { select: { id: true, fullName: true, discType: true } },
-      menti:  { select: { id: true, fullName: true, discType: true } },
-    },
-  });
+  const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], LIST_PAGE);
+  const where = {
+    tenantId: req.tenant.tenantId,
+    ...(effectiveMentorId && { mentorId: effectiveMentorId }),
+    ...(role === 'ADMIN' && mentiId  && { mentiId }),
+    ...(phase && { phase }),
+  };
+  const [logs, total] = await Promise.all([
+    prisma.feedbackLog.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: offset,
+      include: {
+        mentor: { select: { id: true, fullName: true, discType: true } },
+        menti:  { select: { id: true, fullName: true, discType: true } },
+      },
+    }),
+    prisma.feedbackLog.count({ where }),
+  ]);
 
-  return res.json({ items: logs, total: logs.length });
+  return res.json({ items: logs, total, limit, offset });
 }
 
 // GET /api/feedback-logs/:id
