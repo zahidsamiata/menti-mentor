@@ -41,9 +41,11 @@ export async function platformLogin(req: Request, res: Response) {
   const passwordOk = !!password && safeEqual(password, config.platformAdminKey);
 
   if (!emailOk || !passwordOk) {
+    // KVKK: girilen e-posta LOGLANMAZ (yanlış kutuya yazılan herkesin adresi kalıcı günlüğe düşüyordu).
+    // Brute-force izi için IP + "e-posta alanı dolu muydu" yeterli.
     void logger.warn('AUTH', 'Platform login başarısız', {
-      email: email ?? '(boş)',
-      ip:    req.ip ?? 'unknown',
+      emailProvided: !!email,
+      ip:            req.ip ?? 'unknown',
     });
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Geçersiz platform yönetici bilgileri.' });
   }
