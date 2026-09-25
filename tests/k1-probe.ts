@@ -7,8 +7,11 @@
 import { config as loadEnv } from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'node:crypto';
+import { lockProbeToTestDatabase } from './helpers/probeGuard.js';
 
 loadEnv({ path: '.env' });
+// KR-13: veritabanına yazar → yalnız ayrı TEST_DATABASE_URL (aksi hâlde burada durur).
+lockProbeToTestDatabase();
 
 // K1 düzeltmesini test et: BACKEND_URL farklı bir değer set ederek ayrı-domain senaryosunu simüle et
 process.env['BACKEND_URL']   = 'http://BACKEND-DOMAIN:3000';

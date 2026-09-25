@@ -16,8 +16,11 @@
 import crypto from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { config as loadEnv } from 'dotenv';
+import { lockProbeToTestDatabase } from './helpers/probeGuard.js';
 
 loadEnv({ path: '.env' });
+// KR-13: gerçek temizlik çalıştırır → yalnız ayrı TEST_DATABASE_URL (aksi hâlde burada durur).
+lockProbeToTestDatabase();
 // SMTP'yi boşalt — config.ts bu dosyadan önce yüklenmemiş olduğundan
 // dinamik import zinciri (cronScheduler → emailService → config) bu değerleri görür.
 process.env['SMTP_USER'] = '';
