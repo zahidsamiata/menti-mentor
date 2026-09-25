@@ -79,4 +79,18 @@ describe('scrubText', () => {
   it('mesaj içindeki e-postayı maskeler', () => {
     expect(scrubText('E-posta gönderilemedi: kisi@example.com')).toBe('E-posta gönderilemedi: k***@example.com');
   });
+
+  it('negatif: uzun metinde süre doğrusal kalır (karesel geri izleme yok)', () => {
+    const noAt = 'a'.repeat(200_000);
+    const withAt = 'a'.repeat(100_000) + '@' + 'b'.repeat(100_000);
+    const t0 = Date.now();
+    expect(scrubText(noAt)).toBe(noAt);
+    scrubText(withAt);
+    scrubText(('x'.repeat(70) + ' ').repeat(3000) + 'kisi@ornek.org');
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+
+  it('uzunluk sınırı olağan adresleri kaçırmaz', () => {
+    expect(scrubText('gönderilemedi: ayse.yilmaz+test@alt.ornek.com.tr')).not.toContain('ayse.yilmaz');
+  });
 });

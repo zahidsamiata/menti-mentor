@@ -51,7 +51,10 @@ const SENSITIVE_SUFFIXES = ['email', 'token', 'password', 'secret'];
 const EMAIL_KEY_SUFFIX = 'email';
 
 // E-posta biçimli alt dize. Yerel kısım en az bir karakter; `@scope/paket` yolları eşleşmez.
-const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+// Parça uzunlukları sınırlı (RFC: yerel ≤64, etiket ≤63): sınırsız `+` uzun, `@` içermeyen metinde
+// her başlangıç noktasından sona kadar tarayıp karesel süre üretiyordu (inceleme bulgusu). Sınırla
+// doğrusal kalır; `@` yoksa hiç çalıştırılmaz.
+const EMAIL_PATTERN = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}/g;
 
 function normalizeKey(key: string): string {
   return key.toLowerCase().replace(/[_-]/g, '');
@@ -64,6 +67,7 @@ function isSensitiveKey(normalized: string): boolean {
 
 /** Serbest metindeki e-posta adreslerini maskeler; e-posta yoksa metni aynen döndürür. */
 export function scrubText(text: string): string {
+  if (!text.includes('@')) return text;
   return text.replace(EMAIL_PATTERN, (match) => maskEmail(match));
 }
 
