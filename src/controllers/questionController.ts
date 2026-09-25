@@ -311,7 +311,7 @@ export async function respondToQuestion(req: RequestWithTenant, res: Response) {
   // Yanıtı kaydet + vektörü güncelle (paralel değil — vektör hesabı yanıt sonrası)
   await upsertSingleResponse(userId, questionId, parsed.data.value);
   const [discVector, progress] = await Promise.all([
-    recalcDiscVector(userId),
+    recalcDiscVector(userId, req.tenant.tenantId),
     calcAdaptiveProgress(userId, req.tenant.tenantId),
   ]);
 
@@ -375,7 +375,7 @@ export async function submitResponses(req: RequestWithTenant, res: Response) {
   );
 
   const [discVector, progress] = await Promise.all([
-    recalcDiscVector(userId),
+    recalcDiscVector(userId, req.tenant.tenantId),
     calcAdaptiveProgress(userId, req.tenant.tenantId),
   ]);
 
