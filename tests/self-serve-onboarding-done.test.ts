@@ -40,9 +40,11 @@ describe('KR-23: kurum kaydında kurulum işareti', () => {
     for (const t of tenants) expect(t.onboardingStep, t.slug).toBe('DONE');
   });
 
-  it('negatif: kayıt reddedilirse (aynı e-posta) ikinci kurum hiç oluşmaz', async () => {
+  it('negatif: aynı e-postayla ikinci başvuruda ikinci kurum hiç oluşmaz', async () => {
     await http.post('/api/tenants/self-serve/register').send(payload('tekrar@kurum-ornek.org.tr', 'kr23-ilk')).expect(201);
-    await http.post('/api/tenants/self-serve/register').send(payload('tekrar@kurum-ornek.org.tr', 'kr23-ikinci')).expect(409);
+    // GV-12: kayıtlı e-posta numaralandırmayı önlemek için 409 yerine yeni kayıtla aynı 201 alır
+    // (kurum oluşturulmaz) — ayrıntı: self-serve-register-enumeration.test.ts
+    await http.post('/api/tenants/self-serve/register').send(payload('tekrar@kurum-ornek.org.tr', 'kr23-ikinci')).expect(201);
     expect(await testPrisma.tenant.count({ where: { slug: 'kr23-ikinci' } })).toBe(0);
   });
 });
