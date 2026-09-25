@@ -159,6 +159,8 @@ describe('Matching: Candidate Filter', () => {
   let tenant: Tenant;
   let mentorToken: string;
   let mentorId: string;
+  let highMentiId: string;
+  let lowMentiId: string;
 
   beforeEach(async () => {
     await cleanDb();
@@ -169,18 +171,45 @@ describe('Matching: Candidate Filter', () => {
     mentorToken = tokens.accessToken;
     mentorId = mentor.id;
 
-    await createMenti(tenant.id, { discType: 'D', sectorTags: ['teknoloji'] });
-    await createMenti(tenant.id, { discType: 'S', sectorTags: ['teknoloji'] });
+    // Varsayılan ağırlık (sektör 0.6 / DISC 0.4), ikisi de tam sektör örtüşmesi (100):
+    //   C→D uyumu 85 → 100*0.6 + 85*0.4 = 94  (yüksek aday)
+    //   C→S uyumu 65 → 100*0.6 + 65*0.4 = 86  (düşük aday)
+    // Eşik 90 bu iki adayı AYIRIR → filtrenin gerçekten çalıştığı gözlenebilir.
+    const high = await createMenti(tenant.id, { discType: 'D', sectorTags: ['teknoloji'] });
+    const low  = await createMenti(tenant.id, { discType: 'S', sectorTags: ['teknoloji'] });
+    highMentiId = high.id;
+    lowMentiId = low.id;
   });
 
   it('minMatchScore filtresi düşük skorlu adayları eliyor', async () => {
+    // PS-08: eskiden ?minMatchScore=95 istenip >=90 assert ediliyordu (eşikle uyumsuz) ve
+    // liste boş dönünce forEach hiçbir şey assert etmeden yeşil geçiyordu. Artık:
+    // istenen eşik = assert edilen eşik, liste boş olamaz, elenen aday adıyla doğrulanır.
+    const threshold = 90;
+    const res = await http
+      .get(`/api/mentors/${mentorId}/candidates?minMatchScore=${threshold}`)
+      .set(tenantHeaders(tenant.id, mentorToken))
+      .expect(200);
+
+    const body = res.body as { items: { mentiId: string; totalScore: number }[] };
+    expect(body.items.length).toBeGreaterThan(0);
+    body.items.forEach((item) => expect(item.totalScore).toBeGreaterThanOrEqual(threshold));
+
+    const ids = body.items.map((i) => i.mentiId);
+    expect(ids).toContain(highMentiId);
+    expect(ids).not.toContain(lowMentiId);
+  });
+
+  it('hiçbir adayın ulaşamadığı açık eşikte liste boş döner (fallback eşiği delmez)', async () => {
+    // Açık (kullanıcı/mentor kaynaklı) eşik level 3 acil çıkışında da uygulanır
+    // (matching.ts explicitMinScore/looseFilter) → 95'e kimse ulaşmıyorsa sonuç boş olmalı.
     const res = await http
       .get(`/api/mentors/${mentorId}/candidates?minMatchScore=95`)
       .set(tenantHeaders(tenant.id, mentorToken))
       .expect(200);
 
-    const body = res.body as { items: { totalScore: number }[] };
-    body.items.forEach((item) => expect(item.totalScore).toBeGreaterThanOrEqual(90));
+    const body = res.body as { items: unknown[] };
+    expect(body.items).toHaveLength(0);
   });
 });
 
