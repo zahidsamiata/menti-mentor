@@ -10,6 +10,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { applyKAnonymity } from '../services/mask.js';
 import { runWeeklyTuning, runWeeklyPurge } from '../services/cronScheduler.js';
 import { logger } from '../services/logger.js';
 import { ensureMembershipSafe } from '../services/membership.js';
@@ -88,12 +89,19 @@ export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
     prisma.jobListing.count({ where: { tenantId, isActive: true } }),
   ]);
 
+  // V-05 k-anonimlik: eşiğin altındaki yanıta dayanan ortalama gösterilmez (küçük kurumda
+  // tek kişinin puanı ortalamadan okunmasın); örnek sayısı da eşik altında 0'a indirgenir.
+  const safeNpsByPhase = avgNpsByPhase.map((p) => {
+    const sample = applyKAnonymity(p._count.id);
+    return {
+      phase: p.phase,
+      avgNps: !sample.suppressed && p._avg.npsScore !== null ? Math.round(p._avg.npsScore) : null,
+      sampleSize: sample.count,
+    };
+  });
+
   // Başarı oranı: 3. ay NPS ≥ 70 olan eşleşmeler / toplam 3. ay feedback
-  const phase3Logs = avgNpsByPhase.find((p) => p.phase === 3);
-  const successRate =
-    phase3Logs && phase3Logs._avg.npsScore !== null
-      ? Math.round(phase3Logs._avg.npsScore)
-      : null;
+  const successRate = safeNpsByPhase.find((p) => p.phase === 3)?.avgNps ?? null;
 
   return res.json({
     tenantId,
@@ -112,13 +120,7 @@ export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
       feedback: {
         totalFeedbackLogs,
         avgNpsByPhase: Object.fromEntries(
-          avgNpsByPhase.map((p) => [
-            `phase${p.phase}`,
-            {
-              avgNps: p._avg.npsScore !== null ? Math.round(p._avg.npsScore) : null,
-              sampleSize: p._count.id,
-            },
-          ]),
+          safeNpsByPhase.map((p) => [`phase${p.phase}`, { avgNps: p.avgNps, sampleSize: p.sampleSize }]),
         ),
         successRate,
       },
