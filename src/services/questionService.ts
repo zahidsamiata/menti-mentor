@@ -85,7 +85,8 @@ export async function buildQuestionList(tenantId: string) {
       OR: [{ tenantId: null }, { tenantId }],
     },
     orderBy: [{ type: 'asc' }, { order: 'asc' }],
-    select: { id: true, text: true, type: true, discDimension: true, order: true, category: true },
+    // tenantId: yönetici ekranı global (null) / kuruma özel ayrımını bununla yapar (E-3c). PII değildir.
+    select: { id: true, tenantId: true, text: true, type: true, discDimension: true, order: true, category: true },
   });
 
   // Gizlenmiş soruları listeden çıkar

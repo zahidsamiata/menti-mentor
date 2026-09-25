@@ -105,8 +105,20 @@ function firstValidationMessage(error: z.ZodError): string {
  * Sabit bir eşik yerine DB'den dinamik hesaplanır — admin-proof.
  */
 export async function listQuestions(req: RequestWithTenant, res: Response) {
-  const { questions, meta } = await buildQuestionList(req.tenant.tenantId);
-  return res.json({ items: questions, total: questions.length, meta });
+  const { questions, stkQuestions, meta } = await buildQuestionList(req.tenant.tenantId);
+
+  // Yönetici görünümü (E-3c): soru yönetim ekranı global/kuruma özel ayrımı için `tenantId`'ye ve
+  // kurumun eklediği STK_CUSTOM sorulara ihtiyaç duyar. STK soruları `items`'a KATILMAZ — `items`
+  // DISC testinin soru havuzudur (useDiscTest) ve STK soruları DISC skoruna katılmaz (93d9897 ayrımı).
+  // Bu yüzden ayrı `stkQuestions` alanı yalnız ADMIN'e döner; buildQuestionList zaten yalnız
+  // global + istek kurumunun sorularını getirir (tenant izolasyonu).
+  if (req.auth?.role === 'ADMIN') {
+    return res.json({ items: questions, total: questions.length, meta, stkQuestions });
+  }
+
+  // MENTOR/MENTI: yanıt biçimi E-3c öncesiyle aynı kalır (tenantId alanı eklenmez).
+  const items = questions.map(({ tenantId: _tenantId, ...rest }) => rest);
+  return res.json({ items, total: items.length, meta });
 }
 
 // ─── POST /api/questions ──────────────────────────────────────────────────────
