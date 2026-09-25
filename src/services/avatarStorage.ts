@@ -47,9 +47,13 @@ export function detectImageType(buf: Buffer): ImageKind | null {
   return null;
 }
 
-/** Tahmin edilemez, çakışmayan güvenli dosya adı: <userId>-<uuid>.<ext>. */
-export function buildAvatarFilename(userId: string, ext: ImageKind['ext']): string {
-  return `${userId}-${randomUUID()}.${ext}`;
+/**
+ * Tahmin edilemez, çakışmayan güvenli dosya adı: <uuid>.<ext>.
+ * GV-16: ad kullanıcı kimliği TAŞIMAZ — /uploads herkese açık servis edilir; eski adlar
+ * (`<userId>-<uuid>`) kayıtlı URL'lerde durur, silme URL üzerinden yapıldığı için etkilenmez.
+ */
+export function buildAvatarFilename(ext: ImageKind['ext']): string {
+  return `${randomUUID()}.${ext}`;
 }
 
 /** Dosya adından public erişim URL'i üretir (avatarUrl bu değere set edilir). */

@@ -8,6 +8,7 @@ import {
   writeAvatarFile,
   deleteLocalAvatar,
 } from '../services/avatarStorage.js';
+import { sanitizeImage, isWithinAvatarLimits, AVATAR_IMAGE_LIMITS } from '../services/imageSanitize.js';
 import { logger } from '../services/logger.js';
 
 /**
@@ -18,7 +19,8 @@ import { logger } from '../services/logger.js';
  *  - avatarUploadRateLimiter: kullanıcı başına dakikada sınırlı (disk doldurma koruması).
  *  - multer: 5MB boyut sınırı, tek dosya, MIME ön-kontrolü.
  *  - detectImageType: sihirli-bayt içerik doğrulaması (uzantı/MIME spoof'una karşı; SVG reddedilir).
- *  - buildAvatarFilename: rastgele güvenli ad (path traversal yok).
+ *  - sanitizeImage: çözünürlük sınırı (GV-20) + konum/üst veri temizliği (GV-16), diske yazmadan önce.
+ *  - buildAvatarFilename: rastgele güvenli ad (path traversal yok; kullanıcı kimliği taşımaz).
  *  - Tenant izolasyonu: kullanıcı kendi tenant'ında bulunur (findFirst + tenantId).
  */
 export async function uploadMyAvatar(req: RequestWithTenant, res: Response) {
@@ -38,17 +40,33 @@ export async function uploadMyAvatar(req: RequestWithTenant, res: Response) {
     });
   }
 
+  // GV-20 + GV-16: çözünürlük başlıktan denetlenir; konum (GPS) dahil üst veri diske
+  // yazılmadan önce çıkarılır. Çözümlenemeyen yapı reddedilir.
+  const sanitized = sanitizeImage(file.buffer, kind);
+  if (!sanitized) {
+    return res.status(400).json({
+      error: 'GECERSIZ_DOSYA',
+      message: 'Fotoğraf okunamadı. Lütfen başka bir JPEG, PNG veya WEBP dosyası deneyin.',
+    });
+  }
+  if (!isWithinAvatarLimits(sanitized.size)) {
+    return res.status(400).json({
+      error: 'COZUNURLUK_COK_YUKSEK',
+      message: `Fotoğrafın çözünürlüğü çok yüksek. En fazla ${AVATAR_IMAGE_LIMITS.maxSide} piksel kenarlı bir fotoğraf yükleyin.`,
+    });
+  }
+
   const user = await prisma.user.findFirst({
     where: { id: req.auth.userId, tenantId: req.tenant.tenantId },
     select: { id: true, avatarUrl: true },
   });
   if (!user) return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
 
-  const filename = buildAvatarFilename(user.id, kind.ext);
+  const filename = buildAvatarFilename(kind.ext);
   // K-04: kalıcı disk yok / uid 1001 yazma izni yoksa (EACCES) burada patlar. Jenerik 500
   // yerine kullanıcıya anlaşılır mesaj; gerçek sebep operatöre loglanır (PII yok, iç detay sızmaz).
   try {
-    await writeAvatarFile(filename, file.buffer);
+    await writeAvatarFile(filename, sanitized.clean);
   } catch (err) {
     void logger.error('SYSTEM', 'Avatar diske yazılamadı (kalıcı disk/izin?)', {
       userId: user.id,

@@ -15,6 +15,12 @@ vi.mock('../src/services/avatarStorage.js', () => ({
   deleteLocalAvatar: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../src/services/imageSanitize.js', () => ({
+  sanitizeImage: (buf: Buffer) => ({ size: { width: 10, height: 10 }, clean: buf }),
+  isWithinAvatarLimits: () => true,
+  AVATAR_IMAGE_LIMITS: { maxSide: 8000, maxPixels: 40_000_000 },
+}));
+
 vi.mock('../src/db.js', () => ({
   prisma: {
     user: {
