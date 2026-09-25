@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { seedCertification } from './seed-certification.js';
 import { seedLearningJourney } from './seed-learning-journey.js';
+import { assertSeedAllowed } from '../src/seedGuard.js';
 
 const prisma = new PrismaClient();
 
@@ -293,7 +294,9 @@ function email(prefix: string, index: number, slug: string) {
 const DEV_PASSWORD_HASH = await bcrypt.hash('Test1234!', 10);
 
 async function main() {
-  console.log('🌱 Seed başlatılıyor...');
+  // KR-01: yıkıcı temizlikten ÖNCE — yerel host + açık onay yoksa burada durur (src/seedGuard.ts).
+  const seedHost = assertSeedAllowed(process.env);
+  console.log(`🌱 Seed başlatılıyor... (hedef: ${seedHost})`);
 
   // Mevcut seed verisini temizle (idempotent)
   await prisma.$transaction([
