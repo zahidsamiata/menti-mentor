@@ -97,11 +97,32 @@ export async function submitCheckIn(req: RequestWithTenant, res: Response) {
 }
 
 // GET /api/meetings/:meetingId/check-ins
+// GV-04: yalnız görüşmenin tarafları ve kurum yöneticisi. Taraf YALNIZ KENDİ kaydını görür;
+// karşı tarafın değerlendirmesini görmez (feedbackController.getMeetingFeedback "KARAR 1" ve
+// KARAR-77 A ile aynı ilke). Yönetici görüşmenin tüm kayıtlarını görür.
 export async function getCheckIns(req: RequestWithTenant, res: Response) {
+  if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
+
   const meetingId = req.params['meetingId'] as string;
+  const meeting = await prisma.meeting.findFirst({
+    where:  { id: meetingId, tenantId: req.tenant.tenantId },
+    select: { mentorUserId: true, mentiUserId: true },
+  });
+  if (!meeting) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  const userId  = req.auth.userId;
+  const isAdmin = req.auth.role === 'ADMIN';
+  const isParty = meeting.mentorUserId === userId || meeting.mentiUserId === userId;
+  if (!isAdmin && !isParty) {
+    return res.status(403).json({ error: 'YETKI_YETERSIZ' });
+  }
 
   const checkIns = await prisma.meetingCheckIn.findMany({
-    where: { meetingId, tenantId: req.tenant.tenantId },
+    where: {
+      meetingId,
+      tenantId: req.tenant.tenantId,
+      ...(isAdmin ? {} : { userId }),
+    },
   });
 
   return res.json({ items: checkIns, total: checkIns.length });
