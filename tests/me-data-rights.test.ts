@@ -118,6 +118,14 @@ describe('POST /api/me/delete-account — kendi hesabını kapatır', () => {
       .expect(200);
     expect(res.body.anonymizedInstead).toBe(true);
 
+    // GV-23: oturum çerezi, girişte konan seçeneklerle (HttpOnly + SameSite=Strict) temizlenir
+    const setCookie = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
+    const cleared = setCookie.find((c) => c.startsWith('mm_refresh='));
+    expect(cleared).toBeDefined();
+    expect(cleared).toMatch(/Expires=Thu, 01 Jan 1970/);
+    expect(cleared).toMatch(/HttpOnly/);
+    expect(cleared).toMatch(/SameSite=Strict/);
+
     // Anonimleştirildi
     const u = await testPrisma.user.findUnique({ where: { id: user.id } });
     expect(u!.isActive).toBe(false);
