@@ -2,10 +2,11 @@
  * Tenant bazında rate limiter — in-memory sliding window.
  * Harici bağımlılık gerektirmez.
  *
- * RATE_LIMIT_RPM = genel limit (varsayılan 100 istek/dakika/tenant)
+ * RATE_LIMIT_RPM = genel limit (varsayılan 100 istek/dakika — kullanıcı ya da IP başına, K-14)
  */
 
 import type { NextFunction, Request, Response } from 'express';
+import { extractBearerToken, verifyToken } from './jwtAuth.js';
 
 const DEFAULT_RPM = Number(process.env.RATE_LIMIT_RPM ?? 100);
 const WINDOW_MS = 60_000;
@@ -32,9 +33,20 @@ setInterval(() => {
   }
 }, WINDOW_MS * 5);
 
+/**
+ * K-14: genel limitin kovası istemcinin gönderdiği bir başlıktan (X-Tenant-Id) SEÇİLMEZ.
+ * İmzası doğrulanmış erişim anahtarı varsa kullanıcı başına, yoksa IP başına kova.
+ * (Vekil arkasında doğru IP için `trust proxy` gerekir — server.ts, PO'nun ayrı turu.)
+ */
+export function generalRateLimitKey(req: Request): string {
+  const token = extractBearerToken(req.header('Authorization'));
+  const payload = token ? verifyToken(token) : null;
+  if (payload?.sub) return `general:user:${payload.sub}`;
+  return `general:ip:${clientIp(req)}`;
+}
+
 export function generalRateLimiter(req: Request, res: Response, next: NextFunction) {
-  const tenantId = req.header('X-Tenant-Id')?.trim() ?? 'anon';
-  if (!checkLimit(`general:${tenantId}`, DEFAULT_RPM)) {
+  if (!checkLimit(generalRateLimitKey(req), DEFAULT_RPM)) {
     return res.status(429).json({
       error: 'RATE_LIMIT',
       message: `İstek limiti aşıldı. Dakikada en fazla ${DEFAULT_RPM} istek gönderilebilir.`,
