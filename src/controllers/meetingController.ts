@@ -595,18 +595,55 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
 
   const meetingId = req.params['meetingId'] as string;
 
-  const meeting = await prisma.meeting.findFirst({
-    where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },
-    select: { id: true, mentiUserId: true },
-  });
-  if (!meeting) {
-    return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+  // KR-17: onay anında çakışma YENİDEN kontrol edilir — bekleyen (PENDING) talepler randevu
+  // alırken çakışma sayılmıyor; aynı saate gelen iki talep ikisi de onaylanabiliyordu.
+  // Kontrol + güncelleme tek Serializable işlemde: eşzamanlı iki onaydan yalnız biri geçer.
+  type ApproveOutcome =
+    | { kind: 'not_found' }
+    | { kind: 'conflict' }
+    | { kind: 'ok'; updated: Awaited<ReturnType<typeof prisma.meeting.update>>; mentiUserId: string };
+  let outcome: ApproveOutcome;
+  try {
+    outcome = await prisma.$transaction(async (tx) => {
+      const meeting = await tx.meeting.findFirst({
+        where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },
+        select: { id: true, mentiUserId: true, startsAt: true, endsAt: true },
+      });
+      if (!meeting) return { kind: 'not_found' as const };
+
+      const clash = await tx.meeting.findFirst({
+        where: {
+          tenantId,
+          id:     { not: meeting.id },
+          status: { in: [MeetingStatus.SCHEDULED, MeetingStatus.IN_PROGRESS] },
+          OR: [{ mentorUserId: userId }, { mentiUserId: meeting.mentiUserId }],
+          startsAt: { lt: meeting.endsAt },
+          endsAt:   { gt: meeting.startsAt },
+        },
+        select: { id: true },
+      });
+      if (clash) return { kind: 'conflict' as const };
+
+      const updated = await tx.meeting.update({
+        where: { id: meeting.id },
+        data:  { status: MeetingStatus.SCHEDULED },
+      });
+      return { kind: 'ok' as const, updated, mentiUserId: meeting.mentiUserId };
+    }, { isolationLevel: 'Serializable' });
+  } catch (err) {
+    // Eşzamanlı onay → Postgres serileştirme hatası (Prisma P2034): diğeri kazandı, çakışma say.
+    if ((err as { code?: string }).code === 'P2034') outcome = { kind: 'conflict' };
+    else throw err;
   }
 
-  const updated = await prisma.meeting.update({
-    where: { id: meetingId },
-    data:  { status: MeetingStatus.SCHEDULED },
-  });
+  if (outcome.kind === 'not_found') {
+    return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+  }
+  if (outcome.kind === 'conflict') {
+    return res.status(409).json({ error: 'Bu saatte sizin ya da mentinin onaylanmış başka bir görüşmesi var.' });
+  }
+  const { updated } = outcome;
+  const meeting = { mentiUserId: outcome.mentiUserId };
 
   // Mentiye onay bildirimi
   const { notifyVisibilityApproved } = await import('../services/notificationService.js');
