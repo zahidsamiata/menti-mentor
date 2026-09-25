@@ -3,11 +3,25 @@
  * Reddedilen istekte kayıt oluşmaz ve DISC kombinasyon skoru değişmez.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { agent, tenantHeaders, type TestAgent } from './helpers/request.js';
+import supertest from 'supertest';
+import express from 'express';
+import { tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createMentor, createMenti, createAdminUser } from './helpers/factories.js';
 import { signToken } from '../src/middleware/jwtAuth.js';
+import feedbackLogRoutes from '../src/routes/feedbackLogRoutes.js';
+import { notFoundHandler, globalErrorHandler } from '../src/middleware/errorHandler.js';
 import type { User } from '@prisma/client';
+
+// Ortak createTestApp bu rotayı bağlamıyor → security-audit-2.test.ts'teki gibi minimal uygulama.
+function createFeedbackLogTestApp() {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/feedback-logs', feedbackLogRoutes);
+  app.use(notFoundHandler);
+  app.use(globalErrorHandler);
+  return app;
+}
 
 function tokenFor(u: Pick<User, 'id' | 'tenantId' | 'role' | 'fullName'>): string {
   return signToken({ sub: u.id, tenantId: u.tenantId, role: u.role, fullName: u.fullName });
@@ -23,7 +37,7 @@ describe('GV-05: POST /api/feedback-logs kimlik ve taraf kontrolü', () => {
 
   beforeEach(async () => {
     await cleanDb();
-    http = agent();
+    http = supertest.agent(createFeedbackLogTestApp());
     const tenant = await createTenant();
     tenantId = tenant.id;
     mentor        = await createMentor(tenantId, { discType: 'D' });
