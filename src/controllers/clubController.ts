@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { parsePagination, LIST_PAGE } from '../services/pagination.js';
 import { Prisma } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
@@ -87,19 +88,26 @@ export async function listClubs(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const clubs = await prisma.club.findMany({
-    where: {
-      tenantId: req.tenant.tenantId,
-      ...(parsed.data.type !== undefined && { type: parsed.data.type }),
-      ...(parsed.data.isActive !== undefined && { isActive: parsed.data.isActive }),
-    },
-    include: {
-      _count: { select: { memberships: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], LIST_PAGE);
+  const where = {
+    tenantId: req.tenant.tenantId,
+    ...(parsed.data.type !== undefined && { type: parsed.data.type }),
+    ...(parsed.data.isActive !== undefined && { isActive: parsed.data.isActive }),
+  };
+  const [clubs, total] = await Promise.all([
+    prisma.club.findMany({
+      where,
+      include: {
+        _count: { select: { memberships: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: offset,
+    }),
+    prisma.club.count({ where }),
+  ]);
 
-  return res.json({ items: clubs, total: clubs.length });
+  return res.json({ items: clubs, total, limit, offset });
 }
 
 /** GET /api/clubs/:id — Tek kulüp detayı (üye sayısı dahil) */
@@ -241,22 +249,29 @@ export async function listClubMembers(req: RequestWithTenant, res: Response) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kulüp bulunamadı.' });
   }
 
-  const memberships = await prisma.clubMembership.findMany({
-    where: { clubId: club.id, tenantId },
-    include: {
-      user: {
-        select: {
-          id: true,
-          fullName: true,
-          role: true,
-          discType: true,
+  const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], LIST_PAGE);
+  const where = { clubId: club.id, tenantId };
+  const [memberships, total] = await Promise.all([
+    prisma.clubMembership.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            role: true,
+            discType: true,
+          },
         },
       },
-    },
-    orderBy: { joinedAt: 'asc' },
-  });
+      orderBy: [{ joinedAt: 'asc' }, { id: 'asc' }],
+      take: limit,
+      skip: offset,
+    }),
+    prisma.clubMembership.count({ where }),
+  ]);
 
-  return res.json({ items: memberships, total: memberships.length });
+  return res.json({ items: memberships, total, limit, offset });
 }
 
 /** GET /api/users/:userId/clubs — Kullanıcının üye olduğu kulüpler */
@@ -276,13 +291,20 @@ export async function getUserClubs(req: RequestWithTenant, res: Response) {
       .json({ error: 'NOT_FOUND', message: 'Kullanıcı bu tenant içinde bulunamadı.' });
   }
 
-  const memberships = await prisma.clubMembership.findMany({
-    where: { userId: user.id, tenantId },
-    include: {
-      club: true,
-    },
-    orderBy: { joinedAt: 'desc' },
-  });
+  const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], LIST_PAGE);
+  const where = { userId: user.id, tenantId };
+  const [memberships, total] = await Promise.all([
+    prisma.clubMembership.findMany({
+      where,
+      include: {
+        club: true,
+      },
+      orderBy: [{ joinedAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: offset,
+    }),
+    prisma.clubMembership.count({ where }),
+  ]);
 
-  return res.json({ items: memberships, total: memberships.length });
+  return res.json({ items: memberships, total, limit, offset });
 }
