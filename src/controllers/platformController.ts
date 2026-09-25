@@ -9,6 +9,7 @@ import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
 import { notifyTenantVerification } from '../services/tenantNotifications.js';
 import { maskName, maskContact, maskEmail } from '../services/mask.js';
+import { parsePagination, REPORT_PAGE } from '../services/pagination.js';
 import { verifyTransporter, getSmtpStatus } from '../services/emailService.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
@@ -481,16 +482,22 @@ export async function listUserReports(req: Request, res: Response) {
   const statusRaw = req.query['status'] as string | undefined;
   const status = statusRaw && ['OPEN', 'REVIEWED', 'DISMISSED'].includes(statusRaw) ? statusRaw : undefined;
 
-  const reports = await prisma.userReport.findMany({
-    where: status ? { status } : {},
-    select: {
-      id: true, tenantId: true, reason: true, description: true, status: true, reviewNote: true, createdAt: true,
-      reporter: { select: { fullName: true } },
-      target: { select: { fullName: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  });
+  const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], REPORT_PAGE);
+  const where = status ? { status } : {};
+  const [reports, total] = await Promise.all([
+    prisma.userReport.findMany({
+      where,
+      select: {
+        id: true, tenantId: true, reason: true, description: true, status: true, reviewNote: true, createdAt: true,
+        reporter: { select: { fullName: true } },
+        target: { select: { fullName: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: offset,
+    }),
+    prisma.userReport.count({ where }),
+  ]);
 
   // Kurum adlarını tek sorguda ekle (UserReport'ta Tenant ilişkisi yok — hafif join).
   const tenantIds = [...new Set(reports.map((r) => r.tenantId))];
@@ -504,7 +511,7 @@ export async function listUserReports(req: Request, res: Response) {
   // KVKK: platform admin kullanıcı şikayetlerini (PII içerir) görüntüledi → denetim izi.
   await auditPlatformAction('VIEW_USER_REPORTS', req, { count: items.length });
 
-  return res.json({ items, total: items.length });
+  return res.json({ items, total, limit, offset });
 }
 
 // PATCH /api/platform/user-reports/:id
