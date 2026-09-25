@@ -159,7 +159,13 @@ function processWebp(buf: Buffer): { size: ImageSize | null; clean: Buffer } | n
  * Yapı çözümlenemezse ya da boyut bulunamazsa null.
  */
 export function sanitizeImage(buf: Buffer, kind: ImageKind): { size: ImageSize; clean: Buffer } | null {
-  const result = kind.ext === 'jpg' ? processJpeg(buf) : kind.ext === 'png' ? processPng(buf) : processWebp(buf);
+  let result: { size: ImageSize | null; clean: Buffer } | null;
+  try {
+    result = kind.ext === 'jpg' ? processJpeg(buf) : kind.ext === 'png' ? processPng(buf) : processWebp(buf);
+  } catch {
+    // Sınır denetimleri okumaları korur; yine de beklenmedik yapı 500'e değil, redde dönmeli.
+    return null;
+  }
   if (!result || !result.size) return null;
   return { size: result.size, clean: result.clean };
 }
