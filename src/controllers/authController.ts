@@ -253,6 +253,52 @@ export async function register(req: Request, res: Response) {
 }
 
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────
+// ─── Oturum yükü (login + refresh ortak) ──────────────────────────────────────
+// KR-02/KR-03: sayfa yenilemede (sessiz refresh) istemci kullanıcıyı ve KENDİ kurumunun
+// markasını login'dekiyle aynı biçimde alır; aksi hâlde F5 sonrası kullanıcı bilgisi boş kalıyordu.
+// Kurum HER ZAMAN oturumdaki kullanıcının tenantId'sinden okunur (istekten değil) · açık select.
+interface SessionUserSource {
+  id: string;
+  tenantId: string;
+  role: string;
+  fullName: string;
+  email: string;
+  approvalStatus: string;
+  discType: string | null;
+  discVector: unknown;
+  needsOrientation: boolean;
+}
+
+function toSessionUser(user: SessionUserSource) {
+  return {
+    id: user.id,
+    tenantId: user.tenantId,
+    role: user.role,
+    fullName: user.fullName,
+    email: user.email,
+    approvalStatus: user.approvalStatus,
+    discType: user.discType,
+    discLetters: discLettersFromVector(user.discVector), // #12: türetilmiş 1–3 harf (ör. "DI")
+    needsOrientation: user.needsOrientation,
+  };
+}
+
+async function loadSessionTenant(tenantId: string) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true, name: true, slug: true, displayName: true, logoUrl: true, primaryColor: true },
+  });
+  return tenant
+    ? {
+        id: tenant.id,
+        name: tenant.displayName ?? tenant.name,
+        slug: tenant.slug,
+        logoUrl: tenant.logoUrl,
+        primaryColor: tenant.primaryColor,
+      }
+    : null;
+}
+
 export async function login(req: Request, res: Response) {
   const parsed = LoginSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -328,10 +374,7 @@ export async function login(req: Request, res: Response) {
     });
   }
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: user.tenantId },
-    select: { id: true, name: true, slug: true, displayName: true, logoUrl: true, primaryColor: true },
-  });
+  const tenant = await loadSessionTenant(user.tenantId);
 
   const accessToken = signToken({
     sub: user.id,
@@ -357,26 +400,8 @@ export async function login(req: Request, res: Response) {
   return res.json({
     accessToken,
     expiresIn: 3600,
-    user: {
-      id: user.id,
-      tenantId: user.tenantId,
-      role: user.role,
-      fullName: user.fullName,
-      email: user.email,
-      approvalStatus: user.approvalStatus,
-      discType: user.discType,
-      discLetters: discLettersFromVector(user.discVector), // #12: türetilmiş 1–3 harf (ör. "DI")
-      needsOrientation: user.needsOrientation,
-    },
-    tenant: tenant
-      ? {
-          id: tenant.id,
-          name: tenant.displayName ?? tenant.name,
-          slug: tenant.slug,
-          logoUrl: tenant.logoUrl,
-          primaryColor: tenant.primaryColor,
-        }
-      : null,
+    user: toSessionUser(user),
+    tenant,
   });
 }
 
@@ -451,6 +476,11 @@ export async function refresh(req: Request, res: Response) {
           fullName: true,
           tenantId: true,
           isActive: true,
+          email: true,
+          approvalStatus: true,
+          discType: true,
+          discVector: true, // yalnız discLetters türetimi için; ham vektör yanıta KONMAZ
+          needsOrientation: true,
         },
       },
     },
@@ -497,6 +527,8 @@ export async function refresh(req: Request, res: Response) {
   return res.json({
     accessToken,
     expiresIn: 3600,
+    user: toSessionUser(stored.user),
+    tenant: await loadSessionTenant(stored.user.tenantId),
   });
 }
 
@@ -739,16 +771,24 @@ export async function getMe(req: RequestWithTenant, res: Response) {
   // başvurusunu düzeltecek kişi); MENTOR/MENTI için null (onları ilgilendirmez).
   const tenant = await prisma.tenant.findUnique({
     where: { id: req.tenant.tenantId },
-    select: { name: true, displayName: true, verificationStatus: true, correctionNote: true },
+    select: {
+      id: true, name: true, displayName: true, slug: true, logoUrl: true, primaryColor: true,
+      verificationStatus: true, correctionNote: true,
+    },
   });
 
   // #12: kendi profili — DISC çoklu-harf türetilir (vektör kendi verisi, zaten dönüyor).
   return res.json({
     ...user,
+    tenantId: req.tenant.tenantId, // KR-03: istemci kurum markasını bu kimlikle eşler (oturumdan)
     discLetters: discLettersFromVector(user.discVector),
     tenant: tenant
       ? {
+          id: tenant.id,
           name: tenant.displayName ?? tenant.name,
+          slug: tenant.slug,
+          logoUrl: tenant.logoUrl,
+          primaryColor: tenant.primaryColor,
           verificationStatus: tenant.verificationStatus,
           correctionNote: user.role === 'ADMIN' ? (tenant.correctionNote ?? null) : null,
         }
