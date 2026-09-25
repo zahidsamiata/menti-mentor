@@ -637,6 +637,12 @@ const OAUTH_PROVIDERS = {
 
 type OAuthProviderKey = keyof typeof OAUTH_PROVIDERS;
 
+// Yalnız kayıt defterindeki anahtarları kabul et (GV-21): `:provider` catch-all rotasıdır;
+// düz nesne erişimi `constructor` gibi miras anahtarlarını da "var" sayardı.
+function isOAuthProviderKey(key: unknown): key is OAuthProviderKey {
+  return typeof key === 'string' && Object.hasOwn(OAUTH_PROVIDERS, key);
+}
+
 const OAuthInitSchema = z.object({
   tenantSlug: z.string().min(1, 'tenantSlug zorunlu'),
   role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol MENTOR veya MENTI olmalı' }),
@@ -652,12 +658,11 @@ const OAuthInitSchema = z.object({
  * Örnek: GET /api/auth/google?tenantSlug=tech-hub&role=MENTOR
  */
 export async function oauthRedirect(req: Request, res: Response) {
-  const providerKey = req.params['provider'] as OAuthProviderKey;
-  const provider = OAUTH_PROVIDERS[providerKey];
-
-  if (!provider) {
+  const providerKey = req.params['provider'];
+  if (!isOAuthProviderKey(providerKey)) {
     return res.status(404).json({ error: 'PROVIDER_BULUNAMADI', message: 'Desteklenmeyen OAuth provider.' });
   }
+  const provider = OAUTH_PROVIDERS[providerKey];
 
   // Provider yapılandırılmamışsa (boş clientId) geliştirici hatası — erken çık
   const providerConfig = config.oauth[providerKey];
@@ -690,12 +695,11 @@ export async function oauthRedirect(req: Request, res: Response) {
  * LocalStorage'a taşıması ve URL'i temizlemesi gerekir.
  */
 export async function oauthCallback(req: Request, res: Response) {
-  const providerKey = req.params['provider'] as OAuthProviderKey;
-  const provider = OAUTH_PROVIDERS[providerKey];
-
-  if (!provider) {
+  const providerKey = req.params['provider'];
+  if (!isOAuthProviderKey(providerKey)) {
     return redirectWithError(res, 'PROVIDER_BULUNAMADI');
   }
+  const provider = OAUTH_PROVIDERS[providerKey];
 
   const { code, state, error } = req.query as Record<string, string | undefined>;
 

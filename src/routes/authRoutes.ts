@@ -51,6 +51,11 @@ router.post('/reapply', loginRateLimiter, reapply as unknown as RequestHandler);
  *
  * Adım 1 — Başlatma:  GET /api/auth/:provider?tenantSlug=tech-hub&role=MENTOR
  * Adım 2 — Callback:  GET /api/auth/:provider/callback?code=...&state=...
+ *
+ * ⚠️ SIRA ÖNEMLİ (GV-21): `/:provider` catch-all'dur ve her tek-parçalı GET yolunu yakalar.
+ * Yeni bir `GET /api/auth/<ad>` ucu BU SATIRLARIN ÜSTÜNE eklenmeli; altına eklenirse hiç
+ * çalışmaz, istek OAuth başlatmaya düşer (bilinmeyen ad → 404 PROVIDER_BULUNAMADI).
+ * Regresyon testi: tests/auth-route-order.test.ts
  */
 router.get('/:provider', oauthRedirect as unknown as RequestHandler);
 router.get('/:provider/callback', oauthCallback as unknown as RequestHandler);
