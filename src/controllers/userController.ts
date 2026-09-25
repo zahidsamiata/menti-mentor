@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { socialUrlSchema } from '../services/socialUrl.js';
 import { sendAdminNewUserNotification } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { ensureMembershipSafe } from '../services/membership.js';
@@ -334,18 +335,13 @@ const NULLABLE_STR = (max: number) =>
 const OPTIONAL_JSON_STR = (max: number) =>
   z.preprocess((v) => (v === '' ? undefined : v), z.string().max(max).optional());
 
-const NULLABLE_URL = z.preprocess(
-  (v) => (v === '' ? null : v),
-  z.string().url('Geçerli bir URL giriniz (https://... ile başlamalı)').max(300).nullable().optional(),
-);
-
 const UpdateMyProfileSchema = z.object({
   // String? alanlar — null doğrudan Prisma'ya geçebilir
   bioSummary:       NULLABLE_STR(1000),
   expertiseDetails: NULLABLE_STR(1000),
   targetAudience:   NULLABLE_STR(500),
-  linkedinUrl:      NULLABLE_URL,
-  instagramUrl:     NULLABLE_URL,
+  linkedinUrl:      socialUrlSchema('linkedin'),
+  instagramUrl:     socialUrlSchema('instagram'),
   // Json? alanlar — null için Prisma.DbNull dönüşümü controller'da yapılır
   education:        OPTIONAL_JSON_STR(2000),
   pastProjects:     OPTIONAL_JSON_STR(2000),

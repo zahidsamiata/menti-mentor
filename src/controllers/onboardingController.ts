@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { socialUrlSchema } from '../services/socialUrl.js';
 
 // ─── Sektor Tag Sanitizasyonu (userController.ts ile aynı kural seti) ─────────
 const SECTOR_TAG_SCHEMA = z
@@ -521,8 +522,8 @@ export async function getDiscQuestions(_req: RequestWithTenant, res: Response) {
 
 // ─── PATCH /api/users/me/social ──────────────────────────────────────────────
 const SocialProfileSchema = z.object({
-  linkedinUrl:  z.string().url().max(300).optional().nullable(),
-  instagramUrl: z.string().url().max(300).optional().nullable(),
+  linkedinUrl:  socialUrlSchema('linkedin'),
+  instagramUrl: socialUrlSchema('instagram'),
 }).strict();
 
 export async function updateSocialProfile(req: RequestWithTenant, res: Response) {
