@@ -99,7 +99,8 @@ describe('İş 1: computeMentorQualityMultiplier', () => {
 
     const goodMentor = await createMentor(tenant.id, { sectorTags: ['teknoloji'] });
     const badMentor  = await createMentor(tenant.id, { sectorTags: ['teknoloji'] });
-    await createMenti(tenant.id, { sectorTags: ['teknoloji'] });
+    // Hedef menti: iki mentorla da aynı sektörü paylaşır → iki listede de yer ALMALI.
+    const targetMenti = await createMenti(tenant.id, { sectorTags: ['teknoloji'] });
 
     // badMentor'a 3 kötü puan ver
     const anotherMenti = await createUser({ tenantId: tenant.id, role: 'MENTI' });
@@ -117,14 +118,20 @@ describe('İş 1: computeMentorQualityMultiplier', () => {
       .set(tenantHeaders(tenant.id, adminTokens.accessToken))
       .expect(200);
 
-    const goodItems = (goodRes.body as { items: { totalScore: number }[] }).items;
-    const badItems  = (badRes.body as { items: { totalScore: number }[] }).items;
+    type Item = { mentiId: string; totalScore: number };
+    const goodItems = (goodRes.body as { items: Item[] }).items;
+    const badItems  = (badRes.body as { items: Item[] }).items;
 
-    if (goodItems.length > 0 && badItems.length > 0) {
-      // qualityMultiplier API response'unda artık yok (KARAR 3 — PII/gürültü azaltma).
-      // Katsayının etkisini dolaylı doğrula: kötü mentorun total skoru daha düşük.
-      expect(badItems[0].totalScore).toBeLessThan(goodItems[0].totalScore);
-    }
+    // PS-08: karşılaştırma önceden `if (her iki liste dolu)` içindeydi → liste boş dönerse
+    // assert hiç çalışmadan test yeşil geçiyordu. Artık hedef menti İKİ listede de bulunmak ZORUNDA.
+    const goodTarget = goodItems.find((i) => i.mentiId === targetMenti.id);
+    const badTarget  = badItems.find((i) => i.mentiId === targetMenti.id);
+    expect(goodTarget, 'hedef menti iyi mentorun aday listesinde yok').toBeDefined();
+    expect(badTarget, 'hedef menti kötü mentorun aday listesinde yok').toBeDefined();
+
+    // qualityMultiplier API response'unda artık yok (KARAR 3 — PII/gürültü azaltma).
+    // Katsayının etkisini dolaylı doğrula: AYNI menti için kötü mentorun total skoru daha düşük.
+    expect(badTarget!.totalScore).toBeLessThan(goodTarget!.totalScore);
   });
 });
 
