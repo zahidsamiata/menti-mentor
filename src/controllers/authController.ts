@@ -638,6 +638,8 @@ type OAuthProviderKey = keyof typeof OAUTH_PROVIDERS;
 const OAuthInitSchema = z.object({
   tenantSlug: z.string().min(1, 'tenantSlug zorunlu'),
   role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol MENTOR veya MENTI olmalı' }),
+  // U-06: kayıt sayfasındaki davet token'ı — callback'te doğrulanır (burada yalnız biçim sınırı).
+  inviteToken: z.string().min(1).max(2048).optional(),
 });
 
 /**
@@ -669,7 +671,7 @@ export async function oauthRedirect(req: Request, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const state = createOAuthState(parsed.data.tenantSlug, parsed.data.role);
+  const state = createOAuthState(parsed.data.tenantSlug, parsed.data.role, parsed.data.inviteToken);
   const authUrl = provider.buildAuthUrl(state);
 
   return res.redirect(authUrl);

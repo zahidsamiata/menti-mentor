@@ -60,6 +60,11 @@ export interface OAuthStatePayload {
    * kısa expiry (10 dk) + bu nonce birlikte yeterli koruma sağlar.
    */
   nonce: string;
+  /**
+   * U-06: kayıt sayfasındaki davet token'ı (varsa). OAuth akışı boyunca state içinde taşınır;
+   * callback'te form kaydıyla aynı kuralla doğrulanır (doğru kurum + doğru rol → APPROVED).
+   */
+  inviteToken?: string;
 }
 
 /** oauthService.handleOAuthCallback'in dönüş tipi. */

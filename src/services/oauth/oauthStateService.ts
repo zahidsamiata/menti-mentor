@@ -13,12 +13,13 @@ import type { OAuthStatePayload } from './oauthTypes.js';
 
 const STATE_EXPIRY_SECONDS = 600; // 10 dakika — authorization flow için yeterli
 
-/** Tenant ve rol bilgisini imzalanmış bir state string'ine dönüştürür. */
-export function createOAuthState(tenantSlug: string, role: 'MENTOR' | 'MENTI'): string {
+/** Tenant, rol ve (varsa) davet token'ını imzalanmış bir state string'ine dönüştürür. */
+export function createOAuthState(tenantSlug: string, role: 'MENTOR' | 'MENTI', inviteToken?: string): string {
   const payload: OAuthStatePayload = {
     tenantSlug,
     role,
     nonce: crypto.randomBytes(16).toString('hex'),
+    ...(inviteToken ? { inviteToken } : {}),
   };
   return jwt.sign(payload, config.jwt.secret, { expiresIn: STATE_EXPIRY_SECONDS });
 }
@@ -32,7 +33,12 @@ export function verifyOAuthState(state: string): OAuthStatePayload | null {
     const decoded = jwt.verify(state, config.jwt.secret) as OAuthStatePayload & jwt.JwtPayload;
     // jwt.verify zaten exp kontrolü yapıyor; tip guard olarak alanları kontrol et
     if (!decoded.tenantSlug || !decoded.role || !decoded.nonce) return null;
-    return { tenantSlug: decoded.tenantSlug, role: decoded.role, nonce: decoded.nonce };
+    return {
+      tenantSlug: decoded.tenantSlug,
+      role: decoded.role,
+      nonce: decoded.nonce,
+      ...(typeof decoded.inviteToken === 'string' ? { inviteToken: decoded.inviteToken } : {}),
+    };
   } catch {
     return null;
   }
