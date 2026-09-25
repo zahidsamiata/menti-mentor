@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { parsePagination, REPORT_PAGE } from '../services/pagination.js';
 
 const REPORT_REASONS = ['SPAM', 'HARASSMENT', 'INAPPROPRIATE', 'NO_SHOW', 'OTHER'] as const;
 
@@ -79,14 +80,20 @@ export async function listTenantReports(req: RequestWithTenant, res: Response) {
   const parsed = ReportListSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
 
-  const items = await prisma.userReport.findMany({
-    where: { tenantId: req.tenant.tenantId, ...(parsed.data.status ? { status: parsed.data.status } : {}) },
-    select: REPORT_SELECT,
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  });
+  const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], REPORT_PAGE);
+  const where = { tenantId: req.tenant.tenantId, ...(parsed.data.status ? { status: parsed.data.status } : {}) };
+  const [items, total] = await Promise.all([
+    prisma.userReport.findMany({
+      where,
+      select: REPORT_SELECT,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: offset,
+    }),
+    prisma.userReport.count({ where }),
+  ]);
 
-  return res.json({ items, total: items.length });
+  return res.json({ items, total, limit, offset });
 }
 
 const ReviewReportSchema = z.object({
