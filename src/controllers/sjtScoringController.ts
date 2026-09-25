@@ -97,6 +97,16 @@ export async function rankMentorsHandler(req: RequestWithTenant, res: Response) 
   const menti = await prisma.userProfile.findFirst({
     where: { id: mentiId, user: { tenantId: req.tenant.tenantId } },
   });
+
+  // GV-25: komşu uç computeProfileHandler ile aynı sahiplik kuralı. mentiId GÖVDEDEN geliyor;
+  // kontrol olmadan bir üye başkasının kişiselleştirilmiş mentör sıralamasını isteyebilirdi.
+  // Kural: yalnız KENDİ profili (UserProfile.userId === oturumdaki kullanıcı); ADMIN kurum içinde
+  // herhangi biri. Kurum izolasyonu yukarıdaki user:{tenantId} filtresiyle korunur (başka kurum → 404).
+  const isAdmin = req.auth?.role === 'ADMIN';
+  if (menti && !isAdmin && menti.userId !== req.auth?.userId) {
+    return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca kendi mentör sıralamanızı görebilirsiniz.' });
+  }
+
   if (!menti?.archetype) {
     return res.status(404).json({
       error: 'ARKETIP_HESAPLANMAMIS',
