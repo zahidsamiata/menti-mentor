@@ -5,7 +5,6 @@
 
 import { config as loadEnv } from 'dotenv';
 import { beforeEach } from 'vitest';
-import { resetRateLimiters } from '../src/middleware/rateLimiter.js';
 
 loadEnv({ path: '.env.test', override: true });
 
@@ -22,6 +21,11 @@ process.env['PLATFORM_ADMIN_KEY'] = 'test-platform-key';
 // Rate-limit eşiklerini suite geneli için YÜKSEK tut → meşru testler (ör. tenant-verification'da
 // 9 self-serve register) 429 yemez. Dedicated rate-limit testleri kendi beforeEach'inde düşürür.
 process.env['SELF_SERVE_REGISTER_RATE_RPM'] = '1000';
+
+// rateLimiter → jwtAuth → config zinciri config'i modül yüklenirken okur. Statik import en üste
+// taşınıp env atamalarından ÖNCE çalışacağı için dinamik import: config, yukarıdaki test
+// değerleriyle yüklenir (K-14 ile rateLimiter jwtAuth'u içe aktarmaya başladı).
+const { resetRateLimiters } = await import('../src/middleware/rateLimiter.js');
 
 // Her testten önce in-memory rate-limit sayaçlarını sıfırla. Suite genelinde aynı IP
 // sayacına düşen çok sayıda login, loginRateLimiter'ı tetikleyip meşru testleri 429'la
