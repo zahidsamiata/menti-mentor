@@ -5,9 +5,11 @@
  * Phase 1 = 1. ay NPS, Phase 3 = 3. ay NPS.
  *
  * Ağırlık ayarlama kuralları:
- *   - 3. ay NPS yüksekse (≥70) mevcut ağırlıklar korunur
- *   - 3. ay NPS düşükse (<50) DISC ağırlığı +5 (max 60) → DISC'e daha fazla güven
- *   - 1. ay NPS yüksek ama 3. ay düşükse uzun vadeli uyum zayıf → DISC +5
+ *   - 3. ay ortalama NPS yüksekse (≥7) mevcut ağırlıklar korunur
+ *   - 3. ay ortalama NPS düşükse (<5) DISC ağırlığı +5 (max 60) → DISC'e daha fazla güven
+ *   - 1. ay yüksek (≥7) ama 3. ay <6 ise uzun vadeli uyum zayıf → DISC +5
+ *   (Eşikler NPS_THRESHOLDS'ta; "NPS" burada FeedbackLog.npsScore'un 0-10 ORTALAMASIDIR,
+ *   promoter%−detractor% ile hesaplanan klasik NPS değildir.)
  *   - Değişim her zaman ±5 adımlarda olur (ani kaymayı önlemek için)
  *
  * Ağırlıklar MatchCombinationScore.score tablosuna yazılmaz;
@@ -35,6 +37,27 @@ const DEFAULT_WEIGHTS: AlgorithmWeights = {
 const MIN_SECTOR_WEIGHT = 0.40;
 const MAX_SECTOR_WEIGHT = 0.70;
 const STEP = 0.05;
+
+/**
+ * Ortalama NPS eşikleri — 0-10 ölçeğinde (FeedbackLog.npsScore, feedbackLogController şeması
+ * `z.number().int().min(0).max(10)`).
+ *
+ * Neden 7/5/6: ilk sürüm eşikleri 70/50/60 olarak 0-100 ölçeğinde yazılmıştı; oysa puan 0-10'dur,
+ * dolayısıyla ortalama asla 50'yi geçemiyor ve ayarlayıcı veri geldiğinde HER ZAMAN "düşük → DISC +5"
+ * dalına düşüyordu (KR-07). Ürün niyeti (70/100 = "iyi", 50/100 = "kötü") oran korunarak 0-10'a
+ * taşındı: 70→7, 50→5, 60→6. Yeni bir eşik seçilmedi; yalnız ölçek düzeltildi.
+ */
+export const NPS_THRESHOLDS = {
+  /** 3. ay ortalaması bu değer ve üstündeyse strateji başarılı sayılır, ağırlık korunur. */
+  HIGH: 7,
+  /** 3. ay ortalaması bunun altındaysa uzun vadeli uyum zayıf → DISC ağırlığı artar. */
+  LOW: 5,
+  /** 1. ay ≥ HIGH iken 3. ay bunun altına düştüyse "düşüş" sayılır → DISC ağırlığı artar. */
+  PHASE3_DROP: 6,
+} as const;
+
+/** 3. ay için en az bu kadar yanıt yoksa ayar yapılmaz (istatistiksel anlamlılık). */
+const MIN_PHASE3_SAMPLE = 10;
 
 // ─── Manuel ağırlık ayarı (9a) — kurum yöneticisi elle ayarlar ────────────────
 
@@ -155,7 +178,9 @@ async function getNpsStats(tenantId: string, phase: number): Promise<NpsStats> {
 
   const total = logs.reduce((sum, l) => sum + (l.npsScore ?? 0), 0);
   return {
-    avgNps: Math.round(total / logs.length),
+    // 0-10 ölçeğinde tam sayıya yuvarlamak eşik kararını bozar (6.5 → 7 "yüksek" sayılırdı;
+    // 0-100 ölçeğindeki eşdeğeri 65 < 70). Tek ondalık hassasiyet korunur.
+    avgNps: Math.round((total / logs.length) * 10) / 10,
     sampleSize: logs.length,
   };
 }
@@ -259,6 +284,53 @@ async function saveAlgorithmWeights(tenantId: string, weights: AlgorithmWeights)
 
 // ─── Ana ayarlama motoru ──────────────────────────────────────────────────────
 
+/**
+ * Ağırlık kararının saf çekirdeği (DB/HTTP bağımsız, birim testi kolay).
+ * Yeterli 3. ay verisi yoksa null döner (ağırlık değişmez).
+ * Formül (±STEP, MIN/MAX sınırları) değişmedi; yalnız eşikler 0-10 ölçeğine taşındı (NPS_THRESHOLDS).
+ */
+export function decideSectorWeight(input: {
+  phase1AvgNps: number | null;
+  phase3AvgNps: number | null;
+  phase3SampleSize: number;
+  currentSectorWeight: number;
+}): { newSectorWeight: number; reason: string } | null {
+  const { phase1AvgNps, phase3AvgNps, phase3SampleSize, currentSectorWeight } = input;
+  // `=== null` (falsy değil): 0-10 ölçeğinde ortalama 0 geçerli bir "çok düşük" sinyalidir.
+  if (phase3AvgNps === null || phase3SampleSize < MIN_PHASE3_SAMPLE) {
+    return null;
+  }
+
+  const { HIGH, LOW, PHASE3_DROP } = NPS_THRESHOLDS;
+
+  if (phase3AvgNps >= HIGH) {
+    // 3. ay NPS yüksek → mevcut strateji çalışıyor, değişiklik yok
+    return {
+      newSectorWeight: currentSectorWeight,
+      reason: `3. ay ortalama NPS ${phase3AvgNps}/10 — strateji başarılı, ağırlıklar korunuyor`,
+    };
+  }
+  if (phase3AvgNps < LOW) {
+    // Uzun vadeli uyum zayıf → DISC ağırlığını artır (sektörü azalt)
+    return {
+      newSectorWeight: Math.max(MIN_SECTOR_WEIGHT, currentSectorWeight - STEP),
+      reason: `3. ay ortalama NPS ${phase3AvgNps}/10 (< ${LOW}) — DISC ağırlığı +${STEP * 100}% artırıldı`,
+    };
+  }
+  if (phase1AvgNps !== null && phase1AvgNps >= HIGH && phase3AvgNps < PHASE3_DROP) {
+    // 1. ay iyi başladı ama 3. ay düştü → uzun vadeli uyum sorunu
+    return {
+      newSectorWeight: Math.max(MIN_SECTOR_WEIGHT, currentSectorWeight - STEP),
+      reason: `1. ay ortalama NPS ${phase1AvgNps}/10 → 3. ay ${phase3AvgNps}/10 düşüşü — DISC ağırlığı +${STEP * 100}%`,
+    };
+  }
+  // Orta performans → sektöre biraz daha ağırlık ver
+  return {
+    newSectorWeight: Math.min(MAX_SECTOR_WEIGHT, currentSectorWeight + STEP),
+    reason: `3. ay ortalama NPS ${phase3AvgNps}/10 (${LOW}-${HIGH} arası) — sektör ağırlığı +${STEP * 100}%`,
+  };
+}
+
 export type TuningResult = {
   tenantId: string;
   previousWeights: AlgorithmWeights;
@@ -286,30 +358,16 @@ export async function tuneScoringWeights(tenantId: string): Promise<TuningResult
     reason: 'Yeterli NPS verisi yok — ağırlıklar değişmedi',
   };
 
-  // Minimum 10 yanıt şartı (istatistiksel anlamlılık)
-  if (!phase3Nps.avgNps || phase3Nps.sampleSize < 10) {
+  const decision = decideSectorWeight({
+    phase1AvgNps: phase1Nps.avgNps,
+    phase3AvgNps: phase3Nps.avgNps,
+    phase3SampleSize: phase3Nps.sampleSize,
+    currentSectorWeight: current.sectorWeight,
+  });
+  if (decision === null) {
     return result;
   }
-
-  let newSectorWeight = current.sectorWeight;
-  let reason = '';
-
-  if (phase3Nps.avgNps >= 70) {
-    // 3. ay NPS yüksek → mevcut strateji çalışıyor, değişiklik yok
-    reason = `3. ay NPS ${phase3Nps.avgNps} — strateji başarılı, ağırlıklar korunuyor`;
-  } else if (phase3Nps.avgNps < 50) {
-    // Uzun vadeli uyum zayıf → DISC ağırlığını artır (sektörü azalt)
-    newSectorWeight = Math.max(MIN_SECTOR_WEIGHT, current.sectorWeight - STEP);
-    reason = `3. ay NPS ${phase3Nps.avgNps} (< 50) — DISC ağırlığı +${STEP * 100}% artırıldı`;
-  } else if (phase1Nps.avgNps !== null && phase1Nps.avgNps >= 70 && phase3Nps.avgNps < 60) {
-    // 1. ay iyi başladı ama 3. ay düştü → uzun vadeli uyum sorunu
-    newSectorWeight = Math.max(MIN_SECTOR_WEIGHT, current.sectorWeight - STEP);
-    reason = `1. ay NPS ${phase1Nps.avgNps} → 3. ay NPS ${phase3Nps.avgNps} düşüşü — DISC ağırlığı +${STEP * 100}%`;
-  } else {
-    // Orta performans → sektöre biraz daha ağırlık ver
-    newSectorWeight = Math.min(MAX_SECTOR_WEIGHT, current.sectorWeight + STEP);
-    reason = `3. ay NPS ${phase3Nps.avgNps} (50-70 arası) — sektör ağırlığı +${STEP * 100}%`;
-  }
+  const { newSectorWeight, reason } = decision;
 
   const newDiscWeight = Math.round((1 - newSectorWeight) * 100) / 100;
 
