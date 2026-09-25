@@ -54,6 +54,19 @@ function buildBlockedMentiSet(mentorId: string, blockedPairs: unknown): Set<stri
   return blocked;
 }
 
+// Kararlı sıralama (PS-01): eşit skorda id artan ayırıcı. Skor/sıralama mantığı değişmez;
+// yalnız eşitlikte sıra her çağrıda aynı olur (ES2019 sort kararlı ama girdi sırası —
+// ORDER BY'sız Postgres sonucu — garanti değildi). id karşılaştırması kod-birimi sırasıdır.
+function byScoreDescThenId<T extends { totalScore: number }>(idOf: (item: T) => string) {
+  return (a: T, b: T): number => {
+    const diff = b.totalScore - a.totalScore;
+    if (diff !== 0) return diff;
+    const ia = idOf(a);
+    const ib = idOf(b);
+    return ia < ib ? -1 : ia > ib ? 1 : 0;
+  };
+}
+
 export async function rankMentisForMentor(args: {
   mentorId: string;
   mentorTenantId: string;
@@ -171,6 +184,10 @@ export async function rankMentisForMentor(args: {
       interactionStyle: true,
       expectationCategories: true,
     },
+    // Kararlı sıra (PS-01): take:500 kesmesi artık hep aynı 500 adayı seçer (id artan).
+    // ⚠️ 500'den kalabalık havuzda kesme SKORDAN ÖNCE yapılır → id'si büyük adaylar hiç
+    // skorlanmaz (kararlı ama kapsayıcı değil). Kapsayıcılık AN-07 (take:500 + cache) işidir.
+    orderBy: { id: 'asc' },
     take: 500,
   });
 
@@ -325,7 +342,7 @@ function scoreAndFilter(
     });
   }
 
-  filtered.sort((a, b) => b.totalScore - a.totalScore);
+  filtered.sort(byScoreDescThenId((m) => m.mentiId));
   return filtered;
 }
 
@@ -398,6 +415,10 @@ export async function rankMentorsForMenti(args: {
       discType: true,
       skills: true,
     },
+    // Kararlı sıra (PS-01): take:500 kesmesi artık hep aynı 500 adayı seçer (id artan).
+    // ⚠️ 500'den kalabalık havuzda kesme SKORDAN ÖNCE yapılır → id'si büyük adaylar hiç
+    // skorlanmaz (kararlı ama kapsayıcı değil). Kapsayıcılık AN-07 (take:500 + cache) işidir.
+    orderBy: { id: 'asc' },
     take: 500,
   });
 
@@ -430,6 +451,6 @@ export async function rankMentorsForMenti(args: {
     };
   });
 
-  items.sort((a, b) => b.totalScore - a.totalScore);
+  items.sort(byScoreDescThenId((m) => m.mentorId));
   return { items: args.limit ? items.slice(0, args.limit) : items };
 }
