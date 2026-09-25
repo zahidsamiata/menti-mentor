@@ -64,3 +64,19 @@ describe('U-06: OAuth davetli kullanıcı onayı', () => {
     expect(await approvalOf(e2)).toBe('PENDING');
   });
 });
+
+describe('U-06: incelemedeki kuruma OAuth kaydı (form kaydıyla aynı kapı)', () => {
+  beforeEach(async () => { await cleanDb(); });
+
+  it('negatif: PENDING_REVIEW kuruma geçerli davetle bile OAuth kaydı açılmaz', async () => {
+    const tenant = await createTenant({ verificationStatus: 'PENDING_REVIEW' });
+    const email = `oauth-inceleme-${Date.now()}@test.local`;
+    await expect(
+      handleOAuthCallback(
+        { providerUserId: 'g-inc', email, fullName: 'OAuth İnceleme', provider: 'GOOGLE' },
+        { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'n', inviteToken: inviteFor(tenant.id, 'MENTI') },
+      ),
+    ).rejects.toMatchObject({ code: 'TENANT_ONAY_BEKLENIYOR' });
+    expect(await testPrisma.user.count({ where: { email } })).toBe(0);
+  });
+});

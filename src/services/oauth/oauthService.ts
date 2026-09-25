@@ -90,11 +90,19 @@ async function handleNewUser(
 ): Promise<OAuthCallbackResult> {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: state.tenantSlug },
-    select: { id: true, name: true, displayName: true },
+    select: { id: true, name: true, displayName: true, verificationStatus: true },
   });
 
   if (!tenant) {
     throw new OAuthConflictError('TENANT_BULUNAMADI', 'Kuruluş bulunamadı. Lütfen geçerli bir bağlantı kullanın.');
+  }
+
+  // Form kaydıyla (authController.register) aynı kapı: incelemedeki kuruma yeni üye kaydı yok.
+  if (tenant.verificationStatus === 'PENDING_REVIEW') {
+    throw new OAuthConflictError(
+      'TENANT_ONAY_BEKLENIYOR',
+      'Kurumunuz henüz inceleme aşamasında. Onaylandıktan sonra kayıt olabilirsiniz.',
+    );
   }
 
   // U-06: geçerli davet token'ı (doğru kurum + doğru rol) → davetli APPROVED; form kaydıyla

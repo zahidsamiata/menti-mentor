@@ -160,8 +160,8 @@ export async function register(req: Request, res: Response) {
   // Token YOK / geçersiz / uyuşmuyor → PENDING (admin onayı) korunur. Eskiden backend token'ı HİÇ
   // görmüyordu (yalnız tenantSlug) → API'ye davetsiz doğrudan POST atan otomatik onaylanabilirdi;
   // bu doğrulama o yolu da kapatır. Sahte token onay KAZANDIRMAZ; kaydı da reddetmeyiz (admin onaylar).
-  // NOT (2026-09-01): OAuth kaydı bu turda KAPSAM DIŞI (token'ı 4 katmanın hiçbiri taşımıyor) →
-  // `oauthService.ts:109` PENDING olduğu gibi kalır; ayrı BYPASS turu. Bkz. 00-KARAR-TAKIP.
+  // ⚠️ GÜNCELLEME (2026-09-25, U-06): OAuth kaydı da artık davet token'ını state içinde taşır ve
+  // aynı kuralı uygular (`oauthService.handleNewUser`).
   let approvalStatus: 'PENDING' | 'APPROVED' = 'PENDING';
   if (inviteToken) {
     const claims = verifyInvitationToken(inviteToken);
