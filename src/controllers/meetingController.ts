@@ -178,6 +178,14 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
   }
 
   const { mentorId, mentiId, scheduledAt, endsAt } = parsed.data;
+
+  // GV-06: MENTI yalnız KENDİ adına talep açar — kimlik oturumdan (komşu uç bookMeeting ile aynı ilke).
+  // ADMIN kurum içinde herhangi bir menti adına açabilir (yönetici yolu).
+  if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
+  if (req.auth.role === 'MENTI' && mentiId !== req.auth.userId) {
+    return res.status(403).json({ error: 'YETKI_YETERSIZ', message: 'Yalnızca kendi adınıza görüşme talebi oluşturabilirsiniz.' });
+  }
+
   if (await checkOrientationLock(mentiId, res)) return;
 
   const [mentor, menti] = await Promise.all([
