@@ -22,6 +22,7 @@
 
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
+import { applyKAnonymity } from '../services/mask.js';
 import { maskEmail } from '../services/mask.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 
@@ -258,19 +259,26 @@ export async function getTenantAnalytics(req: Request, res: Response) {
   });
 
   const tally: Record<string, number> = {};
-  let totalWithDisc = 0;
   for (const m of memberships) {
     const d = m.user.discType;
     if (d) {
       tally[d] = (tally[d] ?? 0) + 1;
-      totalWithDisc += 1;
     }
   }
-  const discDistribution = Object.entries(tally)
+  // V-05 k-anonimlik: eşiğin altındaki DISC grupları listeden ÇIKARILIR (küçük kurumda tek
+  // kişinin tipi okunmasın). Toplam da yalnız görünen gruplardan hesaplanır — aksi hâlde
+  // "toplam − görünenler" farkından gizlenen grubun sayısı çıkarılabilirdi.
+  const visible = Object.entries(tally)
+    .filter(([, count]) => !applyKAnonymity(count).suppressed)
     .map(([discType, count]) => ({ discType, count }))
     .sort((a, b) => b.count - a.count);
+  const suppressedGroups = Object.keys(tally).length - visible.length;
 
   await audit('VIEW_TENANT_ANALYTICS', tenantId, req);
 
-  return res.json({ totalWithDisc, discDistribution });
+  return res.json({
+    totalWithDisc: visible.reduce((sum, d) => sum + d.count, 0),
+    discDistribution: visible,
+    suppressedGroups,
+  });
 }
