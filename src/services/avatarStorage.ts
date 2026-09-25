@@ -5,8 +5,8 @@
  * olarak tutulur; diske dokunan kısımlar ince sarmalayıcılardır. Böylece birim testi
  * kolaylaşır (magic-byte tespiti DB/disk gerektirmez).
  *
- * GÜVENLİK: Dosya adı KULLANICI GİRDİSİNDEN üretilmez (path traversal riski) — userId
- * + rastgele UUID + tespit edilen uzantıdan oluşur. Uzantı istemcinin bildirdiği MIME'a
+ * GÜVENLİK: Dosya adı KULLANICI GİRDİSİNDEN üretilmez (path traversal riski) — rastgele
+ * UUID + tespit edilen uzantıdan oluşur (GV-16: kullanıcı kimliği taşımaz). Uzantı istemcinin bildirdiği MIME'a
  * değil, dosyanın gerçek sihirli baytlarına göre belirlenir.
  */
 
@@ -47,9 +47,13 @@ export function detectImageType(buf: Buffer): ImageKind | null {
   return null;
 }
 
-/** Tahmin edilemez, çakışmayan güvenli dosya adı: <userId>-<uuid>.<ext>. */
-export function buildAvatarFilename(userId: string, ext: ImageKind['ext']): string {
-  return `${userId}-${randomUUID()}.${ext}`;
+/**
+ * Tahmin edilemez, çakışmayan güvenli dosya adı: <uuid>.<ext>.
+ * GV-16: ad kullanıcı kimliği TAŞIMAZ — /uploads herkese açık servis edilir; eski adlar
+ * (`<userId>-<uuid>`) kayıtlı URL'lerde durur, silme URL üzerinden yapıldığı için etkilenmez.
+ */
+export function buildAvatarFilename(ext: ImageKind['ext']): string {
+  return `${randomUUID()}.${ext}`;
 }
 
 /** Dosya adından public erişim URL'i üretir (avatarUrl bu değere set edilir). */
@@ -95,7 +99,7 @@ export async function deleteLocalAvatar(avatarUrl: string | null | undefined): P
     await unlink(full);
   } catch (err) {
     // Dosya zaten yoksa (ENOENT) sessiz geç. Başka hata (izin/disk) = yetim dosya riski → logla,
-    // ama akışı durdurma (KVKK anonimleştirme geri alınmaz; dosya adı userId taşır, temizlik gerekir).
+    // ama akışı durdurma (KVKK anonimleştirme geri alınmaz; eski adlar userId taşır, temizlik gerekir).
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code !== 'ENOENT') {
       void logger.warn('SYSTEM', 'Avatar dosyası silinemedi (yetim dosya kalabilir)', { file: name, code });
