@@ -746,17 +746,22 @@ export async function rejectUser(req: RequestWithTenant, res: Response) {
     return res.status(409).json({ error: 'ZATEN_REDDEDILDI', message: 'Kullanıcı zaten reddedildi.' });
   }
 
-  await prisma.user.update({
-    where: { id: userId },
-    // İş 2: reddeden yönetici + zaman. İş 3 P1: red gerekçesi (varsa).
-    data: {
-      approvalStatus: 'REJECTED',
-      isActive: false,
-      rejectedBy: req.auth?.userId ?? null,
-      rejectedAt: new Date(),
-      rejectionReason: parsed.data.reason && parsed.data.reason.length > 0 ? parsed.data.reason : null,
-    },
-  });
+  // GV-10: red ile birlikte oturum yenileme yolu kapanır (refresh token'lar silinir). Elindeki access
+  // token'ı da requireTenant bir sonraki istekte reddeder (approvalStatus=REJECTED → 401).
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      // İş 2: reddeden yönetici + zaman. İş 3 P1: red gerekçesi (varsa).
+      data: {
+        approvalStatus: 'REJECTED',
+        isActive: false,
+        rejectedBy: req.auth?.userId ?? null,
+        rejectedAt: new Date(),
+        rejectionReason: parsed.data.reason && parsed.data.reason.length > 0 ? parsed.data.reason : null,
+      },
+    }),
+    prisma.refreshToken.deleteMany({ where: { userId } }),
+  ]);
 
   void logger.info('SYSTEM', 'Admin: Kullanıcı reddedildi', { userId, tenantId: req.tenant.tenantId });
   // Kibar, tekrar-başvuruyu davet eden e-posta (best-effort; gönderilemezse red yine kayıtlı).
@@ -960,6 +965,9 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
   await prisma.user.update({ where: { id: target.id }, data: { role: 'MENTOR' } });
   // b3: rol değişince TenantMembership.role senkronla. Non-fatal.
   await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, 'MENTOR');
+  // GV-10: düşürülen yöneticinin oturumu yenilenemez → yeniden girişte token güncel rolle üretilir.
+  // Elindeki access token'ı requireTenant zaten üyelik rolüyle (MENTOR) değerlendirir.
+  await prisma.refreshToken.deleteMany({ where: { userId: target.id } });
   void logger.info('AUTH', 'Admin yetkisi alındı', {
     actorId,
     targetId: target.id,

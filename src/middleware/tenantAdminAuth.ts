@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
-import { prisma } from '../db.js';
 import { logger } from '../services/logger.js';
 import { extractBearerToken, verifyToken, type JwtPayload } from './jwtAuth.js';
+import { ACCOUNT_INACTIVE_BODY, resolveMembershipAccess } from './membershipAccess.js';
 
 /**
  * X-Tenant-Id header'ı KULLANMAYAN kurum-yöneticisi uçları için kimlik + yetki kapısı
@@ -15,6 +15,7 @@ import { extractBearerToken, verifyToken, type JwtPayload } from './jwtAuth.js';
  * `requireTenant` (tenant.ts adım 4) ile AYNI kural uygulanır:
  *  - kurum-içi rol/erişim kaynağı `TenantMembership` (userId + tokenın tenantId'si) — `User.role` değil;
  *  - üyelik aktif DEĞİLSE veya üyelik rolü ADMIN DEĞİLSE 403;
+ *  - hesap pasif / reddedilmişse 401 (GV-10; kural `membershipAccess.ts`'te, iki kapı ortak kullanır);
  *  - platform token'ı (aud:'platform') tenant yönetici ucunda geçmez (domain ayrımı, platformAuth ile simetrik).
  *
  * Kurum eşleşmesi (URL `:id` = token tenantId) çağıran controller'da kalır; hata mesajı uca özeldir.
@@ -35,12 +36,18 @@ export async function authenticateTenantAdmin(
     return null;
   }
 
-  const membership = await prisma.tenantMembership.findUnique({
-    where:  { userId_tenantId: { userId: payload.sub, tenantId: payload.tenantId } },
-    select: { isActive: true, role: true },
-  });
+  const access = await resolveMembershipAccess(payload.sub, payload.tenantId);
 
-  if (!membership?.isActive || membership.role !== 'ADMIN') {
+  if (!access.ok && access.reason === 'ACCOUNT_INACTIVE') {
+    void logger.warn('AUTH', 'Pasif veya reddedilmiş hesapla kurum-yönetici ucu denemesi', {
+      userId:   payload.sub,
+      tenantId: payload.tenantId,
+    });
+    res.status(401).json(ACCOUNT_INACTIVE_BODY);
+    return null;
+  }
+
+  if (!access.ok || access.role !== 'ADMIN') {
     void logger.warn('AUTH', 'Aktif yönetici üyeliği olmayan kurum-yönetici ucu denemesi', {
       userId:   payload.sub,
       tenantId: payload.tenantId,

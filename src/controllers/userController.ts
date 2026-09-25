@@ -312,6 +312,12 @@ export async function updateUser(req: RequestWithTenant, res: Response) {
     select: USER_FULL_SELECT,
   });
 
+  // GV-10: pasife alınan kullanıcının oturumu yenilenemez. Elindeki access token'ı
+  // requireTenant bir sonraki istekte reddeder (User.isActive=false → 401).
+  if (parsed.data.isActive === false) {
+    await prisma.refreshToken.deleteMany({ where: { userId: existing.id } });
+  }
+
   const { discVector: _dv, temperamentJson: _tj, selfProfile: _sp, ...safe } = updated;
   return res.json(safe);
 }
