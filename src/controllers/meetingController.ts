@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
+import { isHttpUrl } from '../services/safeUrl.js';
 import { UserRole, MeetingFormat, MeetingStatus, Weekday } from '@prisma/client';
 import { sendMeetingRequestEmail, sendMeetingApprovalEmail } from '../services/emailService.js';
 import { logger } from '../services/logger.js';
@@ -428,7 +429,8 @@ const BookMeetingSchema = z.object({
   format:         z.enum(['ONLINE', 'IN_PERSON', 'PHONE']),
   startsAt:       z.string(),
   endsAt:         z.string(),
-  locationUrl:    z.string().optional(),
+  // GV-03: yalnız http(s) adres — bağlantı karşı tarafın ekranında tıklanabilir olarak çizilir.
+  locationUrl:    z.string().max(2048).refine(isHttpUrl, { message: 'Görüşme bağlantısı http:// ya da https:// ile başlayan geçerli bir adres olmalı.' }).optional(),
   locationText:   z.string().optional(),
   phoneNumber:    z.string().optional(),
   requestMessage: z.string()
