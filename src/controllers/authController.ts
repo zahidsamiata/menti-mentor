@@ -160,8 +160,8 @@ export async function register(req: Request, res: Response) {
   // Token YOK / geçersiz / uyuşmuyor → PENDING (admin onayı) korunur. Eskiden backend token'ı HİÇ
   // görmüyordu (yalnız tenantSlug) → API'ye davetsiz doğrudan POST atan otomatik onaylanabilirdi;
   // bu doğrulama o yolu da kapatır. Sahte token onay KAZANDIRMAZ; kaydı da reddetmeyiz (admin onaylar).
-  // NOT (2026-09-01): OAuth kaydı bu turda KAPSAM DIŞI (token'ı 4 katmanın hiçbiri taşımıyor) →
-  // `oauthService.ts:109` PENDING olduğu gibi kalır; ayrı BYPASS turu. Bkz. 00-KARAR-TAKIP.
+  // ⚠️ GÜNCELLEME (2026-09-25, U-06): OAuth kaydı da artık davet token'ını state içinde taşır ve
+  // aynı kuralı uygular (`oauthService.handleNewUser`).
   let approvalStatus: 'PENDING' | 'APPROVED' = 'PENDING';
   if (inviteToken) {
     const claims = verifyInvitationToken(inviteToken);
@@ -638,6 +638,8 @@ type OAuthProviderKey = keyof typeof OAUTH_PROVIDERS;
 const OAuthInitSchema = z.object({
   tenantSlug: z.string().min(1, 'tenantSlug zorunlu'),
   role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol MENTOR veya MENTI olmalı' }),
+  // U-06: kayıt sayfasındaki davet token'ı — callback'te doğrulanır (burada yalnız biçim sınırı).
+  inviteToken: z.string().min(1).max(2048).optional(),
 });
 
 /**
@@ -669,7 +671,7 @@ export async function oauthRedirect(req: Request, res: Response) {
     return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
   }
 
-  const state = createOAuthState(parsed.data.tenantSlug, parsed.data.role);
+  const state = createOAuthState(parsed.data.tenantSlug, parsed.data.role, parsed.data.inviteToken);
   const authUrl = provider.buildAuthUrl(state);
 
   return res.redirect(authUrl);

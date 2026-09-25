@@ -41,10 +41,8 @@ describe('OAuth — yeni kullanıcıda kvkkConsentAt set edilir (K2)', () => {
     expect(user?.kvkkConsentAt).toBeInstanceOf(Date);
   });
 
-  // REGRESYON (PO 2026-09-01, Seçenek A): LOCAL register'a eklenen "davet=APPROVED" iyileştirmesi
-  // OAuth'u ETKİLEMEZ — OAuth zinciri davet token'ı taşımıyor (4 katman), `oauthService` kapsam dışı.
-  // OAuth yeni kullanıcı hâlâ PENDING yazılır. Gelecek "OAuth davet token'ı taşıma" turunda beklenti
-  // burada nettir (o tur bu testi APPROVED-for-invite'a genişletecek). Bkz. 00-KARAR-TAKIP.
+  // Davet token'ı OLMAYAN OAuth yeni kullanıcı PENDING yazılır. ⚠️ GÜNCELLEME (2026-09-25, U-06):
+  // davetli OAuth kaydı artık APPROVED olur — bkz. tests/oauth-invite-approval.test.ts.
   it('OAuth yeni kullanıcı APPROVED DEĞİL → PENDING kalır (LOCAL fix OAuth\'u etkilemez)', async () => {
     const email = `oauth-pending-${Date.now()}@test.local`;
 

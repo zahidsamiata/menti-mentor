@@ -16,6 +16,7 @@
 
 import crypto from 'node:crypto';
 import { prisma } from '../../db.js';
+import { verifyInvitationToken } from '../invitationToken.js';
 import { signToken } from '../../middleware/jwtAuth.js';
 import { sendAdminNewUserNotification } from '../emailService.js';
 import { notifyAdminsPendingUser } from '../notificationService.js';
@@ -89,12 +90,26 @@ async function handleNewUser(
 ): Promise<OAuthCallbackResult> {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: state.tenantSlug },
-    select: { id: true, name: true, displayName: true },
+    select: { id: true, name: true, displayName: true, verificationStatus: true },
   });
 
   if (!tenant) {
     throw new OAuthConflictError('TENANT_BULUNAMADI', 'Kuruluş bulunamadı. Lütfen geçerli bir bağlantı kullanın.');
   }
+
+  // Form kaydıyla (authController.register) aynı kapı: incelemedeki kuruma yeni üye kaydı yok.
+  if (tenant.verificationStatus === 'PENDING_REVIEW') {
+    throw new OAuthConflictError(
+      'TENANT_ONAY_BEKLENIYOR',
+      'Kurumunuz henüz inceleme aşamasında. Onaylandıktan sonra kayıt olabilirsiniz.',
+    );
+  }
+
+  // U-06: geçerli davet token'ı (doğru kurum + doğru rol) → davetli APPROVED; form kaydıyla
+  // (authController.register) BİREBİR aynı kural. Token yok / geçersiz / uyuşmuyor → PENDING.
+  const claims = state.inviteToken ? verifyInvitationToken(state.inviteToken) : null;
+  const approvalStatus: 'PENDING' | 'APPROVED' =
+    claims && claims.tenantId === tenant.id && claims.role === state.role ? 'APPROVED' : 'PENDING';
 
   // KVKK: rızasız kayıt olmamalı → user.create + tipli rıza AYNI transaction'da atomik.
   // YALNIZ yeni kullanıcıda (bu fonksiyon mevcut kullanıcıda çağrılmaz) → tekrar rıza yazılmaz.
@@ -106,7 +121,7 @@ async function handleNewUser(
         fullName: profile.fullName,
         role: state.role,
         authProvider: profile.provider,
-        approvalStatus: 'PENDING',
+        approvalStatus,
         avatarUrl: profile.avatarUrl ?? null,
         // password null — OAuth kullanıcıları şifre kullanmaz
         // KVKK Md.5 (ispat yükü): OAuth ile katılım da açık rıza anlamına gelir —
@@ -124,8 +139,11 @@ async function handleNewUser(
   // b3: Kurum üyeliğini garanti et. GÜVENLİK: non-fatal — OAuth girişini ASLA bozmaz.
   await ensureMembershipSafe(prisma, newUser.id, newUser.tenantId, newUser.role);
 
-  // Admin bildirimlerini arka planda gönder — giriş akışını yavaşlatmamalı
-  void notifyAdmins(tenant, newUser.fullName, state.role);
+  // Admin "onaya bak" bildirimi yalnız onay bekleyen kayıtta (form kaydıyla aynı).
+  // Arka planda — giriş akışını yavaşlatmamalı.
+  if (approvalStatus === 'PENDING') {
+    void notifyAdmins(tenant, newUser.fullName, state.role);
+  }
 
   const { accessToken, refreshToken } = await issueTokenPair(
     newUser.id,
