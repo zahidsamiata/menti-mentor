@@ -119,6 +119,102 @@ describe('GV-16 + GV-20: sanitizeImage', () => {
   });
 });
 
+function exifApp1WithOrientationAndGps(orientation: number): Buffer {
+  // "Exif\0\0" + TIFF (II) + IFD0: 2 girdi (Orientation, GPS göstergesi) + metin
+  const tiff = Buffer.alloc(8 + 2 + 24 + 4);
+  tiff.write('II', 0, 'latin1');
+  tiff.writeUInt16LE(0x2a, 2);
+  tiff.writeUInt32LE(8, 4);
+  tiff.writeUInt16LE(2, 8);
+  tiff.writeUInt16LE(0x0112, 10);
+  tiff.writeUInt16LE(3, 12);
+  tiff.writeUInt32LE(1, 14);
+  tiff.writeUInt16LE(orientation, 18);
+  tiff.writeUInt16LE(0x8825, 22); // GPSInfo IFD işaretçisi
+  tiff.writeUInt16LE(4, 24);
+  tiff.writeUInt32LE(1, 26);
+  tiff.writeUInt32LE(0, 30);
+  return Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff, GPS]);
+}
+
+describe('GV-16 inceleme düzeltmeleri (JPEG)', () => {
+  const jpg = { ext: 'jpg', mime: 'image/jpeg' } as const;
+  function jpegWith(app1: Buffer, tail: Buffer = Buffer.alloc(0), extraSegments: Buffer[] = []): Buffer {
+    const sof = Buffer.alloc(15);
+    sof[0] = 8;
+    sof.writeUInt16BE(200, 1);
+    sof.writeUInt16BE(300, 3);
+    sof[5] = 3;
+    return Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegSegment(0xe1, app1),
+      ...extraSegments,
+      jpegSegment(0xc0, sof),
+      jpegSegment(0xda, Buffer.from([1, 1, 0, 0, 0x3f, 0])),
+      PIXELS,
+      Buffer.from([0xff, 0xd9]),
+      tail,
+    ]);
+  }
+
+  it('dikey fotoğrafın yönlendirmesi korunur, konum atılır', () => {
+    const out = sanitizeImage(jpegWith(exifApp1WithOrientationAndGps(6)), jpg)!;
+    expect(out.clean.includes(Buffer.from('GPSLatitude'))).toBe(false);
+    const idx = out.clean.indexOf(Buffer.from('Exif\0\0', 'latin1'));
+    expect(idx).toBeGreaterThan(0);
+    // Yeniden ayrıştırınca yönlendirme 6 (MM, tek girdi)
+    const tiff = out.clean.subarray(idx + 6);
+    expect(tiff.toString('latin1', 0, 2)).toBe('MM');
+    expect(tiff.readUInt16BE(10)).toBe(0x0112);
+    expect(tiff.readUInt16BE(18)).toBe(6); // girdi: etiket(10) tür(12) sayı(14) değer(18)
+    expect(sanitizeImage(out.clean, jpg)!.size).toEqual({ width: 300, height: 200 });
+  });
+
+  it('yönlendirme 1 ise Exif hiç yazılmaz', () => {
+    const out = sanitizeImage(jpegWith(exifApp1WithOrientationAndGps(1)), jpg)!;
+    expect(out.clean.includes(Buffer.from('Exif\0\0', 'latin1'))).toBe(false);
+  });
+
+  it('negatif: EOI sonrasına eklenmiş ikincil görüntü ve MPF işaretçisi atılır', () => {
+    const secondary = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegSegment(0xe1, GPS),
+      Buffer.from([0xff, 0xd9]),
+    ]);
+    const mpf = jpegSegment(0xe2, Buffer.from('MPF\0IIxxxx', 'latin1'));
+    const icc = jpegSegment(0xe2, Buffer.from('ICC_PROFILE\0renk', 'latin1'));
+    const out = sanitizeImage(jpegWith(exifApp1WithOrientationAndGps(1), secondary, [mpf, icc]), jpg)!;
+    expect(out.clean.includes(Buffer.from('GPSLatitude'))).toBe(false);
+    expect(out.clean.includes(Buffer.from('MPF\0', 'latin1'))).toBe(false);
+    expect(out.clean.includes(Buffer.from('ICC_PROFILE'))).toBe(true);
+    expect(out.clean.subarray(-2)).toEqual(Buffer.from([0xff, 0xd9]));
+  });
+
+  it('negatif: boyutu 0 bildiren başlık okunamaz sayılır', () => {
+    const sof = Buffer.alloc(15);
+    sof[0] = 8;
+    const bad = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegSegment(0xc0, sof),
+      jpegSegment(0xda, Buffer.from([1, 1, 0, 0, 0x3f, 0])),
+      PIXELS,
+      Buffer.from([0xff, 0xd9]),
+    ]);
+    expect(sanitizeImage(bad, jpg)).toBeNull();
+  });
+
+  it('bozuk girdilerde istisna fırlatmaz (rastgele kesme/bozma)', () => {
+    const base = makeJpeg(640, 480);
+    for (let n = 0; n < 500; n++) {
+      const b = Buffer.from(base);
+      b[(n * 7919) % b.length] = (n * 31) & 0xff;
+      const cut = b.subarray(0, (n * 13) % b.length);
+      expect(() => sanitizeImage(cut, jpg)).not.toThrow();
+      expect(() => sanitizeImage(b, jpg)).not.toThrow();
+    }
+  });
+});
+
 describe('GV-20: isWithinAvatarLimits', () => {
   it('olağan telefon fotoğrafı sınır içinde', () => {
     expect(isWithinAvatarLimits({ width: 4032, height: 3024 })).toBe(true);
