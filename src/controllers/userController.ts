@@ -194,8 +194,30 @@ export async function getUser(req: RequestWithTenant, res: Response) {
   const targetId = req.params['id'] as string;
   const fullAccess = req.auth?.userId === targetId || req.auth?.role === 'ADMIN';
 
+  // GV-24: komşu uç listUsers ile aynı iki kapı. (1) Onaylanmamış (PENDING/REJECTED) çağıran
+  // başkasının kaydını göremez — kendi kaydı (panel/profil formu bu uçtan dolar) serbest kalır.
+  // (2) Onaylanmamış hedef yalnız kendisine ve ADMIN'e görünür; peer için "yok" (404) — listede
+  // de hiç görünmediği için varlığını sızdırmamak üzere 403 yerine 404 döner.
+  if (!fullAccess) {
+    // `?? ''`: Prisma'da id: undefined filtreyi düşürür (rastgele kayıt eşleşir) — boş dize eşleşmez.
+    const caller = await prisma.user.findFirst({
+      where: { id: req.auth?.userId ?? '', tenantId: req.tenant.tenantId },
+      select: { approvalStatus: true },
+    });
+    if (caller?.approvalStatus !== 'APPROVED') {
+      return res.status(403).json({
+        error: 'ONAY_BEKLENIYOR',
+        message: 'Diğer kullanıcıların profillerini görmek için yönetici onayı gerekli.',
+      });
+    }
+  }
+
   const user = await prisma.user.findFirst({
-    where: { id: targetId, tenantId: req.tenant.tenantId },
+    where: {
+      id: targetId,
+      tenantId: req.tenant.tenantId,
+      ...(!fullAccess && { approvalStatus: 'APPROVED' as const }),
+    },
     select: fullAccess ? USER_FULL_SELECT : USER_PUBLIC_SELECT,
   });
 
