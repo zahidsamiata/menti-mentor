@@ -32,6 +32,12 @@ const CreateAgreementSchema = z.object({
   privacyAgreed:        z.literal(true),
 });
 
+// KR-18: "yaşayan" anlaşma durumları tek yerde. RENEWED eski kayıtlar için de aktif sayılır —
+// yenileme önceden kaydı RENEWED yapıp süresini uzatıyor, ama bu durum hiçbir listede yoktu
+// (anlaşma kayboluyor, bitirilemiyordu). Yeni yenilemeler kaydı yeniden ACTIVE yapar.
+const LIVE_AGREEMENT_STATUSES = ['DRAFT', 'ACTIVE', 'RENEWAL_PENDING', 'RENEWED'] as const;
+const ENDABLE_AGREEMENT_STATUSES: readonly string[] = ['ACTIVE', 'RENEWAL_PENDING', 'RENEWED'];
+
 export async function createAgreement(req: RequestWithTenant, res: Response) {
   if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI' });
 
@@ -60,7 +66,7 @@ export async function createAgreement(req: RequestWithTenant, res: Response) {
 
   // Zaten aktif anlaşma var mı?
   const existing = await prisma.mentorshipAgreement.findFirst({
-    where: { tenantId, mentorId: d.mentorId, mentiId: d.mentiId, status: { in: ['DRAFT', 'ACTIVE', 'RENEWAL_PENDING'] } },
+    where: { tenantId, mentorId: d.mentorId, mentiId: d.mentiId, status: { in: [...LIVE_AGREEMENT_STATUSES] } },
     select: { id: true, status: true },
   });
   if (existing) {
@@ -135,7 +141,7 @@ export async function getActiveAgreement(req: RequestWithTenant, res: Response) 
   const agreement = await prisma.mentorshipAgreement.findFirst({
     where: {
       tenantId,
-      status: { in: ['DRAFT', 'ACTIVE', 'RENEWAL_PENDING'] },
+      status: { in: [...LIVE_AGREEMENT_STATUSES] },
       OR: [{ mentorId: userId }, { mentiId: userId }],
     },
     orderBy: { createdAt: 'desc' },
@@ -165,7 +171,8 @@ export async function renewAgreement(req: RequestWithTenant, res: Response) {
   const newExpiresAt = new Date(Date.now() + agreement.durationWeeks * 7 * 24 * 60 * 60 * 1000);
   const updated = await prisma.mentorshipAgreement.update({
     where: { id: agreementId },
-    data: { status: 'RENEWED', expiresAt: newExpiresAt, renewalAskedAt: null },
+    // Yenilenen anlaşma yeniden ACTIVE: listede kalır, bir sonraki bitişte yenileme tekrar sorulur.
+    data: { status: 'ACTIVE', expiresAt: newExpiresAt, renewalAskedAt: null },
   });
 
   void logger.info('SYSTEM', 'Anlaşma yenilendi', { agreementId, userId });
@@ -182,7 +189,7 @@ export async function endAgreement(req: RequestWithTenant, res: Response) {
     where: { id: agreementId, tenantId: req.tenant.tenantId },
   });
   if (!agreement) return res.status(404).json({ error: 'NOT_FOUND' });
-  if (!['ACTIVE', 'RENEWAL_PENDING'].includes(agreement.status)) {
+  if (!ENDABLE_AGREEMENT_STATUSES.includes(agreement.status)) {
     return res.status(409).json({ error: 'DURUM_HATASI', message: 'Yalnızca aktif anlaşmalar bitirilebilir.' });
   }
   if (agreement.mentorId !== userId && agreement.mentiId !== userId) {
