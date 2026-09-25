@@ -11,6 +11,7 @@ import { ensureMembership } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
+import { sendAlreadyRegisteredEmail } from '../services/emailService.js';
 
 const BCRYPT_ROUNDS = 12;
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
@@ -250,7 +251,7 @@ export async function selfServeRegister(req: Request, res: Response) {
       where: { slug },
       select: { id: true, verificationStatus: true },
     }),
-    prisma.user.findUnique({ where: { email }, select: { id: true } }),
+    prisma.user.findUnique({ where: { email }, select: { id: true, fullName: true } }),
   ]);
 
   if (slugExists && slugExists.verificationStatus !== 'REJECTED') {
@@ -259,18 +260,36 @@ export async function selfServeRegister(req: Request, res: Response) {
       message: 'Bu kurum adresi (slug) zaten kullanılıyor. Farklı bir tane deneyin.',
     });
   }
+  // Kurum adresi (slug) çakışması AÇIK kalır: kurum adresi zaten herkese açık bir bilgidir
+  // (üyeler /join/<slug> linkiyle katılır; check-slug ucu da aynı bilgiyi public verir) → kişi
+  // hakkında bir şey sızdırmaz. E-posta ise kişiye aittir → aşağıda gizlenir.
+
+  // bcrypt, e-posta dalından ÖNCE hesaplanır: kayıtlı e-posta dalı hash'i atlarsa yanıt süresi
+  // belirgin kısalır ve "bu e-posta kayıtlı" bilgisi zamanlamadan okunabilir.
+  const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+  const successMessage = verificationStatus === 'AUTO_APPROVED'
+    ? 'Kurumunuz başarıyla oluşturuldu.'
+    : 'Başvurunuz alındı. Platform ekibimiz en kısa sürede inceleyecektir.';
+
   if (emailExists) {
-    return res.status(409).json({
-      error:   'EMAIL_MEVCUT',
-      message: 'Bu e-posta adresi zaten kayıtlı.',
+    // GV-12 — E-posta numaralandırmasını önle (komşu uç authController.register ile AYNI desen):
+    // kayıtlı e-postaya "zaten kayıtlı" DEMEYİZ; aynı durum kodu + aynı mesaj döner, hesap
+    // sahibine bilgilendirme e-postası gider. Kurum OLUŞTURULMAZ, oturum AÇILMAZ (başkasının
+    // e-postasıyla kurum kurup o hesabın adına yönetici oturumu almak mümkün olmamalı).
+    // Bilinen sınır: gövdede tenant/accessToken yok (null) — komşu uçtaki `user: null` ile aynı
+    // kalıntı; tam ayırt-edilemezlik oturumsuz kayıt (ürün kararı) gerektirir.
+    void sendAlreadyRegisteredEmail({ toEmail: email, userName: emailExists.fullName });
+    return res.status(201).json({
+      message: successMessage,
+      tenant:  null,
+      user:    null,
     });
   }
 
   const combinedNote = (institutionRole || verificationNote)
     ? JSON.stringify({ institutionRole, proof: verificationNote })
     : undefined;
-
-  const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
   // Atomic transaction: tenant + admin kullanıcı + üyelik
   const { tenant, user } = await prisma.$transaction(async (tx) => {
@@ -343,9 +362,7 @@ export async function selfServeRegister(req: Request, res: Response) {
   setRefreshCookie(res, rawRefresh);
 
   return res.status(201).json({
-    message: verificationStatus === 'AUTO_APPROVED'
-      ? 'Kurumunuz başarıyla oluşturuldu.'
-      : 'Başvurunuz alındı. Platform ekibimiz en kısa sürede inceleyecektir.',
+    message: successMessage,
     tenant: {
       id:                 tenant.id,
       name:               tenant.name,
