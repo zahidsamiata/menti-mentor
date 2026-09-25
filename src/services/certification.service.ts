@@ -69,7 +69,7 @@ export class CertTopicError extends Error {
 // (madde 149) + RED_LINE_FAILED ayrı eleme işareti.
 // ⚠️ Yazılı sertifika içeriğinin 88 şıkkı (docs/raporlar/icerik/sertifika-oturum1-3,
 // KARAR-46 bekliyor) bu eşiğe göre yazıldı (1↔2 çizgisi = prensip uygulandı mı);
-// bugünkü seed'de (prisma/seed-certification.ts) 84 şık var. Detay: madde 164/72.
+// bugünkü seed'de (prisma/seed-certification.ts) 80 şık var (20 senaryo × 4). Detay: madde 164/72.
 /**
  * Bir seçeneğin ilk-denemede "geçer" olup olmadığı.
  * `_isRedLine` bugün eşiği ETKİLEMEZ (2026-09-04 kararı kritik ve normal konuda eşiği
