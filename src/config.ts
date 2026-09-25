@@ -17,9 +17,11 @@ if (isProd && process.env.DEFAULT_TENANT_ID) {
 // bilinir). JWT_SECRET her ortamda açıkça verilmeli; yoksa süreç açılmaz (fail-closed).
 // Eski herkese açık değer yalnız YASAK listesi olarak durur: canlıda kullanılırsa yine reddedilir.
 const KNOWN_PUBLIC_DEV_JWT_SECRET = 'dev-secret-change-in-production-min-32-chars!!';
-const jwtSecret = process.env.JWT_SECRET?.trim();
+// Değer olduğu gibi kullanılır (kırpılmaz) — canlıdaki mevcut anahtar birebir aynı kalsın,
+// açık oturumlar düşmesin. Yalnız boş / yalnız-boşluk değer reddedilir.
+const jwtSecret = process.env.JWT_SECRET;
 
-if (!jwtSecret) {
+if (!jwtSecret || !jwtSecret.trim()) {
   throw new Error(
     'JWT_SECRET tanımlı değil. backend/.env dosyasına (bkz. .env.example) ya da ortam değişkenlerine ekleyin.',
   );
