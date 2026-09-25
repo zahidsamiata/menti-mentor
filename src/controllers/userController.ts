@@ -181,6 +181,10 @@ const USER_FULL_SELECT = {
   interactionStyle: true,
   approvalStatus: true,
   mentorVisibilityEnabled: true,
+  // KR-06: profil formu bu uçtan dolduruluyor; iki alan eksik olduğu için form boş açılıyor ve
+  // kayıtta null gönderilerek bağlantılar siliniyordu. Yalnız kendi kaydı / yönetici görür.
+  linkedinUrl: true,
+  instagramUrl: true,
   updatedAt: true,
 } as const;
 
