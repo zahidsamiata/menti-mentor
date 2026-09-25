@@ -101,7 +101,10 @@ export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
     };
   });
 
-  // Başarı oranı: 3. ay NPS ≥ 70 olan eşleşmeler / toplam 3. ay feedback
+  // ⚠️ KR-07: adı "successRate" olsa da bu bir ORAN DEĞİL — 3. ay ortalama NPS'idir (0-10 ölçeği,
+  // yukarıdaki avgNps ile aynı değer). Eski yorum "NPS ≥ 70 olan eşleşmeler / toplam" diyordu; ne
+  // öyle hesaplanıyor ne de 0-10 puanda 70 eşiği anlamlı. Alan adı frontend sözleşmesi
+  // (admin/kpi/page.tsx) olduğundan burada değiştirilmedi; değer davranışı aynen korunuyor.
   const successRate = safeNpsByPhase.find((p) => p.phase === 3)?.avgNps ?? null;
 
   return res.json({

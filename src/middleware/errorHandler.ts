@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { logger } from '../services/logger.js';
+import { maskUrlForLog } from '../services/logUrl.js';
 import type { RequestWithTenant } from '../types.js';
 
 export function notFoundHandler(_req: Request, res: Response) {
@@ -19,7 +20,7 @@ export function globalErrorHandler(
   void logger.error('HTTP', 'Beklenmedik sunucu hatası', {
     message: err instanceof Error ? err.message : String(err),
     stack: err instanceof Error ? err.stack : undefined,
-    url: req.originalUrl,
+    url: maskUrlForLog(req.originalUrl), // GV-14: davet/OAuth/abonelik token'ı günlüğe düşmesin
     method: req.method,
     userId: r.auth?.userId,
     tenantId: r.tenant?.tenantId,

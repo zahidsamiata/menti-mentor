@@ -1,27 +1,12 @@
 import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
-import { extractBearerToken, verifyToken } from '../middleware/jwtAuth.js';
+import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 
-// ─── Ortak Yardımcı: Tenant ADMIN JWT doğrulaması ────────────────────────────
-// selfServeController'daki extractAdminPayload ile aynı pattern.
-
-function extractAdminPayload(req: Request, res: Response) {
-  const token = extractBearerToken(req.header('Authorization'));
-  if (!token) {
-    res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'JWT token gereklidir.' });
-    return null;
-  }
-  const payload = verifyToken(token);
-  if (!payload || payload.role !== 'ADMIN') {
-    res.status(403).json({ error: 'YETKI_YOK', message: 'Bu işlem için yönetici yetkisi gereklidir.' });
-    return null;
-  }
-  return payload;
-}
+// Tenant ADMIN kapısı: authenticateTenantAdmin (middleware/tenantAdminAuth.ts) — GV-11.
 
 // ─── blockedPairs kayıt yapısı ────────────────────────────────────────────────
 
@@ -77,7 +62,7 @@ const UpdateSettingsSchema = z
   );
 
 export async function updateTenantSettings(req: Request, res: Response) {
-  const payload = extractAdminPayload(req, res);
+  const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
 
   const tenantId = req.params['id'] as string;
@@ -134,7 +119,7 @@ const BlockPairSchema = z.object({
 });
 
 export async function blockPair(req: Request, res: Response) {
-  const payload = extractAdminPayload(req, res);
+  const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
 
   const tenantId = req.params['id'] as string;

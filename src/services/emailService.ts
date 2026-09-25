@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { config } from '../config.js';
 import { logger } from './logger.js';
+import { escapeHtml, sanitizeHeaderText } from './htmlEscape.js';
 
 // Generic SMTP relay (Resend/Brevo vb.). service:'gmail' KALDIRILDI: Gmail App
 // Password kırılgan (Google periyodik iptal ediyor) ve gmail.com'dan sunucu gönderimi
@@ -69,6 +70,8 @@ export function isUndeliverableRecipient(to: string): boolean {
  * Çağıranlar bu değere bakarak "gönderildi" yalanı üretmeyebilir ve tek-atımlık
  * hatırlatma bayrağını (reminderEmailSentAt) boşa yakmayabilir. Hata FIRLATMAZ.
  */
+// GV-15: `html` parametresi HAZIR HTML'dir — çağıran, içine koyduğu kullanıcı/kurum
+// kaynaklı her değeri `escapeHtml` (htmlEscape.ts) ile kaçırmakla yükümlüdür.
 export async function send(to: string, subject: string, html: string): Promise<boolean> {
   // Sahte/teslim edilemez alıcıya gönderme — bounce üretmesin (her ortamda).
   // KVKK/log kuralı: e-posta adresi loglanmaz, yalnızca durum yazılır.
@@ -82,7 +85,8 @@ export async function send(to: string, subject: string, html: string): Promise<b
   }
   // Sessiz başarısızlığı önle: SMTP/auth hataları (ör. 535) görünür olmalı.
   try {
-    await transporter.sendMail({ from: config.email.from, to, subject, html });
+    // GV-15: konu düz metindir — satır sonu temizliği (başlık enjeksiyonu savunması).
+    await transporter.sendMail({ from: config.email.from, to, subject: sanitizeHeaderText(subject), html });
     return true;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
@@ -97,12 +101,12 @@ export async function sendMeetingRequestEmail(args: {
   mentiName: string;
   scheduledAt: Date;
 }): Promise<void> {
-  const tarih = args.scheduledAt.toLocaleString('tr-TR');
+  const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   await send(
     args.toEmail,
     'Yeni Toplantı Talebi',
-    `<p>Merhaba ${args.mentorName},</p>
-     <p><strong>${args.mentiName}</strong> sizinle <strong>${tarih}</strong> tarihinde bir toplantı talep etti.</p>
+    `<p>Merhaba ${escapeHtml(args.mentorName)},</p>
+     <p><strong>${escapeHtml(args.mentiName)}</strong> sizinle <strong>${tarih}</strong> tarihinde bir toplantı talep etti.</p>
      <p>Lütfen sisteme giriş yaparak talebi onaylayın veya reddedin.</p>`,
   );
 }
@@ -113,12 +117,12 @@ export async function sendMeetingApprovalEmail(args: {
   mentorName: string;
   scheduledAt: Date;
 }): Promise<void> {
-  const tarih = args.scheduledAt.toLocaleString('tr-TR');
+  const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   await send(
     args.toEmail,
     'Toplantı Talebiniz Onaylandı',
-    `<p>Merhaba ${args.mentiName},</p>
-     <p><strong>${args.mentorName}</strong>, <strong>${tarih}</strong> tarihli toplantı talebinizi onayladı.</p>
+    `<p>Merhaba ${escapeHtml(args.mentiName)},</p>
+     <p><strong>${escapeHtml(args.mentorName)}</strong>, <strong>${tarih}</strong> tarihli toplantı talebinizi onayladı.</p>
      <p>Toplantıya hazırlıklı gelmeyi unutmayın!</p>`,
   );
 }
@@ -133,8 +137,8 @@ export async function sendNewChatMessageEmail(args: {
   await send(
     args.toEmail,
     'Yeni mesajınız var',
-    `<p>Merhaba ${args.recipientName},</p>
-     <p><strong>${args.senderName}</strong> size yeni bir mesaj gönderdi.</p>
+    `<p>Merhaba ${escapeHtml(args.recipientName)},</p>
+     <p><strong>${escapeHtml(args.senderName)}</strong> size yeni bir mesaj gönderdi.</p>
      <p>Mesajı okumak için sisteme giriş yapıp Mesajlar bölümüne gidin.</p>`,
   );
 }
@@ -156,8 +160,8 @@ export async function sendAdminNewUserNotification(args: {
   await send(
     args.toEmail,
     `[${args.tenantName}] Onay Bekleyen Yeni Kayıt`,
-    `<p>Merhaba ${args.adminName},</p>
-     <p><strong>${args.newUserFullName}</strong> adlı yeni bir <strong>${roleLabel(args.newUserRole)}</strong> kaydı sisteme girdi.</p>
+    `<p>Merhaba ${escapeHtml(args.adminName)},</p>
+     <p><strong>${escapeHtml(args.newUserFullName)}</strong> adlı yeni bir <strong>${escapeHtml(roleLabel(args.newUserRole))}</strong> kaydı sisteme girdi.</p>
      <p>Kullanıcı eşleşme havuzuna dahil edilebilmesi için onayınızı bekliyor.</p>
      <p>Lütfen admin panelinizden inceleyip onaylayın veya reddedin.</p>`,
   );
@@ -173,11 +177,11 @@ export async function sendUserApprovalNotification(args: {
   const subject = args.approved ? 'Kaydınız Onaylandı' : 'Başvurunuz Hakkında';
   const reasonBlock =
     !args.approved && args.rejectionReason
-      ? `<p><strong>Güncellenmesi gerekenler:</strong> ${args.rejectionReason}</p>`
+      ? `<p><strong>Güncellenmesi gerekenler:</strong> ${escapeHtml(args.rejectionReason)}</p>`
       : '';
   const body = args.approved
-    ? `<p>Merhaba ${args.userName},</p><p>Kaydınız onaylandı. Artık mentorluk eşleşme havuzuna dahilsiniz. Sisteme giriş yapabilirsiniz.</p>`
-    : `<p>Merhaba ${args.userName},</p>` +
+    ? `<p>Merhaba ${escapeHtml(args.userName)},</p><p>Kaydınız onaylandı. Artık mentorluk eşleşme havuzuna dahilsiniz. Sisteme giriş yapabilirsiniz.</p>`
+    : `<p>Merhaba ${escapeHtml(args.userName)},</p>` +
       `<p>Başvurunuz şu an onaylanmadı. Aşağıdaki notu dikkate alarak <strong>dilerseniz tekrar başvurabilirsiniz</strong> — daha önce doldurduğunuz test ve profil bilgileriniz korunur, baştan yapmanız gerekmez.</p>` +
       reasonBlock +
       `<p>İlginiz için teşekkür ederiz.</p>`;
@@ -189,13 +193,13 @@ export async function sendPasswordResetEmail(args: {
   userName: string;
   rawToken: string;
 }): Promise<void> {
-  const resetUrl = `${process.env.FRONTEND_URL ?? 'http://localhost:3001'}/reset-password?token=${args.rawToken}`;
+  const resetUrl = `${process.env.FRONTEND_URL ?? 'http://localhost:3001'}/reset-password?token=${encodeURIComponent(args.rawToken)}`;
   await send(
     args.toEmail,
     'Şifre Sıfırlama Talebi',
-    `<p>Merhaba ${args.userName},</p>
+    `<p>Merhaba ${escapeHtml(args.userName)},</p>
      <p>Şifrenizi sıfırlamak için aşağıdaki bağlantıya tıklayın:</p>
-     <p><a href="${resetUrl}">${resetUrl}</a></p>
+     <p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>
      <p>Bu bağlantı <strong>60 dakika</strong> geçerlidir.</p>
      <p>Bu talebi siz yapmadıysanız bu e-postayı güvenle yoksayabilirsiniz.</p>`,
   );
@@ -211,8 +215,8 @@ export async function sendAdminTestCompletedNotification(args: {
   await send(
     args.toEmail,
     `[${args.tenantName}] Kullanıcı DISC Testini Tamamladı — Onay Bekliyor`,
-    `<p>Merhaba ${args.adminName},</p>
-     <p><strong>${args.userName}</strong> (${roleLabel(args.userRole)}) DISC karakter analizini tamamladı.</p>
+    `<p>Merhaba ${escapeHtml(args.adminName)},</p>
+     <p><strong>${escapeHtml(args.userName)}</strong> (${escapeHtml(roleLabel(args.userRole))}) DISC karakter analizini tamamladı.</p>
      <p>Kullanıcı eşleşme havuzuna dahil edilebilmesi için onayınızı bekliyor.</p>
      <p>Lütfen admin panelinizden inceleyip onaylayın veya reddedin.</p>`,
   );
@@ -230,25 +234,25 @@ export async function sendAlgorithmAdjustmentProposal(args: {
   newSector: number;  newDisc: number;
 }): Promise<void> {
   const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3001';
-  const approveUrl = `${frontendUrl}/admin/algorithm-tuner?action=approve&tenantId=${args.tenantId}`;
-  const rejectUrl  = `${frontendUrl}/admin/algorithm-tuner?action=reject&tenantId=${args.tenantId}`;
+  const approveUrl = `${frontendUrl}/admin/algorithm-tuner?action=approve&tenantId=${encodeURIComponent(args.tenantId)}`;
+  const rejectUrl  = `${frontendUrl}/admin/algorithm-tuner?action=reject&tenantId=${encodeURIComponent(args.tenantId)}`;
 
   await send(
     args.toEmail,
     `[${args.tenantName}] Algoritma Kalibrasyon Önerisi — Onayınız Bekleniyor`,
-    `<p>Merhaba ${args.adminName},</p>
+    `<p>Merhaba ${escapeHtml(args.adminName)},</p>
      <p>Bu hafta eşleştirme algoritmanız analiz edildi. Aşağıdaki kalibrasyon önerilmektedir:</p>
      <table style="border-collapse:collapse;width:100%">
        <tr><th style="text-align:left;padding:8px;background:#f3f4f6">Kriter</th><th style="padding:8px;background:#f3f4f6">Önceki</th><th style="padding:8px;background:#f3f4f6">Önerilen</th></tr>
-       <tr><td style="padding:8px">Sektör Ağırlığı</td><td style="padding:8px">%${args.prevSector}</td><td style="padding:8px"><strong>%${args.newSector}</strong></td></tr>
-       <tr><td style="padding:8px">Karakter/DISC Ağırlığı</td><td style="padding:8px">%${args.prevDisc}</td><td style="padding:8px"><strong>%${args.newDisc}</strong></td></tr>
+       <tr><td style="padding:8px">Sektör Ağırlığı</td><td style="padding:8px">%${escapeHtml(args.prevSector)}</td><td style="padding:8px"><strong>%${escapeHtml(args.newSector)}</strong></td></tr>
+       <tr><td style="padding:8px">Karakter/DISC Ağırlığı</td><td style="padding:8px">%${escapeHtml(args.prevDisc)}</td><td style="padding:8px"><strong>%${escapeHtml(args.newDisc)}</strong></td></tr>
      </table>
-     <p><strong>Neden bu öneri?</strong><br>${args.reason}</p>
-     <p>NPS Verileri: 1. ay = ${args.phase1Nps ?? 'Yetersiz veri'} | 3. ay = ${args.phase3Nps ?? 'Yetersiz veri'}</p>
+     <p><strong>Neden bu öneri?</strong><br>${escapeHtml(args.reason)}</p>
+     <p>NPS Verileri: 1. ay = ${escapeHtml(args.phase1Nps ?? 'Yetersiz veri')} | 3. ay = ${escapeHtml(args.phase3Nps ?? 'Yetersiz veri')}</p>
      <p>Bu değişiklik küçük (±%5) ve geri alınabilir. Son karar sizindir.</p>
      <p>
-       <a href="${approveUrl}" style="background:#6366f1;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;margin-right:8px">✅ Onayla</a>
-       <a href="${rejectUrl}"  style="background:#ef4444;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px">❌ Reddet</a>
+       <a href="${escapeHtml(approveUrl)}" style="background:#6366f1;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;margin-right:8px">✅ Onayla</a>
+       <a href="${escapeHtml(rejectUrl)}"  style="background:#ef4444;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px">❌ Reddet</a>
      </p>`,
   );
 }
@@ -270,18 +274,18 @@ export async function sendDraftTenantReminderEmail(args: {
   // Tek-domain deploy'da FRONTEND_URL ile aynı; ayrı-domain deploy'da farklı olabilir.
   const backendUrl     = process.env['BACKEND_URL'] ?? process.env['FRONTEND_URL'] ?? 'http://localhost:3000';
   const resumeUrl      = `${frontendUrl}/onboarding/stk`;
-  const unsubscribeUrl = `${backendUrl}/api/tenants/unsubscribe?token=${args.unsubscribeToken}`;
+  const unsubscribeUrl = `${backendUrl}/api/tenants/unsubscribe?token=${encodeURIComponent(args.unsubscribeToken)}`;
 
   return send(
     args.toEmail,
     `${args.tenantName} — Programınızı Tamamlamayı Unutmayın`,
-    `<p>Merhaba ${args.adminName},</p>
-     <p><strong>${args.tenantName}</strong> için kurulum sürecinizi başlattınız ancak henüz tamamlamadınız.</p>
+    `<p>Merhaba ${escapeHtml(args.adminName)},</p>
+     <p><strong>${escapeHtml(args.tenantName)}</strong> için kurulum sürecinizi başlattınız ancak henüz tamamlamadınız.</p>
      <p>Birkaç adım kaldı — programınızı aktive etmek için:</p>
-     <p><a href="${resumeUrl}" style="background:#6366f1;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block">Kuruluma Devam Et →</a></p>
+     <p><a href="${escapeHtml(resumeUrl)}" style="background:#6366f1;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block">Kuruluma Devam Et →</a></p>
      <p style="margin-top:32px;font-size:12px;color:#6b7280">
        Bu e-postayı almak istemiyorsanız
-       <a href="${unsubscribeUrl}" style="color:#6b7280">buraya tıklayarak</a> abonelikten çıkabilirsiniz.
+       <a href="${escapeHtml(unsubscribeUrl)}" style="color:#6b7280">buraya tıklayarak</a> abonelikten çıkabilirsiniz.
      </p>`,
   );
 }
@@ -293,8 +297,8 @@ export async function sendAlreadyRegisteredEmail(args: {
   return send(
     args.toEmail,
     'Hesabınızla İlgili Bilgilendirme',
-    `<p>Merhaba ${args.userName},</p>
-     <p>E-posta adresinizle yeni bir hesap oluşturulmaya çalışıldı. Zaten bir hesabınız bulunmaktadır — giriş yapmak için <a href="${config.frontendBaseUrl}/login">buraya tıklayın</a>.</p>
+    `<p>Merhaba ${escapeHtml(args.userName)},</p>
+     <p>E-posta adresinizle yeni bir hesap oluşturulmaya çalışıldı. Zaten bir hesabınız bulunmaktadır — giriş yapmak için <a href="${escapeHtml(`${config.frontendBaseUrl}/login`)}">buraya tıklayın</a>.</p>
      <p>Eğer bu işlemi siz yapmadıysanız herhangi bir şey yapmanıza gerek yok; hesabınız güvende.</p>`,
   );
 }
@@ -314,13 +318,13 @@ export async function sendNudgeReminderEmail(args: {
   message?: string; // yöneticinin eklediği kısa kişisel not (opsiyonel)
 }): Promise<void> {
   const extra = args.message
-    ? `<p style="padding:12px;border-left:3px solid #ccc;color:#444;">${args.message}</p>`
+    ? `<p style="padding:12px;border-left:3px solid #ccc;color:#444;">${escapeHtml(args.message)}</p>`
     : '';
   await send(
     args.toEmail,
     `${args.tenantName} — seni aramızda görmek isteriz`,
-    `<p>Merhaba ${args.recipientName},</p>
-     <p><strong>${args.tenantName}</strong> mentörlük programında bir süredir seni göremedik.
+    `<p>Merhaba ${escapeHtml(args.recipientName)},</p>
+     <p><strong>${escapeHtml(args.tenantName)}</strong> mentörlük programında bir süredir seni göremedik.
         Kaldığın yerden devam etmek için harika bir zaman!</p>
      ${extra}
      <p>Panele giriş yaparak eşleşmeni ilerletebilir, görüşme planlayabilirsin.</p>`,
@@ -333,11 +337,11 @@ export async function sendFeedbackReminderEmail(args: {
   meetingId: string;
   scheduledAt: Date;
 }): Promise<boolean> {
-  const tarih = args.scheduledAt.toLocaleString('tr-TR');
+  const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   return send(
     args.toEmail,
     'Toplantı Geri Bildiriminizi Bekliyoruz',
-    `<p>Merhaba ${args.recipientName},</p>
+    `<p>Merhaba ${escapeHtml(args.recipientName)},</p>
      <p>${tarih} tarihli toplantı için henüz geri bildirim vermediniz.</p>
      <p>Birkaç dakikanızı ayırarak değerlendirmenizi tamamlamanız, eşleşme kalitesini artırmaktadır.</p>`,
   );
