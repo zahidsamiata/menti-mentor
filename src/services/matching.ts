@@ -5,6 +5,35 @@ import { getAlgorithmWeights } from './algorithmTuner.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
 import { computeProfileCompleteness } from './profile-completeness.service.js';
 import { buildBlockedCounterpartSet } from './blockList.js';
+import { isTenantSuspended, type TenantStatusFields } from '../middleware/tenantSuspension.js';
+
+/** Paylaşımlı havuz kurumu — aday kurum listesi için gereken alanlar (askı durumu dahil). */
+type SharedPoolTenant = { id: string } & TenantStatusFields;
+
+/** Paylaşımlı havuz kurum sorgusunun select'i — iki yön de AYNI alanları okur. */
+const SHARED_POOL_TENANT_SELECT = { id: true, isActive: true, verificationStatus: true } as const;
+
+/**
+ * Aday kurum listesi (iki yön ortak): istek kurumu + istek kurumu paylaşımlı havuzdaysa
+ * havuzdaki DİĞER kurumlar.
+ *
+ * Y1-B9b: askıdaki (dondurulmuş / reddedilmiş) kurum havuzdan düşer — kullanıcıları başka
+ * kurumların önerilerinde görünmez. Askı kuralı tek yerde: `isTenantSuspended`.
+ * İstek kurumunun kendisi listede kalır (askıdaysa isteği zaten requireTenant 4b keser);
+ * yalnız askıdaysa başka kurumların adaylarına da açılmaz.
+ */
+export function buildEligibleTenantIds(
+  requestTenantId: string,
+  sharedPoolTenants: ReadonlyArray<SharedPoolTenant>,
+): string[] {
+  const sharedIds = new Set(
+    sharedPoolTenants.filter((t) => !isTenantSuspended(t)).map((t) => t.id),
+  );
+  return [
+    requestTenantId,
+    ...Array.from(sharedIds).filter((id) => id !== requestTenantId && sharedIds.has(requestTenantId)),
+  ];
+}
 
 export type RankedMenti = {
   mentiId: string;
@@ -129,19 +158,13 @@ export async function rankMentisForMentor(args: {
   // Tüm shared-pool tenant ID'lerini tek sorguda çek; döngü içi N+1 sorgusunu önle.
   const sharedTenants = await prisma.tenant.findMany({
     where: { isSharedPoolActive: true },
-    select: { id: true },
+    select: SHARED_POOL_TENANT_SELECT,
   });
-  const sharedIds = new Set(sharedTenants.map((t) => t.id));
 
-  // Eligibil tenant ID listesi: istek tenant'ı + her ikisi de shared pool'da olan tenant'lar.
-  // mentor.tenantId (home tenant) değil args.mentorTenantId (istek tenant'ı) temel alınır —
-  // cross-tenant membership'e sahip mentor senaryosunda ikisi farklı olabilir.
-  const eligibleTenantIds = [
-    args.mentorTenantId,
-    ...Array.from(sharedIds).filter(
-      (id) => id !== args.mentorTenantId && sharedIds.has(args.mentorTenantId),
-    ),
-  ];
+  // Eligibil tenant ID listesi: istek tenant'ı + her ikisi de shared pool'da olan (askıda
+  // olmayan, Y1-B9b) tenant'lar. mentor.tenantId (home tenant) değil args.mentorTenantId
+  // (istek tenant'ı) temel alınır — cross-tenant membership'e sahip mentor senaryosunda ikisi farklı olabilir.
+  const eligibleTenantIds = buildEligibleTenantIds(args.mentorTenantId, sharedTenants);
 
   // Aday sorgusu: User.role (global) yerine TenantMembership.role (tenant-başına) kontrol eder.
   // tenantId: { in: eligibleTenantIds } korunur — hem Prisma RLS override hem shared-pool genişlemesi için.
@@ -390,20 +413,15 @@ export async function rankMentorsForMenti(args: {
   const [sharedTenants, tenantConfig] = await Promise.all([
     prisma.tenant.findMany({
       where: { isSharedPoolActive: true },
-      select: { id: true },
+      select: SHARED_POOL_TENANT_SELECT,
     }),
     prisma.tenant.findUnique({
       where:  { id: args.mentiTenantId },
       select: { blockedPairs: true },
     }),
   ]);
-  const sharedIds = new Set(sharedTenants.map((t) => t.id));
-  const eligibleTenantIds = [
-    args.mentiTenantId,
-    ...Array.from(sharedIds).filter(
-      (id) => id !== args.mentiTenantId && sharedIds.has(args.mentiTenantId),
-    ),
-  ];
+  // Y1-B9b: askıdaki kurumlar havuzdan düşer (buildEligibleTenantIds).
+  const eligibleTenantIds = buildEligibleTenantIds(args.mentiTenantId, sharedTenants);
 
   // BUG FIX (KR-19): Admin'in idari blok listesi bu yönde de uygulanır — önceden hiç
   // okunmuyordu, engellenen mentör menti'nin listesinde görünmeye devam ediyordu.

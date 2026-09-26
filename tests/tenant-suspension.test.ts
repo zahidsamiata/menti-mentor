@@ -13,6 +13,7 @@ import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createAdminUser, createMentor, createMenti } from './helpers/factories.js';
 import { signToken, PLATFORM_AUDIENCE } from '../src/middleware/jwtAuth.js';
 import { handleOAuthCallback } from '../src/services/oauth/oauthService.js';
+import { rankMentisForMentor, rankMentorsForMenti } from '../src/services/matching.js';
 import type { Tenant, User } from '@prisma/client';
 
 function tokenFor(u: Pick<User, 'id' | 'tenantId' | 'role' | 'fullName'>): string {
@@ -336,5 +337,120 @@ describe('Y1-B9: askıdaki kurumda KVKK md.11 veri hakları kesilmez', () => {
     const wrongMethod = await http.post('/api/me/data-export').set(tenantHeaders(tenant.id, tokenFor(menti))).send({});
     expect(wrongMethod.status).toBe(403);
     expect(wrongMethod.body.error).toBe(SUSPENDED);
+  });
+});
+
+describe('Y1-B9b: askıdaki kurumun kullanıcısı yeniden başvuramaz', () => {
+  let http: TestAgent;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http = agent();
+  });
+
+  const reapply = (email: string, password: string) =>
+    http.post('/api/auth/reapply').send({ email, password });
+
+  const rejectedMentiIn = async (tenantId: string) => {
+    const u = await createMenti(tenantId, { approvalStatus: 'REJECTED' });
+    await testPrisma.user.update({ where: { id: u.id }, data: { isActive: false } });
+    return u;
+  };
+
+  for (const [how, seed] of [
+    ['dondurulmuş', { isActive: false }],
+    ['reddedilmiş', { verificationStatus: 'REJECTED' as const }],
+  ] as const) {
+    it(`${how} kurum: 403 KURUM_KAYDA_KAPALI (kayıt kapısıyla aynı yanıt), başvuru durumu değişmez`, async () => {
+      const tenant = await createTenant();
+      await testPrisma.tenant.update({ where: { id: tenant.id }, data: seed });
+      const u = await rejectedMentiIn(tenant.id);
+
+      const res = await reapply(u.email, u.rawPassword);
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({
+        error: 'KURUM_KAYDA_KAPALI',
+        message: 'Bu kuruma şu an yeni kayıt alınmıyor. Kurum yöneticinizle iletişime geçin.',
+      });
+      const db = await testPrisma.user.findUnique({ where: { id: u.id } });
+      expect(db?.approvalStatus).toBe('REJECTED');
+      expect(db?.isActive).toBe(false);
+    });
+  }
+
+  it('askıdaki kurumda yanlış şifre yine generic 401 (askı bilgisi numaralandırmaya açılmaz)', async () => {
+    const tenant = await createTenant({ verificationStatus: 'REJECTED' });
+    const u = await rejectedMentiIn(tenant.id);
+    const res = await reapply(u.email, 'Yanlis1234!');
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('KIMLIK_DOGRULANMADI');
+  });
+
+  it('aktif kurumda yeniden başvuru etkilenmez (200 → PENDING)', async () => {
+    const tenant = await createTenant();
+    const u = await rejectedMentiIn(tenant.id);
+    const res = await reapply(u.email, u.rawPassword);
+    expect(res.status).toBe(200);
+    expect(res.body.approvalStatus).toBe('PENDING');
+  });
+});
+
+describe('Y1-B9b: askıdaki kurumun kullanıcıları paylaşımlı havuz önerilerinde görünmez', () => {
+  let a: Tenant;
+  let b: Tenant;
+
+  beforeEach(async () => {
+    await cleanDb();
+    a = await createTenant({ isSharedPoolActive: true });
+    b = await createTenant({ isSharedPoolActive: true });
+    // Kurum barajı eşleşmeyi düşürmesin — konu yalnız aday kurum listesi
+    await testPrisma.tenant.updateMany({ where: { id: { in: [a.id, b.id] } }, data: { minMatchScoreThreshold: 0 } });
+  });
+
+  const mentorIdsFor = async (menti: User) =>
+    (await rankMentorsForMenti({ mentiId: menti.id, mentiTenantId: menti.tenantId })).items.map((m) => m.mentorId);
+  const mentiIdsFor = async (mentor: User) =>
+    (await rankMentisForMentor({ mentorId: mentor.id, mentorTenantId: mentor.tenantId })).items.map((m) => m.mentiId);
+
+  it('ön koşul: iki aktif havuz kurumu birbirinin adaylarını görür', async () => {
+    const mentorB = await createMentor(b.id);
+    const mentiA = await createMenti(a.id);
+    const mentiB = await createMenti(b.id);
+    const mentorA = await createMentor(a.id);
+    expect(await mentorIdsFor(mentiA)).toContain(mentorB.id);
+    expect(await mentiIdsFor(mentorA)).toContain(mentiB.id);
+  });
+
+  for (const [how, seed] of [
+    ['dondurulmuş', { isActive: false }],
+    ['reddedilmiş', { verificationStatus: 'REJECTED' as const }],
+  ] as const) {
+    it(`${how} kurumun mentörü/mentisi başka kurumun önerisinde yok; aktif kurumun kendi adayları kalır`, async () => {
+      const mentorA = await createMentor(a.id);
+      const mentiA = await createMenti(a.id);
+      const mentorB = await createMentor(b.id);
+      const mentiB = await createMenti(b.id);
+      await testPrisma.tenant.update({ where: { id: b.id }, data: seed });
+
+      const forMentiA = await mentorIdsFor(mentiA);
+      expect(forMentiA).not.toContain(mentorB.id);
+      expect(forMentiA).toContain(mentorA.id);
+
+      const forMentorA = await mentiIdsFor(mentorA);
+      expect(forMentorA).not.toContain(mentiB.id);
+      expect(forMentorA).toContain(mentiA.id);
+    });
+  }
+
+  it('aktif havuz kurumları etkilenmez: üçüncü kurum askıdayken A ve B birbirini görür', async () => {
+    const c = await createTenant({ isSharedPoolActive: true });
+    const mentorB = await createMentor(b.id);
+    const mentorC = await createMentor(c.id);
+    const mentiA = await createMenti(a.id);
+    await testPrisma.tenant.update({ where: { id: c.id }, data: { isActive: false } });
+
+    const ids = await mentorIdsFor(mentiA);
+    expect(ids).toContain(mentorB.id);
+    expect(ids).not.toContain(mentorC.id);
   });
 });

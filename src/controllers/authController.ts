@@ -431,6 +431,7 @@ export async function login(req: Request, res: Response) {
  *  - Kimlik doğrulama e-posta+ŞİFRE ile (enumeration-safe: yanlış şifre → generic 401).
  *  - IDOR: yalnızca kimliği doğrulanan KENDİ hesabını etkiler (param yok, token yok).
  *  - Yalnızca REJECTED → PENDING geçişine izin verir; başka durum → 409.
+ *  - Kurum askıdaysa (Y1-B9b) → 403 KURUM_KAYDA_KAPALI (kayıt kapısıyla aynı; şifre doğrulamasından sonra).
  *  - Geçmiş KORUNUR: rejectionReason/rejectedBy/rejectedAt SİLİNMEZ (çok-yönetici: yeni bakan
  *    yönetici en son red gerekçesini görebilmeli). Test/DISC/profil verisine DOKUNULMAZ.
  */
@@ -441,7 +442,10 @@ export async function reapply(req: Request, res: Response) {
 
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, password: true, authProvider: true, approvalStatus: true, fullName: true },
+    select: {
+      id: true, password: true, authProvider: true, approvalStatus: true, fullName: true,
+      tenant: { select: { isActive: true, verificationStatus: true } },
+    },
   });
 
   // Enumeration koruması: kullanıcı yok / OAuth / şifre yanlış → hepsi aynı generic 401.
@@ -451,6 +455,12 @@ export async function reapply(req: Request, res: Response) {
   const passwordMatch = await bcrypt.compare(password, user.password);
   if (!passwordMatch) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
+  }
+
+  // Y1-B9b: askıdaki (dondurulmuş / reddedilmiş) kuruma yeniden başvuru = yeni üye kaydı → kayıttaki
+  // KURUM_KAYDA_KAPALI kapısıyla AYNI yanıt. Şifre doğrulandıktan SONRA → e-posta numaralandırması açılmaz.
+  if (isTenantSuspended(user.tenant)) {
+    return res.status(403).json(TENANT_CLOSED_FOR_SIGNUP_BODY);
   }
 
   // Yalnızca reddedilmiş başvuru tekrar gönderilebilir (şifre doğrulandı → durum açıklanabilir).
