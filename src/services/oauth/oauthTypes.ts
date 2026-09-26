@@ -67,10 +67,24 @@ export interface OAuthStatePayload {
   inviteToken?: string;
 }
 
-/** oauthService.handleOAuthCallback'in dönüş tipi. */
-export interface OAuthCallbackResult {
-  accessToken: string;
-  refreshToken: string;
-  /** Yeni kullanıcıysa true — frontend "onay bekleniyor" ekranını gösterir. */
-  isNewUser: boolean;
-}
+/**
+ * oauthService.handleOAuthCallback'in dönüş tipi.
+ *
+ * AN-30 / KARAR-34 (OAuth ayağı, 2026-09-26): granüler rıza flag'i (`config.oauth
+ * .granularConsentEnabled`) AÇIKKEN yeni kullanıcı için kullanıcı HENÜZ oluşturulmamıştır —
+ * bunun yerine `pendingConsent: true` + kısa ömürlü `pendingToken` döner (bkz.
+ * oauthPendingRegistration.ts). Flag KAPALIYKEN (varsayılan) ilk üye her zaman döner —
+ * davranış eskisiyle BİREBİR aynı kalır.
+ */
+export type OAuthCallbackResult =
+  | {
+      accessToken: string;
+      refreshToken: string;
+      /** Yeni kullanıcıysa true — frontend "onay bekleniyor" ekranını gösterir. */
+      isNewUser: boolean;
+    }
+  | {
+      pendingConsent: true;
+      /** `POST /api/auth/oauth/complete-registration` ucuna geri gönderilecek imzalı token. */
+      pendingToken: string;
+    };

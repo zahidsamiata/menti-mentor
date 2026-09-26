@@ -30,7 +30,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
 import { deleteLocalAvatar } from './avatarStorage.js';
-import { revokeConsent } from './consentService.js';
+import { revokeAllActiveUserConsents } from './consentService.js';
 
 const JsonNull = Prisma.JsonNull;
 
@@ -191,11 +191,14 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
       data: { mentiGoal: ANON_AGREEMENT_GOAL },
     });
 
-    // ── KVKK açık rızasını geri çek (G1-05). Hesap kapanınca ACIK_RIZA geçerliliğini
-    // yitirir; aktif satıra revokedAt=now() yazılır — YENİ SATIR AÇILMAZ, geçmiş SİLİNMEZ
+    // ── KVKK rızalarını geri çek (G1-05). Hesap kapanınca rızalar geçerliliğini yitirir;
+    // aktif satırlara revokedAt=now() yazılır — YENİ SATIR AÇILMAZ, geçmiş SİLİNMEZ
     // (denetim izi korunur, bkz. consentService). AYDINLATMA bir onay değil bilgilendirme
     // beyanıdır → geri çekilmez. Aktif rıza yoksa (eski/backfill'siz kullanıcı) no-op.
-    await revokeConsent({ userId }, 'ACIK_RIZA', tx);
+    // ⚠️ GÜNCELLEME (2026-09-26, AN-30 7b): eskiden yalnız ACIK_RIZA geri çekiliyordu; granüler
+    // rıza tipleri (DISC_ESLESTIRME, VERI_ISLEME, OCEAN_PROFIL, …) aktif kalıyordu → artık
+    // AYDINLATMA dışındaki TÜM aktif rızalar geri çekilir.
+    await revokeAllActiveUserConsents(userId, tx);
   });
 
   // Transaction commit oldu → fiziksel avatar dosyasını best-effort sil (madde 93).

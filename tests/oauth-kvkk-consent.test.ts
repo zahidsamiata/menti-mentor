@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { handleOAuthCallback } from '../src/services/oauth/oauthService.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant } from './helpers/factories.js';
+import { expectTokenResult } from './helpers/oauth.js';
 import type { Tenant } from '@prisma/client';
 
 describe('OAuth — yeni kullanıcıda kvkkConsentAt set edilir (K2)', () => {
@@ -24,9 +25,11 @@ describe('OAuth — yeni kullanıcıda kvkkConsentAt set edilir (K2)', () => {
   it('OAuth ile oluşturulan yeni kullanıcının kvkkConsentAt değeri NULL değildir', async () => {
     const email = `oauth-yeni-${Date.now()}@test.local`;
 
-    const result = await handleOAuthCallback(
-      { providerUserId: 'g-123', email, fullName: 'OAuth Test', provider: 'GOOGLE' },
-      { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'test-nonce' },
+    const result = expectTokenResult(
+      await handleOAuthCallback(
+        { providerUserId: 'g-123', email, fullName: 'OAuth Test', provider: 'GOOGLE' },
+        { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'test-nonce' },
+      ),
     );
     expect(result.isNewUser).toBe(true);
 

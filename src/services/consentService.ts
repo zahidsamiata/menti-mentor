@@ -56,8 +56,33 @@ function normalizeSubject(subject: ConsentSubject): { userId: string | null; ten
 /**
  * Kayıt akışında yazılan rıza tipleri. Tek onay kutusu (G1-01) HER İKİ tipi de kapsar
  * (KVKK Aydınlatma Metni linki gösterilir + açık rıza verilir); ayrı kutular G1-08 işi.
+ *
+ * ⚠️ GERİYE DÖNÜK UYUMLULUK (AN-30, 2026-09-26): granüler rıza (aşağıda) FLAG'lı olarak
+ * eklendi; bu sabit ve `recordSignupConsent` SİLİNMEDİ — eski istemciler (flag kapalıyken
+ * FE, doğrudan API çağıran entegrasyonlar) hâlâ bunu kullanır. Davranış BİREBİR aynı kaldı.
  */
 export const SIGNUP_CONSENT_TYPES: ConsentType[] = ['AYDINLATMA', 'ACIK_RIZA'];
+
+/**
+ * AN-30 / KARAR-34 — kayıt ekranında ZORUNLU rıza grubu (hepsi onaylanmadan kayıt olmaz).
+ * KARAR-34 SORU 1: DISC eşleştirme · yurt dışı saklama · veri işleme · anonim iyileştirme.
+ * `AYDINLATMA`/`ACIK_RIZA` eski tek-kutu davranışıyla aynı anlamı taşıdığı için bu grupta
+ * kalmaya devam eder (granüler ekranda da gösterilir, yalnız birleşik metin yerine ayrı).
+ */
+export const MANDATORY_SIGNUP_CONSENT_TYPES: ConsentType[] = [
+  'AYDINLATMA',
+  'ACIK_RIZA',
+  'DISC_ESLESTIRME',
+  'YURT_DISI_SAKLAMA',
+  'VERI_ISLEME',
+  'ANONIM_IYILESTIRME',
+];
+
+/**
+ * AN-30 / KARAR-34 — kayıt ekranında İSTEĞE BAĞLI rıza grubu. Onaylanmazsa kayıt yine de
+ * tamamlanır; ilgili tip için SATIR YAZILMAZ (rıza verilmemiş = kayıt yok, doğru KVKK davranışı).
+ */
+export const OPTIONAL_SIGNUP_CONSENT_TYPES: ConsentType[] = ['KURUMLARARASI_PAYLASIM', 'OCEAN_PROFIL'];
 
 /**
  * Kayıt akışı için AYDINLATMA + ACIK_RIZA'yı tek seferde yazar (dual-write yardımcısı).
@@ -69,6 +94,24 @@ export async function recordSignupConsent(
   opts: { db?: Db; grantedAt?: Date; version?: string } = {},
 ): Promise<void> {
   await recordConsentBatch(subject, SIGNUP_CONSENT_TYPES, { source, ...opts });
+}
+
+/**
+ * AN-30 / KARAR-34 — kayıt ekranında AYRI AYRI onay kutularıyla toplanan rızayı yazar.
+ *
+ * `granted.mandatory` çağıran tarafından (Zod `z.literal(true)` ile) ZATEN doğrulanmış olmalı;
+ * burada yeniden kontrol edilmez — yalnız MANDATORY_SIGNUP_CONSENT_TYPES'ın tamamı yazılır.
+ * İsteğe bağlı tipler yalnız `true` ise yazılır; `false`/`undefined` için SATIR AÇILMAZ.
+ */
+export async function recordGranularSignupConsent(
+  subject: ConsentSubject,
+  granted: { mandatory: true; crossTenantSharing?: boolean; oceanProfiling?: boolean },
+  opts: { source: ConsentSource; db?: Db; grantedAt?: Date; version?: string },
+): Promise<void> {
+  const types: ConsentType[] = [...MANDATORY_SIGNUP_CONSENT_TYPES];
+  if (granted.crossTenantSharing) types.push('KURUMLARARASI_PAYLASIM');
+  if (granted.oceanProfiling) types.push('OCEAN_PROFIL');
+  await recordConsentBatch(subject, types, opts);
 }
 
 /** Tek tip rıza kaydı oluşturur (yeni satır — sürüm geçmişi korunur). */
@@ -144,6 +187,34 @@ export async function revokeConsent(
   }
   await db.consent.update({ where: { id: active.id }, data: { revokedAt: new Date() } });
   return { revoked: true };
+}
+
+/**
+ * Hiçbir koşulda geri çekilmeyen tipler: AYDINLATMA bir onay değil bilgilendirme beyanıdır
+ * (kullanıcıya aydınlatma metninin sunulduğunun kaydı) — geri çekilecek bir irade yoktur.
+ */
+export const NON_REVOCABLE_CONSENT_TYPES: ConsentType[] = ['AYDINLATMA'];
+
+/**
+ * AN-30 (7b inceleme düzeltmesi, 2026-09-26): kullanıcının AKTİF tüm rızalarını tek seferde
+ * geri çeker (hesap kapatma / anonimleştirme). Eskiden yalnız ACIK_RIZA geri çekiliyordu;
+ * granüler rıza ekranı (AN-30) 6 yeni tip yazınca (DISC_ESLESTIRME, VERI_ISLEME, …) bunlar
+ * anonimleştirilmiş hesapta AKTİF kalıyordu. Tip listesi elle tutulmaz — yeni bir tip eklense
+ * de otomatik kapsanır. `revokeConsent` ile aynı ilke: satır SİLİNMEZ, yeni satır AÇILMAZ,
+ * yalnız aktif satırlara `revokedAt=now()` yazılır; aktif satır yoksa no-op (idempotent).
+ */
+export async function revokeAllActiveUserConsents(userId: string, db: Db = prisma): Promise<{ count: number }> {
+  const subject = normalizeSubject({ userId });
+  const result = await db.consent.updateMany({
+    where: {
+      userId: subject.userId,
+      tenantId: subject.tenantId,
+      revokedAt: null,
+      type: { notIn: NON_REVOCABLE_CONSENT_TYPES },
+    },
+    data: { revokedAt: new Date() },
+  });
+  return { count: result.count };
 }
 
 /**

@@ -20,6 +20,7 @@ import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser, createUserProfile, createMentor, createMenti } from './helpers/factories.js';
 import { agent, loginAs, tenantHeaders } from './helpers/request.js';
 import { anonymizeUser, hardDeleteUser } from '../src/services/gdprService.js';
+import { recordGranularSignupConsent } from '../src/services/consentService.js';
 
 describe('anonymizeUser → User PII alanları temizlenir', () => {
   let userId: string;
@@ -305,5 +306,36 @@ describe('hardDeleteUser → anonimleştirmeye yönlendirir (madde 39)', () => {
     expect(u!.isActive).toBe(false);
     expect(u!.email).toContain('@anon.invalid');
     expect(u!.fullName).toBe('[Silinmiş Kullanıcı]');
+  });
+});
+
+describe('anonymizeUser → granüler rızalar da geri çekilir (AN-30 7b)', () => {
+  it('AYDINLATMA dışındaki TÜM aktif rızalar (6 yeni tip dahil) revokedAt alır; satır silinmez', async () => {
+    await cleanDb();
+    const tenant = await createTenant();
+    const user = await createUser({ tenantId: tenant.id, role: 'MENTI' });
+    await recordGranularSignupConsent(
+      { userId: user.id },
+      { mandatory: true, crossTenantSharing: true, oceanProfiling: true },
+      { source: 'FORM' },
+    );
+
+    await anonymizeUser(user.id, tenant.id);
+
+    const rows = await testPrisma.consent.findMany({ where: { userId: user.id } });
+    expect(rows).toHaveLength(8); // satır silinmez, yeni satır açılmaz
+    const active = rows.filter((r) => r.revokedAt === null).map((r) => r.type);
+    expect(active).toEqual(['AYDINLATMA']);
+    for (const type of [
+      'ACIK_RIZA',
+      'DISC_ESLESTIRME',
+      'YURT_DISI_SAKLAMA',
+      'VERI_ISLEME',
+      'ANONIM_IYILESTIRME',
+      'KURUMLARARASI_PAYLASIM',
+      'OCEAN_PROFIL',
+    ] as const) {
+      expect(rows.find((r) => r.type === type)!.revokedAt).not.toBeNull();
+    }
   });
 });

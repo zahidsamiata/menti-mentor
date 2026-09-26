@@ -10,6 +10,7 @@ import {
   resetPassword,
   oauthRedirect,
   oauthCallback,
+  completeOAuthRegistration,
   getMe,
   reapply,
   reconsent,
@@ -49,6 +50,19 @@ router.post('/reconsent', requireTenant as unknown as RequestHandler, reconsent 
 // POST /api/auth/reapply — reddedilen kullanıcı tekrar başvurur (İş 3 P3).
 // loginRateLimiter: şifre doğrulaması içerdiğinden IP-bazlı brute-force koruması.
 router.post('/reapply', loginRateLimiter, reapply as unknown as RequestHandler);
+
+// POST /api/auth/oauth/complete-registration — AN-30 / KARAR-34 (OAuth ayağı): granüler rıza
+// ekranından sonra bekleyen OAuth kaydını tamamlar (yalnız GRANULAR_CONSENT_ENABLED açıkken
+// üretilen pendingToken ile çağrılabilir). registerRateLimiter: register ile aynı aile/seviye
+// IP-bazlı koruma — bu da bir kayıt tamamlama ucu.
+// ⚠️ SIRA: aşağıdaki `/:provider` catch-all'dan ÖNCE olması ZORUNLU DEĞİL (farklı segment sayısı
+// ve farklı HTTP metodu — GET catch-all bu POST isteğini asla yakalamaz) ama okunurluk için
+// OAuth ailesinin başında tutulur.
+router.post(
+  '/oauth/complete-registration',
+  registerRateLimiter,
+  completeOAuthRegistration as unknown as RequestHandler,
+);
 
 /**
  * OAuth akış route'ları — dinamik :provider parametresi ile iki provider'ı tek handler'da yönetir.

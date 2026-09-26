@@ -185,5 +185,14 @@ export const config = {
     },
     /** Başarılı veya başarısız OAuth sonrasında frontend'e yönlendirme adresi. */
     frontendCallbackUrl: process.env.FRONTEND_OAUTH_CALLBACK_URL ?? 'http://localhost:3001/oauth/callback',
+    /**
+     * AN-30 / KARAR-34 (OAuth ayağı) — açıkken yeni OAuth kaydı kullanıcıyı ANINDA oluşturmaz;
+     * bunun yerine kısa ömürlü "bekleyen kayıt" token'ı üretip frontend'e granüler rıza ekranını
+     * gösterir (bkz. oauthPendingRegistration.ts). Register (form) ucundaki `granularConsent`
+     * alanı FE'nin gönderip göndermediğine göre çalışır; OAuth'ta karar server-side redirect
+     * anında verilmesi gerektiği için ayrı bir backend flag'i şart. Varsayılan KAPALI (false) —
+     * kapalıyken `handleNewUser` davranışı BİREBİR eskisi gibi kalır (implicit rıza + anında kayıt).
+     */
+    granularConsentEnabled: process.env.GRANULAR_CONSENT_ENABLED === 'true',
   },
 };
