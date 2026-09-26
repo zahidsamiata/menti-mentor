@@ -6,6 +6,7 @@ import { logger } from '../services/logger.js';
 import { getCachedTenant } from '../services/tenantCache.js';
 import { runWithTenant } from '../db.js';
 import { ACCOUNT_INACTIVE_BODY, resolveMembershipAccess } from './membershipAccess.js';
+import { isTenantSuspended, TENANT_SUSPENDED_BODY } from './tenantSuspension.js';
 
 /**
  * Çok-tenant izolasyon middleware'i — Sıfır Sızıntı Güvenlik Duvarı.
@@ -16,13 +17,39 @@ import { ACCOUNT_INACTIVE_BODY, resolveMembershipAccess } from './membershipAcce
  *  3. JWT tenant'ı ile istek tenant'ı eşleşiyor mu denetle (cross-tenant saldırı önlemi).
  *  4. Kullanıcının TenantMembership.isActive olduğunu doğrula (sıfır-sızıntı kapısı);
  *     hesap pasif/reddedilmişse 401. Kurum-içi rol JWT'den DEĞİL üyelikten okunur (GV-10).
+ *  4b. Kurum askıdaysa (platform dondurdu / başvuru reddedildi) oturumlu üyeye 403 KURUM_ASKIDA
+ *     (Y1-B9; kural `tenantSuspension.ts`). Üyelik kontrolünden SONRA: kurumun üyesi olmayana
+ *     kurum durumu sızmaz. Anonim istek etkilenmez (kurum uçları zaten oturum ister).
  *  5. Tüm downstream async zincirini runWithTenant ile RLS bağlamına al.
  *     Bu sayede Prisma extension tüm okuma sorgularına tenantId filtresi enjekte eder.
  */
-export async function requireTenant(
+export function requireTenant(
   req: RequestWithTenant,
   res: Response,
   next: NextFunction,
+): Promise<void> {
+  return runTenantGate(req, res, next, { allowSuspendedTenant: false });
+}
+
+/**
+ * `requireTenant` ile aynı kapı; YALNIZ askıdaki kurum kontrolünü (adım 4b) atlar.
+ * Yalnız oturum/durum okuyan uçlar içindir (`GET /api/auth/me`): reddedilen kurumun yöneticisi
+ * bekleme ekranında ret bilgisini, askıdaki kurumun üyesi askı bilgisini buradan görür.
+ * Veri yazan ya da kurum verisi dönen uçta KULLANILMAZ.
+ */
+export function requireTenantAllowSuspended(
+  req: RequestWithTenant,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  return runTenantGate(req, res, next, { allowSuspendedTenant: true });
+}
+
+async function runTenantGate(
+  req: RequestWithTenant,
+  res: Response,
+  next: NextFunction,
+  options: { allowSuspendedTenant: boolean },
 ): Promise<void> {
   // ── 1. Tenant kimliği ───────────────────────────────────────────────────────
   const headerTenantId = req.header('X-Tenant-Id')?.trim();
@@ -100,6 +127,14 @@ export async function requireTenant(
       error:   'UYELIK_BULUNAMADI',
       message: 'Bu kurum için aktif üyeliğiniz bulunmuyor.',
     });
+    return;
+  }
+
+  // ── 4b. Kurum askı kapısı (Y1-B9) ──────────────────────────────────────────
+  // Loglanmaz: askı platformun bilinçli işlemidir (denetim izi FREEZE/REJECT kaydında) ve askıdaki
+  // kurumun açık sekmeleri her istekte SystemLog satırı yazardı.
+  if (!options.allowSuspendedTenant && isTenantSuspended(tenant)) {
+    res.status(403).json(TENANT_SUSPENDED_BODY);
     return;
   }
 

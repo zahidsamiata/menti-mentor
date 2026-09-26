@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import { logger } from '../services/logger.js';
 import { extractBearerToken, verifyToken, type JwtPayload } from './jwtAuth.js';
 import { ACCOUNT_INACTIVE_BODY, resolveMembershipAccess } from './membershipAccess.js';
+import { isTenantSuspended, TENANT_SUSPENDED_BODY } from './tenantSuspension.js';
+import { getCachedTenant } from '../services/tenantCache.js';
 
 /**
  * X-Tenant-Id header'ı KULLANMAYAN kurum-yöneticisi uçları için kimlik + yetki kapısı
@@ -16,7 +18,8 @@ import { ACCOUNT_INACTIVE_BODY, resolveMembershipAccess } from './membershipAcce
  *  - kurum-içi rol/erişim kaynağı `TenantMembership` (userId + tokenın tenantId'si) — `User.role` değil;
  *  - üyelik aktif DEĞİLSE veya üyelik rolü ADMIN DEĞİLSE 403;
  *  - hesap pasif / reddedilmişse 401 (GV-10; kural `membershipAccess.ts`'te, iki kapı ortak kullanır);
- *  - platform token'ı (aud:'platform') tenant yönetici ucunda geçmez (domain ayrımı, platformAuth ile simetrik).
+ *  - platform token'ı (aud:'platform') tenant yönetici ucunda geçmez (domain ayrımı, platformAuth ile simetrik);
+ *  - kurum askıdaysa (platform dondurdu / başvuru reddedildi) 403 KURUM_ASKIDA (Y1-B9, requireTenant 4b ile aynı).
  *
  * Kurum eşleşmesi (URL `:id` = token tenantId) çağıran controller'da kalır; hata mesajı uca özeldir.
  */
@@ -56,6 +59,12 @@ export async function authenticateTenantAdmin(
       error:   'UYELIK_BULUNAMADI',
       message: 'Bu kurum için aktif yönetici üyeliğiniz bulunmuyor.',
     });
+    return null;
+  }
+
+  const tenant = await getCachedTenant(payload.tenantId);
+  if (!tenant || isTenantSuspended(tenant)) {
+    res.status(403).json(TENANT_SUSPENDED_BODY);
     return null;
   }
 

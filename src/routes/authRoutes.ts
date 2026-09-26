@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from 'express';
-import { requireTenant } from '../middleware/tenant.js';
+import { requireTenant, requireTenantAllowSuspended } from '../middleware/tenant.js';
 import { loginRateLimiter, passwordChangeRateLimiter, passwordResetRateLimiter, registerRateLimiter } from '../middleware/rateLimiter.js';
 import {
   register,
@@ -40,8 +40,10 @@ router.post('/forgot-password', passwordResetRateLimiter, forgotPassword as unkn
 // passwordResetRateLimiter: IP-bazlı — token brute-force koruması.
 router.post('/reset-password', passwordResetRateLimiter, resetPassword as unknown as RequestHandler);
 
-// GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir)
-router.get('/me', requireTenant as unknown as RequestHandler, getMe as unknown as RequestHandler);
+// GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir).
+// Y1-B9: askıdaki kurumda da açık — reddedilen kurumun yöneticisi bekleme ekranında ret bilgisini,
+// askıdaki kurumun üyesi askı durumunu (`tenant.isSuspended`) buradan okur. Diğer kurum uçları 403.
+router.get('/me', requireTenantAllowSuspended as unknown as RequestHandler, getMe as unknown as RequestHandler);
 
 // POST /api/auth/reconsent — GV-18: rıza metni sürümü güncellenince kullanıcı yeniden onaylar.
 // Kimlik oturumdan (req.auth) alınır, gövdeden DEĞİL — komşu uç `getMe` ile aynı desen.

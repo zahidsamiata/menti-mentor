@@ -20,6 +20,7 @@ import { hashRefreshToken, refreshTokenLookupKeys, refreshTokenWhere } from '../
 import { verifyInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
+import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
 import { passwordSchema } from '../services/passwordPolicy.js';
 
 
@@ -149,10 +150,16 @@ export async function register(req: Request, res: Response) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
-    select: { id: true, name: true, displayName: true, verificationStatus: true },
+    select: { id: true, name: true, displayName: true, verificationStatus: true, isActive: true },
   });
   if (!tenant) {
     return res.status(400).json({ error: 'TENANT_BULUNAMADI', message: REGISTER_MESSAGES.TENANT_NOT_FOUND });
+  }
+
+  // Y1-B9: dondurulmuş / reddedilmiş kuruma yeni üye alınmaz (komşu kapı TENANT_ONAY_BEKLENIYOR ile
+  // aynı düzey: e-posta kontrolünden ÖNCE → e-posta numaralandırması açılmaz).
+  if (isTenantSuspended(tenant)) {
+    return res.status(403).json(TENANT_CLOSED_FOR_SIGNUP_BODY);
   }
 
   if (tenant.verificationStatus === 'PENDING_REVIEW') {
@@ -861,7 +868,7 @@ export async function getMe(req: RequestWithTenant, res: Response) {
     where: { id: req.tenant.tenantId },
     select: {
       id: true, name: true, displayName: true, slug: true, logoUrl: true, primaryColor: true,
-      verificationStatus: true, correctionNote: true,
+      verificationStatus: true, correctionNote: true, isActive: true,
     },
   });
 
@@ -882,6 +889,8 @@ export async function getMe(req: RequestWithTenant, res: Response) {
           logoUrl: tenant.logoUrl,
           primaryColor: tenant.primaryColor,
           verificationStatus: tenant.verificationStatus,
+          // Y1-B9: kurum askıda mı (dondurma/ret) — istemci askı bilgisini gösterebilsin.
+          isSuspended: isTenantSuspended(tenant),
           correctionNote: user.role === 'ADMIN' ? (tenant.correctionNote ?? null) : null,
         }
       : null,

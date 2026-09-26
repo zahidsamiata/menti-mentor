@@ -12,6 +12,7 @@ import { maskName, maskContact, maskEmail } from '../services/mask.js';
 import { parsePagination, REPORT_PAGE } from '../services/pagination.js';
 import { verifyTransporter, getSmtpStatus } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
+import { invalidateTenant } from '../services/tenantCache.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -302,6 +303,7 @@ export async function approveTenant(req: Request, res: Response) {
     data: { verificationStatus: 'APPROVED', verifiedAt: new Date() },
   });
 
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('APPROVE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
 
   // FAZ 3 (#37): onay bildirimi — gönderim bayrak arkasında KAPALI (TENANT_NOTIFICATIONS_ENABLED).
@@ -329,6 +331,7 @@ export async function rejectTenant(req: Request, res: Response) {
     },
   });
 
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('REJECT_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
 
   // FAZ 3 (#37): red bildirimi (destekleyici dil) — gönderim bayrak arkasında KAPALI.
@@ -373,6 +376,7 @@ export async function requestTenantCorrection(req: Request, res: Response) {
     },
   });
 
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('REQUEST_TENANT_CORRECTION', req, { targetType: 'TENANT', targetTenantId: tenant.id });
 
   // FAZ 3: bildirim altyapısı — gönderim bayrak arkasında (TENANT_NOTIFICATIONS_ENABLED, varsayılan kapalı).
@@ -387,6 +391,7 @@ export async function freezeTenant(req: Request, res: Response) {
   if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
 
   await prisma.tenant.update({ where: { id: tenant.id }, data: { isActive: false } });
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('FREEZE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
@@ -397,6 +402,7 @@ export async function activateTenant(req: Request, res: Response) {
   if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
 
   await prisma.tenant.update({ where: { id: tenant.id }, data: { isActive: true } });
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('ACTIVATE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
