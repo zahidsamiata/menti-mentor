@@ -511,6 +511,18 @@ export async function refresh(req: Request, res: Response) {
     return res.status(401).json({ error: 'HESAP_PASIF', message: 'Hesabınız aktif değil.' });
   }
 
+  // Y1-B8 savunma derinliği: onay bekleyen / reddedilen hesap oturum YENİLEYEMEZ. Giriş bu hesaplara
+  // zaten token vermez; bu kontrol düzeltmeden önce OAuth ile alınmış eski refresh token'ları söndürür
+  // (aksi hâlde her yenilemede yeni 7 günlük token üretilirdi). Kayıt silinir → tekrar denenemez.
+  if (stored.user.approvalStatus !== 'APPROVED') {
+    await prisma.refreshToken.delete({ where: { id: stored.id } });
+    clearRefreshCookie(res);
+    return res.status(401).json({
+      error: 'REFRESH_TOKEN_GECERSIZ',
+      message: 'Oturum süresi doldu. Lütfen tekrar giriş yapın.',
+    });
+  }
+
   // Token rotasyonu: eski token silinir, yeni token verilir (replay attack önlemi).
   // Eski kayıt açık metinse bu adım onu özetli kayda dönüştürmüş olur (GV-13 geçişi).
   await prisma.refreshToken.delete({ where: { id: stored.id } });
@@ -801,6 +813,12 @@ export async function oauthCallback(req: Request, res: Response) {
   try {
     const profile = await provider.exchangeCodeForProfile(code);
     const result = await handleOAuthCallback(profile, statePayload);
+
+    // Y1-B8: onay bekleyen / reddedilen hesap — token ve cookie YOK; frontend kodu görüp
+    // şifreli girişteki ekranlara yönlendirir (/pending-approval · red mesajı).
+    if (result.kind === 'BLOCKED') {
+      return redirectWithError(res, result.code);
+    }
 
     setRefreshCookie(res, result.refreshToken);
     const params = new URLSearchParams({

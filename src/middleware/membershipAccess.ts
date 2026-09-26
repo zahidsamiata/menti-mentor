@@ -11,8 +11,10 @@ import { prisma } from '../db.js';
  *  - üyelik pasifse erişim yok;
  *  - hesap pasifse (`User.isActive=false`) ya da reddedildiyse (`approvalStatus=REJECTED`) erişim yok.
  *
- * PENDING bilerek engellenmez: OAuth ile gelen onay bekleyen kullanıcı token alır ve bekleme
- * ekranını besleyen uçları (ör. /api/auth/me) kullanır — bu davranış değişmedi.
+ * PENDING bilerek engellenmez: bekleme ekranını besleyen uçlar (ör. /api/auth/me, mentör sayısı,
+ * DISC testi) bu kapıdan geçer. ⚠️ GÜNCELLEME (2026-09-26, Y1-B8): onay bekleyen kullanıcı artık
+ * OAuth ile de token ALMAZ (oauthService) ve eski refresh token'ı yenilenmez (authController.refresh);
+ * elde kalmış bir access token en fazla ömrü (1 saat) kadar yaşar.
  *
  * Tek sorgu: üyelik + kullanıcının iki alanı aynı `findUnique` içinde okunur (istek başına
  * zaten yapılan üyelik sorgusuna ek sorgu eklenmedi).

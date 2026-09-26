@@ -67,10 +67,29 @@ export interface OAuthStatePayload {
   inviteToken?: string;
 }
 
-/** oauthService.handleOAuthCallback'in dönüş tipi. */
-export interface OAuthCallbackResult {
-  accessToken: string;
-  refreshToken: string;
-  /** Yeni kullanıcıysa true — frontend "onay bekleniyor" ekranını gösterir. */
-  isNewUser: boolean;
-}
+/**
+ * Onay kapısında durdurulan hesabın durumu — şifreli girişteki (authController.login) 403 kodlarıyla
+ * AYNI adlar; frontend OAuth dönüşünde ikisini de aynı ekranlara yönlendirir.
+ */
+export type OAuthBlockedCode = 'HESAP_ONAY_BEKLENIYOR' | 'HESAP_REDDEDILDI';
+
+/**
+ * oauthService.handleOAuthCallback'in dönüş tipi.
+ *
+ * Y1-B8: onay bekleyen / reddedilen hesaba oturum anahtarı VERİLMEZ (şifreli girişle aynı kural).
+ * Bu durumda `kind: 'BLOCKED'` döner; yeni kayıt yine oluşturulur (başvuru alınır), yalnız token yoktur.
+ */
+export type OAuthCallbackResult =
+  | {
+      kind: 'SESSION';
+      accessToken: string;
+      refreshToken: string;
+      /** Yeni kullanıcıysa true (davetli, APPROVED yeni kayıt). */
+      isNewUser: boolean;
+    }
+  | {
+      kind: 'BLOCKED';
+      code: OAuthBlockedCode;
+      /** Bu callback'te yeni başvuru oluşturulduysa true. */
+      isNewUser: boolean;
+    };
