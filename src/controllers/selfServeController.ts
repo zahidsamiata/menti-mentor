@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { logoUrlSchema } from '../services/logoUrl.js';
+import { passwordSchema } from '../services/passwordPolicy.js';
 import { signToken } from '../middleware/jwtAuth.js';
 import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
@@ -207,7 +208,7 @@ export async function checkSlugAvailability(req: Request, res: Response) {
 
 const SelfServeRegisterSchema = z.object({
   email:            z.string().email('Geçerli bir e-posta adresi girin'),
-  password:         z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  password:         passwordSchema,
   name:             z.string().min(2, 'Ad soyad zorunlu').max(120),
   tenantName:       z.string().min(2, 'Kurum adı zorunlu').max(120),
   slug:             z
