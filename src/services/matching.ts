@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, type DiscVector } from './scoring.js';
 import { getAlgorithmWeights } from './algorithmTuner.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
+import { computeProfileCompleteness } from './profile-completeness.service.js';
 
 export type RankedMenti = {
   mentiId: string;
@@ -366,6 +367,13 @@ export type RankedMentor = {
   // "İletişim tarzları uyumlu" gibi jenerik (harfsiz) gerekçe üretmek için kullanılır.
   discScore: number;
   confidence: number;
+  // AN-28 · KARAR-80/M7 + KARAR-32 revizyonu: mentör GERÇEKTEN randevu alınabilir mi?
+  // isVisibilityFaded/isProfileFaded ara-sebeplerdir (testte ayrı doğrulanır); menti-facing
+  // DTO'ya (matchingController.buildMentiFacingMentorItem) yalnızca isFaded + isBookable geçer.
+  isVisibilityFaded: boolean; // mentör kendi görünürlüğünü kapatmış (User.mentorVisibilityEnabled=false)
+  isProfileFaded: boolean;    // mentörün profili "çekirdek tamamlanma" eşiğini geçmemiş
+  isBookable: boolean;        // en az bir aktif müsaitlik bloğu VAR ve görünürlük açık — randevu alınabilir
+  isFaded: boolean;           // kart soluk mu? (KARAR-80/M7: kart HER ZAMAN kalır, yalnız soluklaşır)
 };
 
 export async function rankMentorsForMenti(args: {
@@ -409,11 +417,13 @@ export async function rankMentorsForMenti(args: {
     },
     select: {
       id: true,
+      tenantId: true,
       fullName: true,
       avatarUrl: true,
       sectorTags: true,
       discType: true,
       skills: true,
+      mentorVisibilityEnabled: true,
     },
     // Kararlı sıra (PS-01): take:500 kesmesi artık hep aynı 500 adayı seçer (id artan).
     // ⚠️ 500'den kalabalık havuzda kesme SKORDAN ÖNCE yapılır → id'si büyük adaylar hiç
@@ -428,7 +438,34 @@ export async function rankMentorsForMenti(args: {
   // Hata → varsayılan 0.6/0.4 (patlama yok).
   const { sectorWeight, discWeight } = await getScoringWeightsSafe(args.mentiTenantId);
 
-  const items: RankedMentor[] = mentors.map((m) => {
+  // AN-28: "randevu alınabilir mi" — en az bir aktif müsaitlik bloğu var mı, TEK toplu sorguyla
+  // (N+1 yasak, CLAUDE.md "Koşullu Paralellik"). groupBy, mentör başına ayrı sorgu yerine tüm
+  // adayları tek seferde döner.
+  const mentorIds = mentors.map((m) => m.id);
+  const activeBlockGroups = mentorIds.length
+    ? await prisma.availabilityBlock.groupBy({
+        by: ['userId'],
+        where: { userId: { in: mentorIds }, tenantId: { in: eligibleTenantIds }, isActive: true },
+        _count: true,
+      })
+    : [];
+  const bookableUserIds = new Set(activeBlockGroups.map((g) => g.userId));
+
+  // AN-28/U-19: profil "çekirdek tamamlanma" — computeProfileCompleteness UserProfile yoksa
+  // THROW eder (nadir ama olası: mentör onboarding'i bitirmemiş). Tek mentörün profili eksik
+  // diye TÜM liste çökmesin → try/catch, güvenli varsayılan = soluk göster (coreComplete:false).
+  const coreCompleteFlags = await Promise.all(
+    mentors.map(async (m) => {
+      try {
+        const result = await computeProfileCompleteness(m.id, m.tenantId);
+        return result.coreComplete;
+      } catch {
+        return false;
+      }
+    }),
+  );
+
+  const items: RankedMentor[] = mentors.map((m, idx) => {
     const breakdown = computeTotalScore({
       mentiTags:   menti.sectorTags,
       mentorTags:  m.sectorTags,
@@ -438,6 +475,13 @@ export async function rankMentorsForMenti(args: {
       sectorWeight,
       discWeight,
     });
+
+    const isVisibilityFaded = !m.mentorVisibilityEnabled;
+    const hasActiveBlock    = bookableUserIds.has(m.id);
+    const isBookable         = hasActiveBlock && m.mentorVisibilityEnabled;
+    const isProfileFaded    = !coreCompleteFlags[idx];
+    const isFaded           = isVisibilityFaded || isProfileFaded || !isBookable;
+
     return {
       mentorId:        m.id,
       mentorName:      m.fullName,
@@ -448,6 +492,10 @@ export async function rankMentorsForMenti(args: {
       sectorScore:     breakdown.sectorScore,
       discScore:       breakdown.discScore,
       confidence:      breakdown.confidence,
+      isVisibilityFaded,
+      isProfileFaded,
+      isBookable,
+      isFaded,
     };
   });
 

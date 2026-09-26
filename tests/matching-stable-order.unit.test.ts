@@ -29,6 +29,19 @@ vi.mock('../src/db.js', () => ({
     },
     mentorFilter: { findUnique: vi.fn().mockResolvedValue(null) },
     feedback: { findMany: vi.fn().mockResolvedValue([]) },
+    // AN-28: rankMentorsForMenti artık bookable/faded bayrakları için bunları okur.
+    // Boş/nötr değerler döner ki bu dosyanın gerçek konusu (kararlı sıralama) etkilenmesin.
+    availabilityBlock: { groupBy: vi.fn().mockResolvedValue([]) },
+    userProfile: {
+      findFirst: vi.fn().mockResolvedValue({
+        id: 'profile-1',
+        archetype: 'Kaşif',
+        industryCode: 'TECH',
+        skillTags: ['react'],
+        profileSource: 'MANUAL',
+      }),
+    },
+    matchFeedback: { count: vi.fn().mockResolvedValue(0) },
   },
 }));
 
