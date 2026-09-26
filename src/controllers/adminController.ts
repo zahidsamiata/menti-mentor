@@ -10,7 +10,8 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
-import { applyKAnonymity } from '../services/mask.js';
+import { computeKpiStats, buildKpiReportRows, kpiReportFileName } from '../services/kpiReport.service.js';
+import { toCsv } from '../services/csv.js';
 import { runWeeklyTuning, runWeeklyPurge } from '../services/cronScheduler.js';
 import { logger } from '../services/logger.js';
 import { ensureMembershipSafe } from '../services/membership.js';
@@ -41,96 +42,56 @@ import { validateRequest } from '../middleware/validate.js';
  */
 export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
   const tenantId = req.tenant.tenantId;
-
-  const [
-    totalUsers,
-    usersByRole,
-    activeMatches,
-    pendingOptIns,
-    totalFeedbackLogs,
-    avgNpsByPhase,
-    rematchUsers,
-    activeJobListings,
-  ] = await Promise.all([
-    // Toplam kullanıcı
-    prisma.user.count({ where: { tenantId, isActive: true } }),
-
-    // Rol bazında dağılım (Analytical)
-    prisma.user.groupBy({
-      by: ['role'],
-      where: { tenantId, isActive: true },
-      _count: { id: true },
-    }),
-
-    // Aktif eşleşmeler (APPROVED opt-in sayısı)
-    prisma.visibilityOptIn.count({
-      where: { tenantId, status: 'APPROVED' },
-    }),
-
-    // Bekleyen talep kuyruğu
-    prisma.visibilityOptIn.count({
-      where: { tenantId, status: 'PENDING' },
-    }),
-
-    // Toplam geri bildirim
-    prisma.feedbackLog.count({ where: { tenantId } }),
-
-    // Faz bazında ortalama NPS (Analytical)
-    prisma.feedbackLog.groupBy({
-      by: ['phase'],
-      where: { tenantId, npsScore: { not: null } },
-      _avg: { npsScore: true },
-      _count: { id: true },
-    }),
-
-    // Rematch öncelikli kullanıcı sayısı
-    prisma.user.count({ where: { tenantId, rematchPriority: true, isActive: true } }),
-
-    // Aktif iş ilanları
-    prisma.jobListing.count({ where: { tenantId, isActive: true } }),
-  ]);
-
-  // V-05 k-anonimlik: eşiğin altındaki yanıta dayanan ortalama gösterilmez (küçük kurumda
-  // tek kişinin puanı ortalamadan okunmasın); örnek sayısı da eşik altında 0'a indirgenir.
-  const safeNpsByPhase = avgNpsByPhase.map((p) => {
-    const sample = applyKAnonymity(p._count.id);
-    return {
-      phase: p.phase,
-      avgNps: !sample.suppressed && p._avg.npsScore !== null ? Math.round(p._avg.npsScore) : null,
-      sampleSize: sample.count,
-    };
-  });
-
-  // ⚠️ KR-07: adı "successRate" olsa da bu bir ORAN DEĞİL — 3. ay ortalama NPS'idir (0-10 ölçeği,
-  // yukarıdaki avgNps ile aynı değer). Eski yorum "NPS ≥ 70 olan eşleşmeler / toplam" diyordu; ne
-  // öyle hesaplanıyor ne de 0-10 puanda 70 eşiği anlamlı. Alan adı frontend sözleşmesi
-  // (admin/kpi/page.tsx) olduğundan burada değiştirilmedi; değer davranışı aynen korunuyor.
-  const successRate = safeNpsByPhase.find((p) => p.phase === 3)?.avgNps ?? null;
+  // F-18: hesap tek kaynakta (kpiReport.service) — CSV dışa aktarımı aynı sayıları üretir.
+  const stats = await computeKpiStats(tenantId);
 
   return res.json({
     tenantId,
     generatedAt: new Date().toISOString(),
     compliance: 'aggregate-only — no PII',
     stats: {
-      totalActiveUsers: totalUsers,
-      usersByRole: Object.fromEntries(
-        usersByRole.map((r) => [r.role, r._count.id]),
-      ),
-      matching: {
-        activeMatches,
-        pendingOptIns,
-        rematchPriorityUsers: rematchUsers,
-      },
+      totalActiveUsers: stats.totalActiveUsers,
+      usersByRole: stats.usersByRole,
+      matching: stats.matching,
       feedback: {
-        totalFeedbackLogs,
+        totalFeedbackLogs: stats.feedback.totalFeedbackLogs,
         avgNpsByPhase: Object.fromEntries(
-          safeNpsByPhase.map((p) => [`phase${p.phase}`, { avgNps: p.avgNps, sampleSize: p.sampleSize }]),
+          stats.feedback.npsByPhase.map((p) => [`phase${p.phase}`, { avgNps: p.avgNps, sampleSize: p.sampleSize }]),
         ),
-        successRate,
+        successRate: stats.feedback.successRate,
       },
-      activeJobListings,
+      activeJobListings: stats.activeJobListings,
     },
   });
+}
+
+/**
+ * GET /api/admin/kpi/export — KPI raporu CSV (F-18, G4-30).
+ * Panelle AYNI toplu metrikler (computeKpiStats, k-anonimlik dahil); kişi düzeyinde satır yok.
+ * Tenant yalnız `req.tenant`'tan (istemci parametresinden değil). Denetim izi bırakır (PII yok).
+ */
+export async function exportKpiReport(req: RequestWithTenant, res: Response) {
+  const tenantId = req.tenant.tenantId;
+  const now = new Date();
+
+  const [stats, tenant] = await Promise.all([
+    computeKpiStats(tenantId),
+    prisma.tenant.findUnique({ where: { id: tenantId }, select: { slug: true, displayName: true, name: true } }),
+  ]);
+  if (!tenant) return res.status(404).json({ error: 'KURUM_BULUNAMADI', message: 'Kurum bulunamadı.' });
+
+  const csv = toCsv(buildKpiReportRows(stats, { tenantName: tenant.displayName || tenant.name, generatedAt: now }));
+
+  // await: denetim kaydı dosya teslim edilmeden yazılsın (logger hata fırlatmaz, akışı kesmez).
+  await logger.info('AUDIT', 'KPI raporu dışa aktarıldı', {
+    actorId: req.auth?.userId,
+    tenantId,
+  });
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${kpiReportFileName(tenant.slug, now)}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  return res.send(csv);
 }
 
 // ─── Sağlık / Retention Metrikleri (S2: "kimse kaynıyor mu") ──────────────────
