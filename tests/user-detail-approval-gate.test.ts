@@ -34,11 +34,15 @@ describe('GV-24: kullanıcı detay ucu onay kapısı', () => {
     expect(res.body).not.toHaveProperty('fullName');
   });
 
-  it('negatif: reddedilmiş kullanıcı başkasının profilini çekemez (403)', async () => {
+  it('negatif: reddedilmiş kullanıcı başkasının profilini çekemez (401, oturum GV-10 ile geçersiz kılınır)', async () => {
+    // GV-10: requireTenant REJECTED hesabı route'a hiç ulaştırmadan 401 HESAP_PASIF ile keser
+    // (session-revocation.test.ts ile aynı davranış) — bu yüzden buradaki 403 ONAY_BEKLENIYOR
+    // kapısına hiç gelinmez. PENDING farklıdır: PENDING middleware'de engellenmez (bkz. üstteki test).
     const rejected = await createMentor(tenantId, { approvalStatus: 'REJECTED' });
     const menti = await createMenti(tenantId);
     const res = await http.get(`/api/users/${menti.id}`).set(tenantHeaders(tenantId, tokenFor(rejected)));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('HESAP_PASIF');
   });
 
   it('negatif: onaylı kullanıcı onaylanmamış kişiyi göremez (404, listedeki gibi yok sayılır)', async () => {
