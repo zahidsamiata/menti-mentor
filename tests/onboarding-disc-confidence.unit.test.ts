@@ -71,19 +71,26 @@ describe('PS-02 hata zinciri — scoring.ts confidence eksikken vektörü yok sa
   });
 
   it('düzeltilmiş vektör (confidence dahil) → vektör GERÇEKTEN kullanılır, matristen farklı sonuç üretir', () => {
-    const answers = Array.from({ length: 8 }, (_, i) => ({
-      questionId: i + 1,
-      selectedOption: 'A', // Tüm sorularda A seçeneği → baskın D, güçlü D-ağırlıklı vektör
-    }));
+    // KARIŞIK vektör kasıtlı: saf tek-boyutlu vektör (ör. hepsi 'A' → D=1) yanıltıcı biçimde
+    // matris hücresiyle AYNI sonucu üretir (computeVectorDiscScore tek terime indirgenir ve
+    // dominant tip zaten mentiDisc ile eşleşir) — bu, gerçek blend davranışını KANITLAMAZ.
+    // 4×'A' (D) + 4×'D seçeneği' (C) → vector {D:0.5, I:0, S:0, C:0.5}, dominant tiebreak'te 'D'
+    // kazanır (D>I>S>C, D ve C eşit sayıda) — matris hücresi DISC_COMPATIBILITY['C']['D'] hâlâ 'D'
+    // için hesaplanır ama vektör skoru KARIŞIK olduğundan matris hücresinden gerçekten FARKLIDIR.
+    const answers = [
+      ...Array.from({ length: 4 }, (_, i) => ({ questionId: i + 1, selectedOption: 'A' })),
+      ...Array.from({ length: 4 }, (_, i) => ({ questionId: i + 5, selectedOption: 'D' })),
+    ];
     const result = calculateDiscResult(answers);
+    expect(result.dominant).toBe('D'); // tiebreak D>I>S>C doğrulaması
     const fixedVector: DiscVector = { ...result.vector, confidence: result.confidence };
 
     const scoreWithFixedVector = computeDiscScore('D', 'C', fixedVector);
     const scoreFromMatrixOnly = computeDiscScore('D', 'C', null);
 
-    // confidence = 1.0 → computeDiscScore artık tamamen vektör skorunu kullanır (blend'de
-    // (1-confidence) = 0), matris-only sonuçtan FARKLI bir değer üretmesi beklenir çünkü
-    // güçlü D-ağırlıklı vektör, düz D/C matris hücresinden farklı bir ağırlıklı ortalamaya sahiptir.
+    // confidence = 1.0 → computeDiscScore tamamen vektör skorunu kullanır (blend'de (1-confidence)=0);
+    // karışık {D:0.5,C:0.5} vektör, matris hücresi DISC_COMPATIBILITY['C']['D']=85'ten
+    // matematiksel olarak FARKLI bir ağırlıklı ortalama üretir (0.5*85 + 0.5*60 = 72.5).
     expect(scoreWithFixedVector).not.toBe(scoreFromMatrixOnly);
   });
 
