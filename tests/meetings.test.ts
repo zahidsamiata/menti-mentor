@@ -125,6 +125,38 @@ describe('bookMeeting — requestMessage validasyonu', () => {
     expect(body.meeting.requestMessage).toBe(msg);
   });
 
+  // KR-19: yönetici bloğu — randevu oluşturma yolları hiç kontrol etmiyordu (kod-inceleme-
+  // 2026-09-24.md D4). Blok varsa 4xx + DB'ye görüşme yazılmamalı.
+  it('yönetici tarafından bloklanmış çift randevu alamaz (403), DB\'ye görüşme yazılmaz', async () => {
+    await testPrisma.tenant.update({
+      where: { id: tenant.id },
+      data: {
+        blockedPairs: [
+          { fromUserId: menti.id, toUserId: mentor.id, blockedAt: new Date().toISOString(), blockedBy: 'test-admin' },
+        ],
+      },
+    });
+
+    const msg = 'Bu görüşmeyi istememin sebebi, kariyer geçişim hakkında mentorunuzun deneyiminden yararlanmak istememdir.';
+    const res = await http
+      .post('/api/meetings/book')
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .send({
+        mentorUserId:   mentor.id,
+        format:         'ONLINE',
+        startsAt:       isoUtc(FUTURE_DATE, 9, 0),
+        endsAt:         isoUtc(FUTURE_DATE, 10, 0),
+        requestMessage: msg,
+      });
+    expect(res.status).toBe(403);
+    expect((res.body as { error: string }).error).toBe('ISLEM_YAPILAMIYOR');
+
+    const meetingCount = await testPrisma.meeting.count({
+      where: { tenantId: tenant.id, mentorUserId: mentor.id, mentiUserId: menti.id },
+    });
+    expect(meetingCount).toBe(0);
+  });
+
   it('P-10: başarılı book mentöre e-posta bildirimi tetikler', async () => {
     sendMeetingRequestEmailMock.mockClear();
     const msg = 'Kariyer geçişimde deneyiminizden yararlanmak için sizinle bir görüşme planlamak istiyorum.';

@@ -3,6 +3,8 @@ import { prisma } from '../db.js';
 import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, type DiscVector } from './scoring.js';
 import { getAlgorithmWeights } from './algorithmTuner.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
+import { computeProfileCompleteness } from './profile-completeness.service.js';
+import { buildBlockedCounterpartSet } from './blockList.js';
 
 export type RankedMenti = {
   mentiId: string;
@@ -37,21 +39,6 @@ async function getScoringWeightsSafe(
   } catch {
     return { sectorWeight: 0.6, discWeight: 0.4 };
   }
-}
-
-// Mentor için bu tenant'ta idari olarak bloklanmış menti ID kümesini oluşturur.
-// JSON blob bozuk veya array değilse boş küme döner (defensive).
-function buildBlockedMentiSet(mentorId: string, blockedPairs: unknown): Set<string> {
-  if (!Array.isArray(blockedPairs)) return new Set();
-  const blocked = new Set<string>();
-  for (const pair of blockedPairs as Array<Record<string, unknown>>) {
-    if (typeof pair !== 'object' || pair === null) continue;
-    const from = pair['fromUserId'];
-    const to   = pair['toUserId'];
-    if (from === mentorId && typeof to   === 'string') blocked.add(to);
-    if (to   === mentorId && typeof from === 'string') blocked.add(from);
-  }
-  return blocked;
 }
 
 // Kararlı sıralama (PS-01): eşit skorda id artan ayırıcı. Skor/sıralama mantığı değişmez;
@@ -136,7 +123,7 @@ export async function rankMentisForMentor(args: {
     [];
 
   // BUG FIX: Admin'in idari blok listesini motora uygula (önceden hiç okunmuyordu).
-  const blockedMentiIds = buildBlockedMentiSet(mentor.id, tenantConfig?.blockedPairs);
+  const blockedMentiIds = buildBlockedCounterpartSet(mentor.id, tenantConfig?.blockedPairs);
 
   // Güvenlik düzeltmesi: Cross-tenant adayları önceden filtrele.
   // Tüm shared-pool tenant ID'lerini tek sorguda çek; döngü içi N+1 sorgusunu önle.
@@ -366,6 +353,13 @@ export type RankedMentor = {
   // "İletişim tarzları uyumlu" gibi jenerik (harfsiz) gerekçe üretmek için kullanılır.
   discScore: number;
   confidence: number;
+  // AN-28 · KARAR-80/M7 + KARAR-32 revizyonu: mentör GERÇEKTEN randevu alınabilir mi?
+  // isVisibilityFaded/isProfileFaded ara-sebeplerdir (testte ayrı doğrulanır); menti-facing
+  // DTO'ya (matchingController.buildMentiFacingMentorItem) yalnızca isFaded + isBookable geçer.
+  isVisibilityFaded: boolean; // mentör kendi görünürlüğünü kapatmış (User.mentorVisibilityEnabled=false)
+  isProfileFaded: boolean;    // mentörün profili "çekirdek tamamlanma" eşiğini geçmemiş
+  isBookable: boolean;        // en az bir aktif müsaitlik bloğu VAR ve görünürlük açık — randevu alınabilir
+  isFaded: boolean;           // kart soluk mu? (KARAR-80/M7: kart HER ZAMAN kalır, yalnız soluklaşır)
 };
 
 export async function rankMentorsForMenti(args: {
@@ -387,10 +381,22 @@ export async function rankMentorsForMenti(args: {
 
   // Eligible tenant listesi: kendi tenant'ı + her iki taraf da shared-pool ise diğerleri
   // (rankMentisForMentor ile AYNI cross-tenant güvenlik deseni).
-  const sharedTenants = await prisma.tenant.findMany({
-    where: { isSharedPoolActive: true },
-    select: { id: true },
-  });
+  // tenantConfig aynı Promise.all'da okunur (N+1 yasak) — KR-19: idari blok listesi
+  // (blockedPairs) daha önce bu yönde HİÇ okunmuyordu, yalnız rankMentisForMentor
+  // (mentör→menti) tarafında uygulanıyordu. Hangi tenant'ın blockedPairs'ı okunacağı
+  // rankMentisForMentor ile SİMETRİK: çağıranın KENDİ tenant'ı (args.mentiTenantId) —
+  // mentörün home tenant'ı değil. Cross-tenant'ta karşı tarafın admin'inin koyduğu blok
+  // bu yönden görünmez; bu rankMentisForMentor'un da mevcut davranışıdır (tutarlılık).
+  const [sharedTenants, tenantConfig] = await Promise.all([
+    prisma.tenant.findMany({
+      where: { isSharedPoolActive: true },
+      select: { id: true },
+    }),
+    prisma.tenant.findUnique({
+      where:  { id: args.mentiTenantId },
+      select: { blockedPairs: true },
+    }),
+  ]);
   const sharedIds = new Set(sharedTenants.map((t) => t.id));
   const eligibleTenantIds = [
     args.mentiTenantId,
@@ -399,7 +405,11 @@ export async function rankMentorsForMenti(args: {
     ),
   ];
 
-  const mentors = await prisma.user.findMany({
+  // BUG FIX (KR-19): Admin'in idari blok listesi bu yönde de uygulanır — önceden hiç
+  // okunmuyordu, engellenen mentör menti'nin listesinde görünmeye devam ediyordu.
+  const blockedMentorIds = buildBlockedCounterpartSet(menti.id, tenantConfig?.blockedPairs);
+
+  const rawMentors = await prisma.user.findMany({
     where: {
       id: { not: args.mentiId }, // kendi kendine eşleşme yok (bkz. rankMentisForMentor)
       isActive: true,
@@ -409,11 +419,13 @@ export async function rankMentorsForMenti(args: {
     },
     select: {
       id: true,
+      tenantId: true,
       fullName: true,
       avatarUrl: true,
       sectorTags: true,
       discType: true,
       skills: true,
+      mentorVisibilityEnabled: true,
     },
     // Kararlı sıra (PS-01): take:500 kesmesi artık hep aynı 500 adayı seçer (id artan).
     // ⚠️ 500'den kalabalık havuzda kesme SKORDAN ÖNCE yapılır → id'si büyük adaylar hiç
@@ -422,13 +434,46 @@ export async function rankMentorsForMenti(args: {
     take: 500,
   });
 
+  // İdari blok kontrolü — sonraki müsaitlik/tamamlanma sorgularından ÖNCE filtrelenir
+  // (blocklu mentör için gereksiz sorgu yapılmaz).
+  const mentors = blockedMentorIds.size > 0
+    ? rawMentors.filter((m) => !blockedMentorIds.has(m.id))
+    : rawMentors;
+
   const mentiVector = menti.discVector as DiscVector | null;
 
   // Tenant-özel skor ağırlığını .map() döngüsünden ÖNCE bir kez oku (N+1 yasak).
   // Hata → varsayılan 0.6/0.4 (patlama yok).
   const { sectorWeight, discWeight } = await getScoringWeightsSafe(args.mentiTenantId);
 
-  const items: RankedMentor[] = mentors.map((m) => {
+  // AN-28: "randevu alınabilir mi" — en az bir aktif müsaitlik bloğu var mı, TEK toplu sorguyla
+  // (N+1 yasak, CLAUDE.md "Koşullu Paralellik"). groupBy, mentör başına ayrı sorgu yerine tüm
+  // adayları tek seferde döner.
+  const mentorIds = mentors.map((m) => m.id);
+  const activeBlockGroups = mentorIds.length
+    ? await prisma.availabilityBlock.groupBy({
+        by: ['userId'],
+        where: { userId: { in: mentorIds }, tenantId: { in: eligibleTenantIds }, isActive: true },
+        _count: true,
+      })
+    : [];
+  const bookableUserIds = new Set(activeBlockGroups.map((g) => g.userId));
+
+  // AN-28/U-19: profil "çekirdek tamamlanma" — computeProfileCompleteness UserProfile yoksa
+  // THROW eder (nadir ama olası: mentör onboarding'i bitirmemiş). Tek mentörün profili eksik
+  // diye TÜM liste çökmesin → try/catch, güvenli varsayılan = soluk göster (coreComplete:false).
+  const coreCompleteFlags = await Promise.all(
+    mentors.map(async (m) => {
+      try {
+        const result = await computeProfileCompleteness(m.id, m.tenantId);
+        return result.coreComplete;
+      } catch {
+        return false;
+      }
+    }),
+  );
+
+  const items: RankedMentor[] = mentors.map((m, idx) => {
     const breakdown = computeTotalScore({
       mentiTags:   menti.sectorTags,
       mentorTags:  m.sectorTags,
@@ -438,6 +483,13 @@ export async function rankMentorsForMenti(args: {
       sectorWeight,
       discWeight,
     });
+
+    const isVisibilityFaded = !m.mentorVisibilityEnabled;
+    const hasActiveBlock    = bookableUserIds.has(m.id);
+    const isBookable         = hasActiveBlock && m.mentorVisibilityEnabled;
+    const isProfileFaded    = !coreCompleteFlags[idx];
+    const isFaded           = isVisibilityFaded || isProfileFaded || !isBookable;
+
     return {
       mentorId:        m.id,
       mentorName:      m.fullName,
@@ -448,6 +500,10 @@ export async function rankMentorsForMenti(args: {
       sectorScore:     breakdown.sectorScore,
       discScore:       breakdown.discScore,
       confidence:      breakdown.confidence,
+      isVisibilityFaded,
+      isProfileFaded,
+      isBookable,
+      isFaded,
     };
   });
 

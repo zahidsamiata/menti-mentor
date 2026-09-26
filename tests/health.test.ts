@@ -50,6 +50,26 @@ describe('getHealthStatus — DB canlılık kontrolü', () => {
     expect(['verified', 'failed', 'unconfigured', 'unknown']).toContain(s.smtp);
     expect(['enabled', 'disabled']).toContain(s.cron);
   });
+
+  // V-16: version sabit "0.1.0" canlıdaki gerçek kodu göstermiyordu; commit alanı
+  // Dockerfile'ın GIT_SHA build-arg'ından gelir, wire edilmemişse 'unknown' döner.
+  it('V-16: GIT_SHA env yoksa commit "unknown" döner', async () => {
+    queryRaw.mockResolvedValueOnce([{ ok: 1 }]);
+    const prev = process.env.GIT_SHA;
+    delete process.env.GIT_SHA;
+    const s = await getHealthStatus();
+    expect(s.commit).toBe('unknown');
+    if (prev !== undefined) process.env.GIT_SHA = prev;
+  });
+
+  it('V-16: GIT_SHA env varsa commit onu yansıtır', async () => {
+    queryRaw.mockResolvedValueOnce([{ ok: 1 }]);
+    const prev = process.env.GIT_SHA;
+    process.env.GIT_SHA = 'a1b2c3d';
+    const s = await getHealthStatus();
+    expect(s.commit).toBe('a1b2c3d');
+    if (prev === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = prev;
+  });
 });
 
 // V-01 / F-25: SMTP durum göstergesi — test ortamında SMTP yapılandırılmamış.

@@ -38,8 +38,12 @@ describe('KR-17: onayda çakışma kontrolü', () => {
     mentiB = await createMenti(tenantId);
   });
 
+  // KARAR-7 (A): ONLINE görüşme onayı artık toplantı linki ister — bu dosyanın odağı (KR-17
+  // çakışma kontrolü) bundan bağımsız, o yüzden testler geçerli bir link gönderir.
   const approve = (id: string) =>
-    http.post(`/api/meetings/${id}/approve`).set(tenantHeaders(tenantId, tokenFor(mentor)));
+    http.post(`/api/meetings/${id}/approve`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .send({ locationUrl: 'https://meet.google.com/abc-defg-hij' });
 
   it('ilk talep onaylanır; aynı saatteki ikinci talep 409 alır ve PENDING kalır (negatif)', async () => {
     const a = await pending(mentiA.id);

@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
-import { cleanDb } from './helpers/db.js';
+import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser } from './helpers/factories.js';
 import type { Tenant } from '@prisma/client';
 
@@ -130,5 +130,50 @@ describe('PATCH /api/users/me/profile', () => {
     const tags = (res.body as Record<string, unknown>).sectorTags as string[];
     expect(tags).toContain('teknoloji');
     expect(tags).toContain('finans');
+  });
+
+  // AN-28: mentör kendi görünürlük tercihini bu uçtan değiştirebilir (User.mentorVisibilityEnabled).
+  it('AN-28: MENTOR mentorVisibilityEnabled=false gönderir → kaydedilir', async () => {
+    const res = await http
+      .patch('/api/users/me/profile')
+      .set(tenantHeaders(tenant.id, userToken))
+      .send({ mentorVisibilityEnabled: false })
+      .expect(200);
+
+    expect((res.body as Record<string, unknown>).mentorVisibilityEnabled).toBe(false);
+  });
+
+  it('AN-28: MENTI aynı alanı gönderirse 403 ROL_UYUMSUZ (komşu uç desenİ: submitMatchingPreferences)', async () => {
+    const menti = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'APPROVED' });
+    const tokens = await loginAs(http, menti.email, menti.rawPassword);
+
+    const res = await http
+      .patch('/api/users/me/profile')
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .send({ mentorVisibilityEnabled: false })
+      .expect(403);
+
+    expect((res.body as Record<string, unknown>).error).toBe('ROL_UYUMSUZ');
+  });
+
+  // AN-28 bağımsız inceleme bulgusu: rol kontrolü User.role yerine req.auth.role (=
+  // TenantMembership.role, middleware/tenant.ts'te üyelikten okunur) kullanmalı — CLAUDE.md
+  // "kurum-içi rol kaynağı TenantMembership'tir, User.role DEĞİL". User.role ile üyelik rolü
+  // AYRIŞTIĞINDA (ör. üyelik sonradan yükseltilmiş ama User.role senkron değil) doğru kaynak kazanmalı.
+  it("AN-28: User.role='MENTI' ama TenantMembership.role='MENTOR' ise görünürlük değiştirilebilir (üyelik kazanır)", async () => {
+    const menti = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'APPROVED' });
+    await testPrisma.tenantMembership.updateMany({
+      where: { userId: menti.id, tenantId: tenant.id },
+      data: { role: 'MENTOR' },
+    });
+    const tokens = await loginAs(http, menti.email, menti.rawPassword);
+
+    const res = await http
+      .patch('/api/users/me/profile')
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .send({ mentorVisibilityEnabled: false })
+      .expect(200);
+
+    expect((res.body as Record<string, unknown>).mentorVisibilityEnabled).toBe(false);
   });
 });
