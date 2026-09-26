@@ -307,6 +307,44 @@ describe('Auth: Onay Durumu Güvenlik Koruması', () => {
     expect(res.body).not.toHaveProperty('refreshToken');
   });
 
+  it('IC-08: düzeltme notu olan PENDING kullanıcı doğru şifreyle notu görür', async () => {
+    const pendingUser = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'PENDING' });
+    await testPrisma.user.update({
+      where: { id: pendingUser.id },
+      data: { rejectionReason: 'Profil fotoğrafını ve kısa tanıtımını ekleyin.' },
+    });
+
+    const res = await http
+      .post('/api/auth/login')
+      .send({ email: pendingUser.email, password: pendingUser.rawPassword })
+      .expect(403);
+
+    expect(res.body.error).toBe('HESAP_ONAY_BEKLENIYOR');
+    expect(res.body.correctionNote).toBe('Profil fotoğrafını ve kısa tanıtımını ekleyin.');
+    expect(res.body).not.toHaveProperty('accessToken');
+  });
+
+  it('IC-08: notu olmayan PENDING kullanıcıda correctionNote null', async () => {
+    const pendingUser = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'PENDING' });
+    const res = await http
+      .post('/api/auth/login')
+      .send({ email: pendingUser.email, password: pendingUser.rawPassword })
+      .expect(403);
+    expect(res.body.correctionNote).toBeNull();
+  });
+
+  it('IC-08 NEGATİF: yanlış şifreyle düzeltme notu SIZMAZ (generic 401)', async () => {
+    const pendingUser = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'PENDING' });
+    await testPrisma.user.update({ where: { id: pendingUser.id }, data: { rejectionReason: 'GIZLI-NOT-XYZ' } });
+    const res = await http
+      .post('/api/auth/login')
+      .send({ email: pendingUser.email, password: 'YanlisSifre99!' })
+      .expect(401);
+    expect(res.body.error).toBe('KIMLIK_DOGRULANMADI');
+    expect(res.body).not.toHaveProperty('correctionNote');
+    expect(JSON.stringify(res.body)).not.toContain('GIZLI-NOT-XYZ');
+  });
+
   it('REJECTED kullanıcı login olmaya çalışırken 403 Forbidden döner', async () => {
     const rejectedUser = await createUser({
       tenantId: tenant.id,

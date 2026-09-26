@@ -369,10 +369,13 @@ export async function login(req: Request, res: Response) {
   }
 
   // Onay bekleyen hesap — bekleme ekranına yönlendirilir (FE: /pending-approval).
+  // IC-08: yöneticinin "düzeltme iste" notu (rejectionReason) da döner — e-posta kapalıysa tek kanal bu.
+  // Yalnız doğru şifreden SONRA (REJECTED dalıyla aynı desen) → not, şifresi olmayana sızmaz.
   if (user.approvalStatus === 'PENDING') {
     return res.status(403).json({
       error: 'HESAP_ONAY_BEKLENIYOR',
       message: 'Hesabınız henüz yönetici tarafından onaylanmamıştır. Onay sonrası giriş yapabilirsiniz.',
+      correctionNote: user.rejectionReason ?? null,
     });
   }
 
