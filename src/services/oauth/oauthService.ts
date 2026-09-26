@@ -16,14 +16,16 @@
 
 import crypto from 'node:crypto';
 import { prisma } from '../../db.js';
+import { config } from '../../config.js';
 import { verifyInvitationToken } from '../invitationToken.js';
 import { signToken } from '../../middleware/jwtAuth.js';
 import { sendAdminNewUserNotification } from '../emailService.js';
 import { notifyAdminsPendingUser } from '../notificationService.js';
 import { ensureMembershipSafe } from '../membership.js';
 import { recordUserActivity } from '../activityService.js';
-import { recordSignupConsent } from '../consentService.js';
+import { recordSignupConsent, recordGranularSignupConsent } from '../consentService.js';
 import { hashRefreshToken } from '../refreshToken.js';
+import { signPendingOAuthRegistration, verifyPendingOAuthRegistration } from './oauthPendingRegistration.js';
 import type { OAuthCallbackResult, OAuthStatePayload, OAuthUserProfile } from './oauthTypes.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
@@ -85,6 +87,13 @@ async function handleExistingUser(
 
 // ─── Yeni kullanıcı ─────────────────────────────────────────────────────────
 
+/** Yeni kullanıcı oluştururken gereken profil alanları — providerUserId burada GEREKMEZ (persist edilmiyor). */
+type OAuthUserCreateProfile = Pick<OAuthUserProfile, 'email' | 'fullName' | 'provider' | 'avatarUrl'>;
+
+type OAuthSignupConsentOpts =
+  | { kind: 'implicit' }
+  | { kind: 'granular'; granted: { mandatory: true; crossTenantSharing?: boolean; oceanProfiling?: boolean } };
+
 async function handleNewUser(
   profile: OAuthUserProfile,
   state: OAuthStatePayload,
@@ -112,15 +121,47 @@ async function handleNewUser(
   const approvalStatus: 'PENDING' | 'APPROVED' =
     claims && claims.tenantId === tenant.id && claims.role === state.role ? 'APPROVED' : 'PENDING';
 
+  // AN-30 / KARAR-34 (OAuth ayağı, 2026-09-26) — flag AÇIKKEN kullanıcı ANINDA oluşturulmaz:
+  // kısa ömürlü "bekleyen kayıt" token'ı üretilip granüler rıza ekranına yönlendirilir; kayıt
+  // yalnız `finalizeOAuthRegistration` (complete-registration ucu) çağrılınca tamamlanır.
+  // Flag KAPALIYKEN (varsayılan) bu blok hiç çalışmaz — davranış aşağıdaki implicit rıza
+  // yoluyla BİREBİR eskisi gibi kalır (tek satır bile değişmez).
+  if (config.oauth.granularConsentEnabled) {
+    const pendingToken = signPendingOAuthRegistration({
+      email: profile.email,
+      fullName: profile.fullName,
+      provider: profile.provider,
+      avatarUrl: profile.avatarUrl,
+      tenantId: tenant.id,
+      role: state.role,
+      approvalStatus,
+    });
+    return { pendingConsent: true, pendingToken };
+  }
+
+  return createOAuthUserAndIssueTokens(tenant, profile, approvalStatus, state.role, { kind: 'implicit' });
+}
+
+/**
+ * Ortak yardımcı: kullanıcı oluşturma + rıza + membership + admin bildirimi + token üretimi.
+ * `handleNewUser` (implicit rıza, flag kapalı) VE `finalizeOAuthRegistration` (granüler rıza,
+ * flag açık — complete-registration ucu) tarafından paylaşılır; davranış farkı yalnız `consentOpts`'tadır.
+ */
+async function createOAuthUserAndIssueTokens(
+  tenant: { id: string; name: string; displayName: string | null },
+  profile: OAuthUserCreateProfile,
+  approvalStatus: 'PENDING' | 'APPROVED',
+  role: 'MENTOR' | 'MENTI',
+  consentOpts: OAuthSignupConsentOpts,
+): Promise<{ accessToken: string; refreshToken: string; isNewUser: true }> {
   // KVKK: rızasız kayıt olmamalı → user.create + tipli rıza AYNI transaction'da atomik.
-  // YALNIZ yeni kullanıcıda (bu fonksiyon mevcut kullanıcıda çağrılmaz) → tekrar rıza yazılmaz.
   const newUser = await prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
         tenantId: tenant.id,
         email: profile.email,
         fullName: profile.fullName,
-        role: state.role,
+        role,
         authProvider: profile.provider,
         approvalStatus,
         avatarUrl: profile.avatarUrl ?? null,
@@ -132,8 +173,13 @@ async function handleNewUser(
       },
       select: { id: true, tenantId: true, role: true, fullName: true },
     });
-    // Tipli rıza (G1-07): AYDINLATMA + ACIK_RIZA, source=OAUTH.
-    await recordSignupConsent({ userId: created.id }, 'OAUTH', { db: tx });
+    if (consentOpts.kind === 'granular') {
+      // AN-30 / KARAR-34: FE'nin granüler rıza ekranından topladığı ayrı onaylar.
+      await recordGranularSignupConsent({ userId: created.id }, consentOpts.granted, { source: 'OAUTH', db: tx });
+    } else {
+      // Tipli rıza (G1-07): AYDINLATMA + ACIK_RIZA, source=OAUTH.
+      await recordSignupConsent({ userId: created.id }, 'OAUTH', { db: tx });
+    }
     return created;
   });
 
@@ -143,7 +189,7 @@ async function handleNewUser(
   // Admin "onaya bak" bildirimi yalnız onay bekleyen kayıtta (form kaydıyla aynı).
   // Arka planda — giriş akışını yavaşlatmamalı.
   if (approvalStatus === 'PENDING') {
-    void notifyAdmins(tenant, newUser.fullName, state.role);
+    void notifyAdmins(tenant, newUser.fullName, role);
   }
 
   const { accessToken, refreshToken } = await issueTokenPair(
@@ -153,6 +199,54 @@ async function handleNewUser(
     newUser.fullName,
   );
   return { accessToken, refreshToken, isNewUser: true };
+}
+
+/**
+ * POST /api/auth/oauth/complete-registration — AN-30 OAuth ayağı: granüler rıza ekranından
+ * sonra kaydı tamamlar. `pendingToken`, OAuth callback'te (`handleNewUser`, flag açıkken)
+ * üretilmiş imzalı "bekleyen kayıt" token'ıdır (bkz. oauthPendingRegistration.ts).
+ */
+export async function finalizeOAuthRegistration(
+  pendingToken: string,
+  granted: { mandatory: true; crossTenantSharing?: boolean; oceanProfiling?: boolean },
+): Promise<{ accessToken: string; refreshToken: string; isNewUser: true }> {
+  const pending = verifyPendingOAuthRegistration(pendingToken);
+  if (!pending) {
+    throw new OAuthConflictError(
+      'PENDING_TOKEN_GECERSIZ',
+      'Kayıt bağlantısının süresi dolmuş veya geçersiz. Lütfen OAuth ile tekrar deneyin.',
+    );
+  }
+
+  // Tenant durumu token üretildiğinden beri değişmiş olabilir (ör. sonradan incelemeye
+  // alınmış) — handleNewUser'daki kontrolü TEKRARLA (aynı kural, aynı hata kodları).
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: pending.tenantId },
+    select: { id: true, name: true, displayName: true, verificationStatus: true },
+  });
+  if (!tenant) {
+    throw new OAuthConflictError('TENANT_BULUNAMADI', 'Kuruluş bulunamadı. Lütfen geçerli bir bağlantı kullanın.');
+  }
+  if (tenant.verificationStatus === 'PENDING_REVIEW') {
+    throw new OAuthConflictError(
+      'TENANT_ONAY_BEKLENIYOR',
+      'Kurumunuz henüz inceleme aşamasında. Onaylandıktan sonra kayıt olabilirsiniz.',
+    );
+  }
+
+  // Race koruması: token üretildikten sonra aynı e-posta başka bir yoldan kayıt olmuş olabilir.
+  const existingUser = await prisma.user.findUnique({ where: { email: pending.email }, select: { id: true } });
+  if (existingUser) {
+    throw new OAuthConflictError('KULLANICI_MEVCUT', 'Bu e-posta adresi ile zaten bir hesap var. Lütfen giriş yapın.');
+  }
+
+  return createOAuthUserAndIssueTokens(
+    tenant,
+    { email: pending.email, fullName: pending.fullName, provider: pending.provider, avatarUrl: pending.avatarUrl },
+    pending.approvalStatus,
+    pending.role,
+    { kind: 'granular', granted },
+  );
 }
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────

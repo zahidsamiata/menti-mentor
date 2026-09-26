@@ -10,7 +10,7 @@ import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { GoogleOAuthProvider, OAuthProviderError } from '../services/oauth/googleProvider.js';
 import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
 import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthStateService.js';
-import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
+import { handleOAuthCallback, finalizeOAuthRegistration, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
 import { ensureMembershipSafe } from '../services/membership.js';
 import { recordSignupConsent, recordGranularSignupConsent } from '../services/consentService.js';
@@ -23,6 +23,19 @@ import { validateRequest } from '../middleware/validate.js';
 
 
 // ─── Validation şemaları ──────────────────────────────────────────────────────
+
+// AN-30 / KARAR-34 — granüler rıza grubu şeması. Register (form) ucunda OPSİYONEL (flag kapalıyken
+// alan hiç gelmez → eski tek-kutu `kvkkConsent` davranışı), OAuth complete-registration ucunda
+// ZORUNLU (o uca yalnız flag açıkken ulaşılır — bkz. `CompleteOAuthRegistrationSchema`).
+// Tek şemada tutulur: iki uç da AYNI 4 zorunlu + 2 isteğe bağlı maddeyi kullanır (DRY).
+const GranularConsentSchema = z.object({
+  discMatching: z.literal(true, { message: 'DISC eşleştirme onayı zorunludur.' }),
+  foreignStorage: z.literal(true, { message: 'Yurt dışı saklama onayı zorunludur.' }),
+  dataProcessing: z.literal(true, { message: 'Veri işleme onayı zorunludur.' }),
+  anonymizedImprovement: z.literal(true, { message: 'Anonim iyileştirme onayı zorunludur.' }),
+  crossTenantSharing: z.boolean().optional(),
+  oceanProfiling: z.boolean().optional(),
+});
 
 const RegisterSchema = z.object({
   email: z.string().email('Geçerli bir e-posta adresi girin'),
@@ -41,17 +54,16 @@ const RegisterSchema = z.object({
   // AN-30 / KARAR-34 — granüler rıza ekranı (FE flag'i `NEXT_PUBLIC_GRANULAR_CONSENT_ENABLED`
   // ile KAPALI; açılınca FE bu alanı gönderir). OPSİYONEL: alan YOKSA eski `kvkkConsent` tek-kutu
   // davranışı AYNEN kalır (geriye dönük uyumluluk — mevcut istemciler tek satır bile değişmeden çalışır).
-  // Zorunlu 4 madde `z.literal(true)` ile korunur — false/eksik gelirse Zod otomatik 400 döner.
-  granularConsent: z
-    .object({
-      discMatching: z.literal(true, { message: 'DISC eşleştirme onayı zorunludur.' }),
-      foreignStorage: z.literal(true, { message: 'Yurt dışı saklama onayı zorunludur.' }),
-      dataProcessing: z.literal(true, { message: 'Veri işleme onayı zorunludur.' }),
-      anonymizedImprovement: z.literal(true, { message: 'Anonim iyileştirme onayı zorunludur.' }),
-      crossTenantSharing: z.boolean().optional(),
-      oceanProfiling: z.boolean().optional(),
-    })
-    .optional(),
+  granularConsent: GranularConsentSchema.optional(),
+});
+
+// AN-30 / KARAR-34 (OAuth ayağı) — `POST /api/auth/oauth/complete-registration` body'si.
+// `pendingToken`: OAuth callback'in (flag açıkken) ürettiği "bekleyen kayıt" token'ı.
+// `granularConsent` burada ZORUNLU (opsiyonel değil) — bu uca yalnız granüler rıza ekranından
+// gelinir, eski tek-kutu yolu yoktur.
+const CompleteOAuthRegistrationSchema = z.object({
+  pendingToken: z.string().min(1, 'Token zorunlu'),
+  granularConsent: GranularConsentSchema,
 });
 
 const LoginSchema = z.object({
@@ -741,6 +753,14 @@ export async function oauthCallback(req: Request, res: Response) {
     const profile = await provider.exchangeCodeForProfile(code);
     const result = await handleOAuthCallback(profile, statePayload);
 
+    // AN-30 / KARAR-34 (OAuth ayağı): flag açıkken yeni kullanıcı için henüz token/kullanıcı
+    // YOK — granüla rıza ekranını göstermesi için frontend'e yalnız bekleyen-kayıt token'ı iletilir.
+    // setRefreshCookie ÇAĞRILMAZ (henüz refresh token yok). Flag kapalıyken bu dal hiç girilmez.
+    if ('pendingConsent' in result) {
+      const params = new URLSearchParams({ pendingConsentToken: result.pendingToken });
+      return res.redirect(`${config.oauth.frontendCallbackUrl}?${params.toString()}`);
+    }
+
     setRefreshCookie(res, result.refreshToken);
     const params = new URLSearchParams({
       accessToken: result.accessToken,
@@ -763,6 +783,48 @@ export async function oauthCallback(req: Request, res: Response) {
 function redirectWithError(res: Response, errorCode: string): void {
   const params = new URLSearchParams({ error: errorCode });
   res.redirect(`${config.oauth.frontendCallbackUrl}?${params.toString()}`);
+}
+
+// AN-30 / KARAR-34 (OAuth ayağı) — bu uç JSON döner (redirect DEĞİL, frontend zaten
+// /oauth/callback sayfasındadır) → OAuthConflictError kodları HTTP durum koduna eşlenir.
+const COMPLETE_OAUTH_REGISTRATION_STATUS: Record<string, number> = {
+  PENDING_TOKEN_GECERSIZ: 400,
+  TENANT_BULUNAMADI: 400,
+  TENANT_ONAY_BEKLENIYOR: 403,
+  KULLANICI_MEVCUT: 409,
+};
+
+/**
+ * POST /api/auth/oauth/complete-registration — AN-30 / KARAR-34 (OAuth ayağı).
+ *
+ * Granüler rıza ekranını dolduran kullanıcının kaydını tamamlar. `pendingToken`
+ * `/oauth/callback` redirect'inde `pendingConsentToken` query param'ı olarak gelmiştir.
+ * Register (form) ucundan farkı: redirect değil JSON döner — frontend zaten
+ * `/oauth/callback` sayfasındadır, ikinci bir tarayıcı yönlendirmesine gerek yok.
+ */
+export async function completeOAuthRegistration(req: Request, res: Response) {
+  const parsed = validateRequest(CompleteOAuthRegistrationSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
+
+  const { pendingToken, granularConsent } = parsed.data;
+
+  try {
+    const result = await finalizeOAuthRegistration(pendingToken, {
+      mandatory: true,
+      crossTenantSharing: granularConsent.crossTenantSharing,
+      oceanProfiling: granularConsent.oceanProfiling,
+    });
+
+    setRefreshCookie(res, result.refreshToken);
+    return res.status(200).json({ accessToken: result.accessToken, isNewUser: result.isNewUser });
+  } catch (err) {
+    if (err instanceof OAuthConflictError) {
+      const status = COMPLETE_OAUTH_REGISTRATION_STATUS[err.code] ?? 400;
+      return res.status(status).json({ error: err.code, message: err.message });
+    }
+    // Beklenmeyen hata — iç detay sızdırma (Güvenlik Kuralları: hata mesajları iç detay sızdırmaz)
+    return res.status(500).json({ error: 'SUNUCU_HATASI', message: 'Kayıt tamamlanamadı. Lütfen tekrar deneyin.' });
+  }
 }
 
 // ─── GET /api/auth/me ─────────────────────────────────────────────────────────
