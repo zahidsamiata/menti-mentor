@@ -89,6 +89,7 @@ describe('AN-30 OAuth ayağı — GRANULAR_CONSENT_ENABLED açık', () => {
       .post('/api/auth/oauth/complete-registration')
       .send({
         pendingToken: pending.pendingToken,
+        kvkkConsent: true,
         granularConsent: { ...MANDATORY_GRANULAR_CONSENT, anonymizedImprovement: false },
       })
       .expect(400);
@@ -100,7 +101,7 @@ describe('AN-30 OAuth ayağı — GRANULAR_CONSENT_ENABLED açık', () => {
   it('complete-registration: geçersiz/bozuk pendingToken 400 döner (PENDING_TOKEN_GECERSIZ)', async () => {
     const res = await agent()
       .post('/api/auth/oauth/complete-registration')
-      .send({ pendingToken: 'bozuk.token.degeri', granularConsent: MANDATORY_GRANULAR_CONSENT })
+      .send({ pendingToken: 'bozuk.token.degeri', kvkkConsent: true, granularConsent: MANDATORY_GRANULAR_CONSENT })
       .expect(400);
 
     expect((res.body as { error: string }).error).toBe('PENDING_TOKEN_GECERSIZ');
@@ -119,6 +120,7 @@ describe('AN-30 OAuth ayağı — GRANULAR_CONSENT_ENABLED açık', () => {
       .post('/api/auth/oauth/complete-registration')
       .send({
         pendingToken: pending.pendingToken,
+        kvkkConsent: true,
         granularConsent: { ...MANDATORY_GRANULAR_CONSENT, crossTenantSharing: true, oceanProfiling: false },
       })
       .expect(200);
@@ -170,11 +172,48 @@ describe('AN-30 OAuth ayağı — GRANULAR_CONSENT_ENABLED açık', () => {
 
     const res = await agent()
       .post('/api/auth/oauth/complete-registration')
-      .send({ pendingToken: pending.pendingToken, granularConsent: MANDATORY_GRANULAR_CONSENT })
+      .send({ pendingToken: pending.pendingToken, kvkkConsent: true, granularConsent: MANDATORY_GRANULAR_CONSENT })
       .expect(403);
     expect((res.body as { error: string }).error).toBe('TENANT_ONAY_BEKLENIYOR');
 
     const user = await testPrisma.user.findUnique({ where: { email } });
     expect(user).toBeNull();
+  });
+  it('complete-registration: 18 yaş + Aydınlatma beyanı (kvkkConsent) yoksa 400 döner ve kullanıcı OLUŞMAZ', async () => {
+    const email = `oauth-kvkk-yok-${Date.now()}@test.local`;
+    const pending = expectPending(
+      await handleOAuthCallback(
+        { providerUserId: 'g-kvkk', email, fullName: 'Beyansız', provider: 'GOOGLE' },
+        { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'n' },
+      ),
+    );
+
+    await agent()
+      .post('/api/auth/oauth/complete-registration')
+      .send({ pendingToken: pending.pendingToken, granularConsent: MANDATORY_GRANULAR_CONSENT })
+      .expect(400);
+
+    expect(await testPrisma.user.findUnique({ where: { email } })).toBeNull();
+  });
+
+  it('complete-registration: çift tıklama (eşzamanlı iki istek) → biri 200, diğeri 409 KULLANICI_MEVCUT (500 DEĞİL)', async () => {
+    const email = `oauth-cift-${Date.now()}@test.local`;
+    const pending = expectPending(
+      await handleOAuthCallback(
+        { providerUserId: 'g-cift', email, fullName: 'Çift Tıklama', provider: 'GOOGLE' },
+        { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'n' },
+      ),
+    );
+    const body = { pendingToken: pending.pendingToken, kvkkConsent: true, granularConsent: MANDATORY_GRANULAR_CONSENT };
+
+    const [a, b] = await Promise.all([
+      agent().post('/api/auth/oauth/complete-registration').send(body),
+      agent().post('/api/auth/oauth/complete-registration').send(body),
+    ]);
+
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const conflict = a.status === 409 ? a : b;
+    expect((conflict.body as { error: string }).error).toBe('KULLANICI_MEVCUT');
+    expect(await testPrisma.user.count({ where: { email } })).toBe(1);
   });
 });

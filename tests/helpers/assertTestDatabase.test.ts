@@ -47,4 +47,58 @@ describe('assertSafeTestDatabase', () => {
       assertSafeTestDatabase({ TEST_DATABASE_URL: NEON, DATABASE_URL: NEON }, { requireDistinct: true }),
     ).toThrow(/aynı değere/);
   });
+
+  describe('KR-14 — aynı veritabanının farklı yazılışı korumayı geçemez', () => {
+    const NEON_DIRECT =
+      'postgresql://u:p@ep-fancy-tooth-ab4u5xhr.eu-west-2.aws.neon.tech/neondb?sslmode=require';
+    const NEON_UPPER_PORT =
+      'postgresql://other:pw@EP-FANCY-TOOTH-AB4U5XHR-POOLER.eu-west-2.aws.neon.tech:5432/neondb';
+
+    it('pooler adresi ↔ doğrudan adres (aynı Neon DB) → HATA', () => {
+      expect(() =>
+        assertSafeTestDatabase({ TEST_DATABASE_URL: NEON_DIRECT, DATABASE_URL: NEON }, { requireDistinct: true }),
+      ).toThrow(/aynı veritabanını/);
+    });
+
+    it('büyük harf + açık varsayılan port + farklı kullanıcı/parametre (aynı DB) → HATA', () => {
+      expect(() =>
+        assertSafeTestDatabase({ TEST_DATABASE_URL: NEON_UPPER_PORT, DATABASE_URL: NEON }, { requireDistinct: true }),
+      ).toThrow(/aynı veritabanını/);
+    });
+
+    it('aynı sunucu, FARKLI veritabanı adı → izin', () => {
+      const otherDb = NEON_DIRECT.replace('/neondb', '/menti_test');
+      expect(
+        assertSafeTestDatabase({ TEST_DATABASE_URL: otherDb, DATABASE_URL: NEON }, { requireDistinct: true }),
+      ).toBe(otherDb);
+    });
+
+    it('canlı desenine uymayan uzak host da aynı DB ise → HATA (ör. docker `postgres` servisi)', () => {
+      const PROD_LIKE = 'postgresql://app:pw@postgres:5432/menti';
+      expect(() =>
+        assertSafeTestDatabase({ TEST_DATABASE_URL: PROD_LIKE, DATABASE_URL: PROD_LIKE }, { requireDistinct: true }),
+      ).toThrow(/aynı veritabanını/);
+    });
+
+    it('çözümlenemeyen uzak test adresi → HATA (fail-closed)', () => {
+      expect(() =>
+        assertSafeTestDatabase({ TEST_DATABASE_URL: 'bozuk-adres', DATABASE_URL: NEON }, { requireDistinct: true }),
+      ).toThrow(/çözümlenemedi/);
+    });
+
+    it('TEST_DATABASE_URL yok + tanınmayan uzak host → HATA', () => {
+      expect(() => assertSafeTestDatabase({ DATABASE_URL: 'postgresql://app:pw@postgres:5432/menti' })).toThrow(
+        /bu makinedeki/,
+      );
+      expect(() => assertSafeTestDatabase({ DATABASE_URL: 'postgresql://u:p@db.example.com/x' })).toThrow(
+        /bu makinedeki/,
+      );
+    });
+
+    it('TEST_DATABASE_URL yok + 127.0.0.1 → izin', () => {
+      const loop = 'postgresql://postgres:postgres@127.0.0.1:5432/menti_mentor_test';
+      expect(assertSafeTestDatabase({ DATABASE_URL: loop })).toBe(loop);
+    });
+  });
 });
+

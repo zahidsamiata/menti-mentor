@@ -13,6 +13,7 @@ import {
   completeOAuthRegistration,
   getMe,
   reapply,
+  reconsent,
 } from '../controllers/authController.js';
 
 const router = Router();
@@ -41,6 +42,10 @@ router.post('/reset-password', passwordResetRateLimiter, resetPassword as unknow
 
 // GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir)
 router.get('/me', requireTenant as unknown as RequestHandler, getMe as unknown as RequestHandler);
+
+// POST /api/auth/reconsent — GV-18: rıza metni sürümü güncellenince kullanıcı yeniden onaylar.
+// Kimlik oturumdan (req.auth) alınır, gövdeden DEĞİL — komşu uç `getMe` ile aynı desen.
+router.post('/reconsent', requireTenant as unknown as RequestHandler, reconsent as unknown as RequestHandler);
 
 // POST /api/auth/reapply — reddedilen kullanıcı tekrar başvurur (İş 3 P3).
 // loginRateLimiter: şifre doğrulaması içerdiğinden IP-bazlı brute-force koruması.

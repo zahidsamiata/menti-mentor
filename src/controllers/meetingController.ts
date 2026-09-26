@@ -7,6 +7,7 @@ import { UserRole, MeetingFormat, MeetingStatus, Weekday } from '@prisma/client'
 import { sendMeetingRequestEmail, sendMeetingApprovalEmail } from '../services/emailService.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
+import { isPairBlocked } from '../services/blockList.js';
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
@@ -66,6 +67,18 @@ function getCtx(req: RequestWithTenant): { userId: string; tenantId: string } | 
   const tenantId = req.tenant?.tenantId;
   if (!userId || !tenantId) return null;
   return { userId, tenantId };
+}
+
+// KR-19: idari blok kontrolü — randevu oluşturma yolları (createMeeting/bookMeeting) hiçbir
+// zaman blockedPairs'ı okumuyordu, yönetici tarafından engellenmiş çift randevu alabiliyordu
+// (kod-inceleme-2026-09-24.md D4). Bu iki yol cross-tenant DESTEKLEMEZ (mentör her zaman
+// istek tenant'ında aranır) — tek tenant'ın blockedPairs'ı yeterli, ekstra sorgu gerekmez.
+async function isAdminBlockedPair(tenantId: string, userIdA: string, userIdB: string): Promise<boolean> {
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { blockedPairs: true },
+  });
+  return isPairBlocked(tenant?.blockedPairs, userIdA, userIdB);
 }
 
 // Haftalık görüşme limiti — bir hafta = sabit 7 günlük UTC kova (bucket).
@@ -201,6 +214,11 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
 
   if (!mentor) return res.status(404).json({ error: 'NOT_FOUND', message: 'Mentor bulunamadı.' });
   if (!menti)  return res.status(404).json({ error: 'NOT_FOUND', message: 'Menti bulunamadı.' });
+
+  // KR-19: idari blok — varlık ifşası yok, jenerik hata.
+  if (await isAdminBlockedPair(req.tenant.tenantId, mentor.id, menti.id)) {
+    return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
+  }
 
   const startsAt = new Date(scheduledAt);
   const endsAtDate = endsAt
@@ -424,8 +442,8 @@ const BookMeetingSchema = z.object({
   format:         z.enum(['ONLINE', 'IN_PERSON', 'PHONE']),
   startsAt:       z.string(),
   endsAt:         z.string(),
-  // GV-03: yalnız http(s) adres — bağlantı karşı tarafın ekranında tıklanabilir olarak çizilir.
-  locationUrl:    z.string().max(2048).refine(isHttpUrl, { message: 'Görüşme bağlantısı http:// ya da https:// ile başlayan geçerli bir adres olmalı.' }).optional(),
+  // KARAR-7 (A): online toplantı linkini artık MENTİ değil MENTÖR girer — mentör randevuyu
+  // onaylarken (bkz. ApproveMeetingSchema). Menti'den locationUrl kabul edilmez.
   locationText:   z.string().optional(),
   phoneNumber:    z.string().optional(),
   requestMessage: z.string()
@@ -445,7 +463,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   const {
     matchId, mentorUserId, format,
     startsAt: startsAtRaw, endsAt: endsAtRaw,
-    locationUrl, locationText, phoneNumber,
+    locationText, phoneNumber,
     requestMessage,
   } = parsed.data;
 
@@ -463,6 +481,11 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   }
   if (start.getTime() < Date.now()) {
     return res.status(400).json({ error: 'Geçmiş bir zamana görüşme oluşturulamaz.' });
+  }
+
+  // KR-19: idari blok — varlık ifşası yok, jenerik hata.
+  if (await isAdminBlockedPair(tenantId, mentorUserId, userId)) {
+    return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
   }
 
   // matchId varsa eşleşme doğrulaması
@@ -540,7 +563,8 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
       startsAt:       start,
       endsAt:         end,
       requestMessage,
-      locationUrl:    format === MeetingFormat.ONLINE    ? (locationUrl  ?? null) : null,
+      // KARAR-7 (A): ONLINE görüşmede link bilgisi mentör onayında girilir, talep anında boş.
+      locationUrl:    null,
       locationText:   format === MeetingFormat.IN_PERSON ? (locationText ?? null) : null,
       phoneNumber:    format === MeetingFormat.PHONE     ? (phoneNumber  ?? null) : null,
     },
@@ -580,6 +604,11 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   return res.status(201).json({ meeting, awaitingMentorApproval: true });
 }
 
+// KARAR-7 (A): online görüşmenin toplantı linkini mentör, onay anında girer (menti değil).
+const ApproveMeetingSchema = z.object({
+  locationUrl: z.string().max(2048).refine(isHttpUrl, { message: 'Görüşme bağlantısı http:// ya da https:// ile başlayan geçerli bir adres olmalı.' }).optional(),
+});
+
 // 4-a) approveMeetingByMentor — Mentor gelen görüşme talebini onaylar
 export async function approveMeetingByMentor(req: RequestWithTenant, res: Response) {
   const ctx = getCtx(req);
@@ -588,11 +617,16 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
 
   const meetingId = req.params['meetingId'] as string;
 
+  const parsedBody = validateRequest(ApproveMeetingSchema, req.body ?? {}, res);
+  if (!parsedBody.success) return parsedBody.response;
+  const { locationUrl } = parsedBody.data;
+
   // KR-17: onay anında çakışma YENİDEN kontrol edilir — bekleyen (PENDING) talepler randevu
   // alırken çakışma sayılmıyor; aynı saate gelen iki talep ikisi de onaylanabiliyordu.
   // Kontrol + güncelleme tek Serializable işlemde: eşzamanlı iki onaydan yalnız biri geçer.
   type ApproveOutcome =
     | { kind: 'not_found' }
+    | { kind: 'missing_link' }
     | { kind: 'conflict' }
     | { kind: 'ok'; updated: Awaited<ReturnType<typeof prisma.meeting.update>>; mentiUserId: string };
   let outcome: ApproveOutcome;
@@ -600,9 +634,14 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
     outcome = await prisma.$transaction(async (tx) => {
       const meeting = await tx.meeting.findFirst({
         where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },
-        select: { id: true, mentiUserId: true, startsAt: true, endsAt: true },
+        select: { id: true, mentiUserId: true, startsAt: true, endsAt: true, format: true },
       });
       if (!meeting) return { kind: 'not_found' as const };
+
+      // KARAR-7 (A): ONLINE görüşme linksiz onaylanamaz — mentör bu adımda girmek zorunda.
+      if (meeting.format === MeetingFormat.ONLINE && !locationUrl) {
+        return { kind: 'missing_link' as const };
+      }
 
       const clash = await tx.meeting.findFirst({
         where: {
@@ -619,7 +658,10 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
 
       const updated = await tx.meeting.update({
         where: { id: meeting.id },
-        data:  { status: MeetingStatus.SCHEDULED },
+        data:  {
+          status: MeetingStatus.SCHEDULED,
+          ...(meeting.format === MeetingFormat.ONLINE ? { locationUrl } : {}),
+        },
       });
       return { kind: 'ok' as const, updated, mentiUserId: meeting.mentiUserId };
     }, { isolationLevel: 'Serializable' });
@@ -631,6 +673,9 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
 
   if (outcome.kind === 'not_found') {
     return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+  }
+  if (outcome.kind === 'missing_link') {
+    return res.status(400).json({ error: 'Online görüşmeyi onaylamak için toplantı bağlantısı girmelisiniz.' });
   }
   if (outcome.kind === 'conflict') {
     return res.status(409).json({ error: 'Bu saatte sizin ya da mentinin onaylanmış başka bir görüşmesi var.' });

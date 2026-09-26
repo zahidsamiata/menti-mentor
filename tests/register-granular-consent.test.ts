@@ -11,13 +11,29 @@
  *  - zorunlu maddelerden biri eksik/false → 400, kullanıcı OLUŞTURULMAZ (transaction rollback).
  *  - isteğe bağlı `true` → ilgili satır da yazılır.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
-import { agent } from './helpers/request.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant } from './helpers/factories.js';
 import type { Tenant } from '@prisma/client';
 
-describe('Kayıt — granüler rıza (AN-30)', () => {
+// AN-30 7b: `granularConsent` artık YALNIZ backend bayrağı (`GRANULAR_CONSENT_ENABLED`) açıkken
+// okunur. Bu dosya bayrağı kendi sürecinde açar (desen: tests/oauth-granular-consent.test.ts).
+// Bayrak KAPALIYKEN alanın yok sayıldığı: tests/register-granular-consent-flag-off.test.ts.
+type RequestModule = typeof import('./helpers/request.js');
+let agent: RequestModule['agent'];
+
+beforeAll(async () => {
+  vi.stubEnv('GRANULAR_CONSENT_ENABLED', 'true');
+  vi.resetModules();
+  ({ agent } = await import('./helpers/request.js'));
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
+describe('Kayıt — granüler rıza (AN-30, bayrak AÇIK)', () => {
   let tenant: Tenant;
 
   beforeEach(async () => {

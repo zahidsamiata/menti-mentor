@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, tenantHeaders, type TestAgent } from './helpers/request.js';
-import { cleanDb } from './helpers/db.js';
+import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createMentor, createMenti, createAdminUser } from './helpers/factories.js';
 import { signToken } from '../src/middleware/jwtAuth.js';
 import type { User } from '@prisma/client';
@@ -76,6 +76,31 @@ describe('Chat v1 — konuşma + mesajlaşma + ownership', () => {
       .set(tenantHeaders(tenantId, tokenFor(menti)))
       .send({ mentorUserId: stranger.id, message: 'hedef menti — olmaz' })
       .expect(400);
+  });
+
+  // KR-19: yönetici bu çifti bloklamışsa konuşma AÇILAMAZ (önceden hiç kontrol edilmiyordu —
+  // kod-inceleme-2026-09-24.md D4). Varlık ifşası yok: jenerik hata + DB'ye yazılmadığı kontrol.
+  it('yönetici tarafından bloklanmış çift konuşma başlatamaz (403), DB\'ye yazılmaz', async () => {
+    await testPrisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        blockedPairs: [
+          { fromUserId: menti.id, toUserId: mentor.id, blockedAt: new Date().toISOString(), blockedBy: 'test-admin' },
+        ],
+      },
+    });
+
+    const res = await http
+      .post('/api/conversations')
+      .set(tenantHeaders(tenantId, tokenFor(menti)))
+      .send({ mentorUserId: mentor.id, message: 'Merhaba, sizinle çalışmak istiyorum.' })
+      .expect(403);
+    expect(res.body.error).toBe('ISLEM_YAPILAMIYOR');
+
+    const convo = await testPrisma.conversation.findUnique({
+      where: { mentorUserId_mentiUserId: { mentorUserId: mentor.id, mentiUserId: menti.id } },
+    });
+    expect(convo).toBeNull();
   });
 
   it('mentör inbox\'ta konuşmayı ve unread=1 görür; menti unread=0', async () => {

@@ -15,6 +15,7 @@
  */
 
 import crypto from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../db.js';
 import { config } from '../../config.js';
 import { verifyInvitationToken } from '../invitationToken.js';
@@ -240,13 +241,23 @@ export async function finalizeOAuthRegistration(
     throw new OAuthConflictError('KULLANICI_MEVCUT', 'Bu e-posta adresi ile zaten bir hesap var. Lütfen giriş yapın.');
   }
 
-  return createOAuthUserAndIssueTokens(
-    tenant,
-    { email: pending.email, fullName: pending.fullName, provider: pending.provider, avatarUrl: pending.avatarUrl },
-    pending.approvalStatus,
-    pending.role,
-    { kind: 'granular', granted },
-  );
+  try {
+    return await createOAuthUserAndIssueTokens(
+      tenant,
+      { email: pending.email, fullName: pending.fullName, provider: pending.provider, avatarUrl: pending.avatarUrl },
+      pending.approvalStatus,
+      pending.role,
+      { kind: 'granular', granted },
+    );
+  } catch (err) {
+    // AN-30 7b: yukarıdaki kontrol ile create arasında yarış (ör. çift tıklama → iki eşzamanlı
+    // istek) e-posta unique kısıtına (P2002) takılır. Genel 500 yerine yukarıdakiyle AYNI
+    // anlamlı yanıt döner; transaction geri alındığı için yarım kayıt/rıza kalmaz.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      throw new OAuthConflictError('KULLANICI_MEVCUT', 'Bu e-posta adresi ile zaten bir hesap var. Lütfen giriş yapın.');
+    }
+    throw err;
+  }
 }
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@ import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthState
 import { handleOAuthCallback, finalizeOAuthRegistration, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
 import { ensureMembershipSafe } from '../services/membership.js';
-import { recordSignupConsent, recordGranularSignupConsent } from '../services/consentService.js';
+import { recordSignupConsent, recordGranularSignupConsent, hasCurrentSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { hashRefreshToken, refreshTokenWhere } from '../services/refreshToken.js';
@@ -51,9 +51,16 @@ const RegisterSchema = z.object({
   // Davet token'ı (opsiyonel) — FE davet linkindeki token'ı iletir. Geçerliyse davetli
   // APPROVED olur (davet = onay; PO kararı 2026-09-01, Seçenek A). Yoksa PENDING kalır.
   inviteToken: z.string().optional(),
-  // AN-30 / KARAR-34 — granüler rıza ekranı (FE flag'i `NEXT_PUBLIC_GRANULAR_CONSENT_ENABLED`
-  // ile KAPALI; açılınca FE bu alanı gönderir). OPSİYONEL: alan YOKSA eski `kvkkConsent` tek-kutu
-  // davranışı AYNEN kalır (geriye dönük uyumluluk — mevcut istemciler tek satır bile değişmeden çalışır).
+});
+
+// AN-30 / KARAR-34 — granüler rıza ekranı (FE flag'i `NEXT_PUBLIC_GRANULAR_CONSENT_ENABLED`
+// ile KAPALI; açılınca FE bu alanı gönderir). OPSİYONEL: alan YOKSA eski `kvkkConsent` tek-kutu
+// davranışı AYNEN kalır (geriye dönük uyumluluk — mevcut istemciler tek satır bile değişmeden çalışır).
+// ⚠️ GÜNCELLEME (2026-09-26, AN-30 7b): `granularConsent` YALNIZ backend bayrağı
+// (`GRANULAR_CONSENT_ENABLED`) AÇIKKEN okunur. Bayrak kapalıyken `register()` alanı doğrulamadan
+// ÖNCE boşaltır → eski davranış birebir (eski şema bilinmeyen alanı zaten atıyordu); migration
+// uygulanmadan alan gönderen bir istemci yeni enum değerlerine yazmaya çalışıp 500 alamaz.
+const RegisterWithGranularSchema = RegisterSchema.extend({
   granularConsent: GranularConsentSchema.optional(),
 });
 
@@ -61,8 +68,12 @@ const RegisterSchema = z.object({
 // `pendingToken`: OAuth callback'in (flag açıkken) ürettiği "bekleyen kayıt" token'ı.
 // `granularConsent` burada ZORUNLU (opsiyonel değil) — bu uca yalnız granüler rıza ekranından
 // gelinir, eski tek-kutu yolu yoktur.
+// `kvkkConsent` (7b düzeltmesi): form kaydıyla aynı anlam — 18 yaş beyanı + KVKK Aydınlatma
+// Metni'nin okunduğu + açık rıza. Backend AYDINLATMA+ACIK_RIZA satırını yazdığı için bu beyan
+// kullanıcıdan AÇIKÇA alınmalı (gösterilmemiş metin/verilmemiş beyan kayda geçmesin).
 const CompleteOAuthRegistrationSchema = z.object({
   pendingToken: z.string().min(1, 'Token zorunlu'),
+  kvkkConsent: z.literal(true, { message: 'KVKK onayı zorunludur.' }),
   granularConsent: GranularConsentSchema,
 });
 
@@ -160,7 +171,12 @@ const REGISTER_MESSAGES = {
 
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
 export async function register(req: Request, res: Response) {
-  const parsed = validateRequest(RegisterSchema, req.body, res);
+  // AN-30 7b: granüler alan yalnız backend bayrağı açıkken okunur (bkz. RegisterWithGranularSchema).
+  // Bayrak kapalıyken alan doğrulamaya hiç girmeden atılır → eski şemayla birebir aynı sonuç.
+  const body: unknown = config.oauth.granularConsentEnabled
+    ? req.body
+    : { ...(req.body as Record<string, unknown> | undefined), granularConsent: undefined };
+  const parsed = validateRequest(RegisterWithGranularSchema, body, res);
   if (!parsed.success) return parsed.response;
 
   const { email, password, fullName, role, tenantSlug, inviteToken, granularConsent } = parsed.data;
@@ -308,6 +324,7 @@ interface SessionUserSource {
   discType: string | null;
   discVector: unknown;
   needsOrientation: boolean;
+  needsReconsent: boolean;
 }
 
 function toSessionUser(user: SessionUserSource) {
@@ -321,6 +338,9 @@ function toSessionUser(user: SessionUserSource) {
     discType: user.discType,
     discLetters: discLettersFromVector(user.discVector), // #12: türetilmiş 1–3 harf (ör. "DI")
     needsOrientation: user.needsOrientation,
+    // GV-18: rıza metni sürümü güncellenip kullanıcının aktif rızası eskide kalırsa true.
+    // Bugün CONSENT_VERSION yer tutucu olduğundan hiçbir aktif kullanıcı için tetiklenmez.
+    needsReconsent: user.needsReconsent,
   };
 }
 
@@ -436,10 +456,12 @@ export async function login(req: Request, res: Response) {
   // Retention: son aktivite anını kaydet (fire-and-forget, giriş akışını bloklamaz).
   void recordUserActivity(user.id);
 
+  const needsReconsent = !(await hasCurrentSignupConsent({ userId: user.id }));
+
   return res.json({
     accessToken,
     expiresIn: 3600,
-    user: toSessionUser(user),
+    user: toSessionUser({ ...user, needsReconsent }),
     tenant,
   });
 }
@@ -563,10 +585,12 @@ export async function refresh(req: Request, res: Response) {
 
   setRefreshCookie(res, newRefreshTokenValue);
 
+  const needsReconsent = !(await hasCurrentSignupConsent({ userId: stored.user.id }));
+
   return res.json({
     accessToken,
     expiresIn: 3600,
-    user: toSessionUser(stored.user),
+    user: toSessionUser({ ...stored.user, needsReconsent }),
     tenant: await loadSessionTenant(stored.user.tenantId),
   });
 }
@@ -803,6 +827,11 @@ const COMPLETE_OAUTH_REGISTRATION_STATUS: Record<string, number> = {
  * `/oauth/callback` sayfasındadır, ikinci bir tarayıcı yönlendirmesine gerek yok.
  */
 export async function completeOAuthRegistration(req: Request, res: Response) {
+  // AN-30 7b: bayrak kapalıyken bu uç yokmuş gibi davranır — bayrak kapatıldıktan sonra
+  // önceden üretilmiş (≤10 dk) bekleyen kayıt token'ları kullanılamaz.
+  if (!config.oauth.granularConsentEnabled) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Bulunamadı.' });
+  }
   const parsed = validateRequest(CompleteOAuthRegistrationSchema, req.body, res);
   if (!parsed.success) return parsed.response;
 
@@ -866,11 +895,15 @@ export async function getMe(req: RequestWithTenant, res: Response) {
     },
   });
 
+  // GV-18: rıza sürümü güncel mi (bkz. toSessionUser'daki aynı alan).
+  const needsReconsent = !(await hasCurrentSignupConsent({ userId: user.id }));
+
   // #12: kendi profili — DISC çoklu-harf türetilir (vektör kendi verisi, zaten dönüyor).
   return res.json({
     ...user,
     tenantId: req.tenant.tenantId, // KR-03: istemci kurum markasını bu kimlikle eşler (oturumdan)
     discLetters: discLettersFromVector(user.discVector),
+    needsReconsent,
     tenant: tenant
       ? {
           id: tenant.id,
@@ -883,4 +916,25 @@ export async function getMe(req: RequestWithTenant, res: Response) {
         }
       : null,
   });
+}
+
+// ─── POST /api/auth/reconsent — GV-18: rıza metni sürümü güncellenince kullanıcı yeniden onaylar ──
+export async function reconsent(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Oturum açılmamış.' });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { id: req.auth.userId, tenantId: req.tenant.tenantId, isActive: true },
+    select: { id: true },
+  });
+  if (!user) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+  }
+
+  // Kayıttaki AYDINLATMA+ACIK_RIZA dual-write ile AYNI yardımcı — yeni satır açar, eskisi silinmez
+  // (denetim izi korunur). Sürüm her zaman GÜNCEL CONSENT_VERSION ile yazılır.
+  await recordSignupConsent({ userId: user.id }, 'FORM');
+
+  return res.json({ needsReconsent: false });
 }
