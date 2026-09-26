@@ -67,7 +67,7 @@ const DISC_QUESTIONS: QuestionSeed[] = [
     type: 'CORE', discDimension: 'I', order: 8,
   },
   {
-    text: 'Başkalarını motive etmek ve ilham vermek benim doğal bir güçlüğüm gibi hissettiriyor.',
+    text: 'Başkalarını motive etmek ve ilham vermek benim doğal bir güçlü yanım gibi hissettiriyor.',
     type: 'CORE', discDimension: 'I', order: 9,
   },
   {
@@ -537,7 +537,7 @@ const SJT_QUESTIONS: SjtQuestionSeed[] = [
     answerFormat: 'SINGLE',
     forRole: 'MENTOR',
     scenario:
-      'Menteen, haftalardır çalıştığı bir projeyi sana getiriyor. Yaklaşımının temelden hatalı olduğunu fark ediyorsun. Ne yaparsın?',
+      'Mentin, haftalardır çalıştığı bir projeyi sana getiriyor. Yaklaşımının temelden hatalı olduğunu fark ediyorsun. Ne yaparsın?',
     options: [
       { key: 'A', label: "Doğrudan söylerim: 'Bu yaklaşım çalışmaz, şu adımlarla yeniden kuralım.'", weights: { a: -2, c: 2, e: 1 }, signalsArchetype: 'M4' },
       { key: 'B', label: "Önce dinlerim, sorular sorarak hatayı kendisinin görmesini sağlarım.", weights: { o: 2, e: 1, a: 1 }, signalsArchetype: 'M2' },
