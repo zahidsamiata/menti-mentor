@@ -7,6 +7,7 @@ import { UserRole, MeetingFormat, MeetingStatus, Weekday } from '@prisma/client'
 import { sendMeetingRequestEmail, sendMeetingApprovalEmail } from '../services/emailService.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
+import { isPairBlocked } from '../services/blockList.js';
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
@@ -66,6 +67,18 @@ function getCtx(req: RequestWithTenant): { userId: string; tenantId: string } | 
   const tenantId = req.tenant?.tenantId;
   if (!userId || !tenantId) return null;
   return { userId, tenantId };
+}
+
+// KR-19: idari blok kontrolü — randevu oluşturma yolları (createMeeting/bookMeeting) hiçbir
+// zaman blockedPairs'ı okumuyordu, yönetici tarafından engellenmiş çift randevu alabiliyordu
+// (kod-inceleme-2026-09-24.md D4). Bu iki yol cross-tenant DESTEKLEMEZ (mentör her zaman
+// istek tenant'ında aranır) — tek tenant'ın blockedPairs'ı yeterli, ekstra sorgu gerekmez.
+async function isAdminBlockedPair(tenantId: string, userIdA: string, userIdB: string): Promise<boolean> {
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { blockedPairs: true },
+  });
+  return isPairBlocked(tenant?.blockedPairs, userIdA, userIdB);
 }
 
 // Haftalık görüşme limiti — bir hafta = sabit 7 günlük UTC kova (bucket).
@@ -201,6 +214,11 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
 
   if (!mentor) return res.status(404).json({ error: 'NOT_FOUND', message: 'Mentor bulunamadı.' });
   if (!menti)  return res.status(404).json({ error: 'NOT_FOUND', message: 'Menti bulunamadı.' });
+
+  // KR-19: idari blok — varlık ifşası yok, jenerik hata.
+  if (await isAdminBlockedPair(req.tenant.tenantId, mentor.id, menti.id)) {
+    return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
+  }
 
   const startsAt = new Date(scheduledAt);
   const endsAtDate = endsAt
@@ -463,6 +481,11 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   }
   if (start.getTime() < Date.now()) {
     return res.status(400).json({ error: 'Geçmiş bir zamana görüşme oluşturulamaz.' });
+  }
+
+  // KR-19: idari blok — varlık ifşası yok, jenerik hata.
+  if (await isAdminBlockedPair(tenantId, mentorUserId, userId)) {
+    return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
   }
 
   // matchId varsa eşleşme doğrulaması

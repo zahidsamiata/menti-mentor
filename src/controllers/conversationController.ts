@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
+import { isPairBlocked } from '../services/blockList.js';
 import { notifyMatchRequestReceived, notifyConversationRejected } from '../services/notificationService.js';
 import { sendNewChatMessageEmail } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
@@ -152,6 +153,26 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
     return res.status(403).json({
       error: 'SHARED_POOL_KAPALI',
       message: 'Bu mentörün tenant havuzu kapalı olduğu için konuşma başlatılamaz.',
+    });
+  }
+
+  // KR-19: idari blok kontrolü — taraflardan HERHANGİ BİRİNİN tenant'ında (menti veya
+  // mentörün home tenant'ı) bu çift bloklanmışsa konuşma başlatılamaz. Cross-tenant
+  // (shared pool) senaryosunda blok hangi tarafın admin'i koyduysa o tarafta durabilir,
+  // bu yüzden İKİ tenant da kontrol edilir (rankMentisForMentor/rankMentorsForMenti'nin
+  // aksine — oradaki "yalnız kendi tenant'ı" kısayolu liste sıralaması için yeterliyken,
+  // burada tek bir eylemi (konuşma açma) engellemek için her iki taraf da kontrol edilir).
+  // Varlık ifşası YOK: blok bilgisi kullanıcıya sızdırılmaz, jenerik hata döner.
+  const blockTenantIds = Array.from(new Set([tenantId, mentor.tenantId]));
+  const blockTenants = await prisma.tenant.findMany({
+    where: { id: { in: blockTenantIds } },
+    select: { blockedPairs: true },
+  });
+  const isBlocked = blockTenants.some((t) => isPairBlocked(t.blockedPairs, mentiId, mentor.id));
+  if (isBlocked) {
+    return res.status(403).json({
+      error: 'ISLEM_YAPILAMIYOR',
+      message: 'Bu işlem şu anda gerçekleştirilemiyor.',
     });
   }
 

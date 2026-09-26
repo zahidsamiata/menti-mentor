@@ -39,6 +39,7 @@ const ANON_EMAIL_PREFIX = 'deleted_';
 // Bağlı serbest-metin yer tutucuları (NOT NULL kolonlar için — null yerine placeholder, migration gerekmez):
 const ANON_MESSAGE_CONTENT = '[silindi]';       // Message.content (NOT NULL)
 const ANON_AGREEMENT_GOAL = '[kaldırıldı]';     // MentorshipAgreement.mentiGoal (NOT NULL)
+const ANON_ARCHETYPE = '[silindi]';             // Match.mentorArchetype/mentiArchetype (NOT NULL)
 
 /**
  * Kullanıcıya dönen DÜRÜST kapanış mesajı (madde 39, PO kararı 2026-08-26).
@@ -101,6 +102,10 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
         linkedinUrl: null,        // PII: sosyal medya (doğrudan tanımlayıcı)
         instagramUrl: null,       // PII: sosyal medya (doğrudan tanımlayıcı)
         isActive: false,      // Hesabı pasife al
+        // GV-08 (güvenlik konseyi §2.B.2): daha önce atlanan 4 alandan 2'si — password ve
+        // rejectionReason KARAR-39'dan BAĞIMSIZ, tartışmasız birer PII/kimlik-bilgisi bug'ıydı.
+        password: null,           // OAuth olmayan hesapta bile artık gerek yok — anonim hesap giriş yapamaz
+        rejectionReason: null,    // admin'in kişi hakkında yazdığı serbest metin (PII)
       },
     });
 
@@ -109,6 +114,8 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
 
     // UserProfile: PII/kişilik alanlarını temizle, Analitik (skill/goal/industry/yearsExp) koru.
     // updateMany kullanılır — profil satırı yoksa sessizce no-op olur.
+    // Profilin KENDİ id'si (userId FK'i değil) — aşağıda Match.mentorId/mentiId eşlemesi için gerekli.
+    const profile = await tx.userProfile.findFirst({ where: { userId }, select: { id: true } });
     await tx.userProfile.updateMany({
       where: { userId },
       data: {
@@ -118,6 +125,14 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
         archetype: null,
       },
     });
+    // GV-08 / KARAR-39 (arketip ayağı karardan BAĞIMSIZ — bkz. 00-KUYRUK.md GV-08 satırı):
+    // UserProfile.archetype temizleniyor ama AYNI arketip Match tablosunda düz metin duruyordu
+    // (NOT NULL → placeholder). MatchFeedback.comment (KARAR-39'un "yorum ayağı") kasıtlı
+    // DOKUNULMADI — o genuinely PO kararını bekliyor (yazarın verisi mi, silinir mi tartışmalı).
+    if (profile) {
+      await tx.match.updateMany({ where: { mentorId: profile.id }, data: { mentorArchetype: ANON_ARCHETYPE } });
+      await tx.match.updateMany({ where: { mentiId: profile.id }, data: { mentiArchetype: ANON_ARCHETYPE } });
+    }
 
     // ── Oturum/token iptali (madde 39) — anonimleşen kullanıcı eski token'la işlem yapamamalı.
     // Middleware TenantMembership.isActive kontrol eder → tüm üyelikleri pasife al (hesap kapalı,
@@ -138,7 +153,7 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     // A'nın katıldığı görüşmelerin serbest metni temizlenir.
     await tx.meeting.updateMany({
       where: { OR: [{ mentorUserId: userId }, { mentiUserId: userId }] },
-      data: { notes: null, requestMessage: null, phoneNumber: null, locationText: null },
+      data: { notes: null, requestMessage: null, phoneNumber: null, locationText: null, locationUrl: null },
     });
     // Görüşme check-in notları — yazarı userId (sahiplik net).
     await tx.meetingCheckIn.updateMany({
@@ -164,6 +179,12 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
       where: { reporterUserId: userId },
       data: { description: null },
     });
+    // GV-08 (+4 alan): denetleyenin (admin) kendi yazdığı inceleme notu — sahiplik reviewedBy'da,
+    // reporter/target'tan bağımsız. KARAR-39'dan bağımsız (yorum tartışması Match/MatchFeedback'e özgü).
+    await tx.userReport.updateMany({
+      where: { reviewedBy: userId },
+      data: { reviewNote: null },
+    });
     // Mentörlük sözleşmesi menti hedefi (NOT NULL → placeholder).
     await tx.mentorshipAgreement.updateMany({
       where: { mentiId: userId },
@@ -186,15 +207,16 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     'fullName', 'email', 'bioSummary', 'expertiseDetails', 'targetAudience',
     'volunteerHistory', 'pastProjects', 'education', 'selfProfile',
     'discVector', 'discType', 'temperamentJson', 'discResultCard', 'enneagramWing',
-    'avatarUrl', 'avatarFile', 'linkedinUrl', 'instagramUrl',
+    'avatarUrl', 'avatarFile', 'linkedinUrl', 'instagramUrl', 'password', 'rejectionReason',
     'userResponses', 'sessions',
     'userProfile.schools', 'userProfile.companies', 'userProfile.communities',
     'userProfile.disc', 'userProfile.ocean', 'userProfile.archetype',
     'message.content', 'meeting.notes', 'meeting.requestMessage', 'meeting.phoneNumber',
-    'meeting.locationText', 'meetingCheckIn.openNote', 'meetingCheckIn.nextTopicNote',
+    'meeting.locationText', 'meeting.locationUrl', 'meetingCheckIn.openNote', 'meetingCheckIn.nextTopicNote',
     'feedback.keyLearnings', 'feedback.specificComments', 'feedback.periodicCareerGrowth',
     'matchRequest.requestMessage', 'visibilityOptIn.iceBreaker', 'visibilityOptIn.requestMessage',
-    'userReport.description', 'mentorshipAgreement.mentiGoal',
+    'userReport.description', 'userReport.reviewNote', 'mentorshipAgreement.mentiGoal',
+    'match.mentorArchetype', 'match.mentiArchetype',
   ];
 
   void logger.info('SYSTEM', 'KVKK: Kullanıcı anonimleştirildi', {
