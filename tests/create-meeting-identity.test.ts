@@ -60,4 +60,23 @@ describe('GV-06: POST /api/meetings kimlik kaynağı', () => {
       .send({ mentorId: mentor.id, mentiId: menti.id, scheduledAt: inTwoDays() });
     expect(res.status).toBe(403);
   });
+
+  // KR-19: yönetici bloğu — admin yolu (createMeeting) da kontrol etmiyordu.
+  it('negatif: yönetici tarafından bloklanmış çift için admin dahi talep açamaz (403), kayıt oluşmaz', async () => {
+    await testPrisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        blockedPairs: [
+          { fromUserId: menti.id, toUserId: mentor.id, blockedAt: new Date().toISOString(), blockedBy: 'test-admin' },
+        ],
+      },
+    });
+    const admin = await createAdminUser(tenantId);
+    const res = await http.post('/api/meetings').set(tenantHeaders(tenantId, tokenFor(admin)))
+      .send({ mentorId: mentor.id, mentiId: menti.id, scheduledAt: inTwoDays() });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('ISLEM_YAPILAMIYOR');
+    const count = await testPrisma.meeting.count({ where: { mentorUserId: mentor.id, mentiUserId: menti.id } });
+    expect(count).toBe(0);
+  });
 });
