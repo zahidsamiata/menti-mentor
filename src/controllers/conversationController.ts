@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
-import { notifyMatchRequestReceived } from '../services/notificationService.js';
+import { notifyMatchRequestReceived, notifyConversationRejected } from '../services/notificationService.js';
 import { sendNewChatMessageEmail } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
 
@@ -47,6 +47,7 @@ type ConvoCore = {
   mentiUserId: string;
   mentorLastReadAt: Date | null;
   mentiLastReadAt: Date | null;
+  rejectedAt?: Date | null;
 };
 
 type Side = 'mentor' | 'menti';
@@ -159,6 +160,11 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   let convo = await prisma.conversation.findUnique({
     where: { mentorUserId_mentiUserId: { mentorUserId: mentor.id, mentiUserId: mentiId } },
   });
+  // U-18: mentör bu çifti daha önce reddettiyse konuşma kapalıdır — "yeniden başlat" ile
+  // aynı satıra sessizce mesaj eklenip ret etkisiz kılınamaz (sendMessage ile AYNI kural).
+  if (convo?.rejectedAt) {
+    return res.status(409).json({ error: 'CONVERSATION_REJECTED', message: 'Bu konuşma reddedildi.' });
+  }
   let isNew = false;
   if (!convo) {
     const matchRequest = await prisma.matchRequest.create({
@@ -207,6 +213,10 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   const side = sideOf(convo, req.auth.userId);
   if (!side) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Konuşma bulunamadı.' });
+  }
+  // U-18: reddedilen konuşma kapalıdır — ne mentör ne menti yeni mesaj yazabilir.
+  if (convo.rejectedAt) {
+    return res.status(409).json({ error: 'CONVERSATION_REJECTED', message: 'Bu konuşma reddedildi.' });
   }
 
   // Okundu-bazlı e-posta (mesaj oluşmadan ÖNCE): alıcı güncelse ilk okunmamışta mail.
@@ -311,8 +321,43 @@ export async function getMessages(req: RequestWithTenant, res: Response) {
     mentor: convo.mentor,
     menti: convo.menti,
     counterpart,
+    rejectedAt: convo.rejectedAt,
     messages,
   });
+}
+
+// ─── POST /api/conversations/:id/reject — mentör mesaj talebini nazikçe reddeder (U-18) ─
+// KARAR-22 B + KARAR-80/M1: ret sebebi (mentör yazsa dahi) menti'ye ASLA taşınmaz/gösterilmez —
+// yalnız jenerik teselli metni frontend'te sabit gösterilir + in-app bildirim gider. "Alternatif
+// mentör" akışı (I-16 orijinali, KARAR-22 seçenek A) BİLEREK yok — B "alternatif YOK" diyor.
+// Yetki: yalnız konuşmanın MENTÖRÜ (menti/admin/yabancı → sendMessage/markRead ile AYNI desen: 404).
+export async function rejectConversation(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
+  }
+  const convo = await prisma.conversation.findUnique({ where: { id: req.params['id'] as string } });
+  if (!convo) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Konuşma bulunamadı.' });
+  }
+  const side = sideOf(convo, req.auth.userId);
+  if (side !== 'mentor') {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Konuşma bulunamadı.' });
+  }
+
+  // İdempotent no-op (suggestTag/completeJourney ile AYNI desen — zaten yapılmış bir eylemin
+  // tekrarı hata DEĞİLDİR): zaten reddedilmişse mevcut hâli aynen döner, ikinci kez yazmaz.
+  if (convo.rejectedAt) {
+    return res.json({ conversation: { id: convo.id, rejectedAt: convo.rejectedAt } });
+  }
+
+  const updated = await prisma.conversation.update({
+    where: { id: convo.id },
+    data: { rejectedAt: new Date() },
+  });
+
+  void notifyConversationRejected(convo.mentiUserId, convo.tenantId);
+
+  return res.json({ conversation: { id: updated.id, rejectedAt: updated.rejectedAt } });
 }
 
 // ─── POST /api/conversations/:id/read — okundu işaretle ────────────────────────

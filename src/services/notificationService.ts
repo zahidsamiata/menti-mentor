@@ -121,6 +121,22 @@ export async function notifyAdminsMentorCertLapsed(args: {
   });
 }
 
+/**
+ * U-18 (KARAR-22 B): mentör bir mesaj talebini (konuşmayı) reddettiğinde mentiye gönderilir.
+ * Ret sebebi mentör yazsa bile burada TAŞINMAZ — bildirim jenerik kalır; asıl teselli metni
+ * frontend'te thread ekranında sabit gösterilir (bkz. conversationController.rejectConversation).
+ */
+export async function notifyConversationRejected(
+  mentiId: string,
+  tenantId: string,
+): Promise<NotificationResult> {
+  return sendPushNotification(mentiId, {
+    title: 'Bir Eşleşme Gerçekleşmedi',
+    body: 'Mentörünüz bu konuşmayı yanıtlayamadı. Bu, profilinizle ilgili değil.',
+    data: { action: 'OPEN_MESSAGES', tenantId },
+  });
+}
+
 /** Rematch talebi oluşturulduğunda mentora bildirim gönderilir. */
 export async function notifyRematchRequested(
   targetId: string,

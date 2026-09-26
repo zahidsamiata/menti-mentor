@@ -474,6 +474,11 @@ model Conversation {
   mentorLastReadAt DateTime?
   mentiLastReadAt  DateTime?
 
+  // U-18 (KARAR-22 B + KARAR-80/M1): mentör konuşmayı nazikçe reddedebilir.
+  // Dolu olunca konuşma kapanır — hiçbir taraf yeni mesaj yazamaz (bkz. sendMessage/startConversation).
+  // Ret sebebi hiçbir yere yazılmaz/gösterilmez — mentiye jenerik teselli metni gider (ürün kararı: alternatif YOK).
+  rejectedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
