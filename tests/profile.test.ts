@@ -131,4 +131,28 @@ describe('PATCH /api/users/me/profile', () => {
     expect(tags).toContain('teknoloji');
     expect(tags).toContain('finans');
   });
+
+  // AN-28: mentör kendi görünürlük tercihini bu uçtan değiştirebilir (User.mentorVisibilityEnabled).
+  it('AN-28: MENTOR mentorVisibilityEnabled=false gönderir → kaydedilir', async () => {
+    const res = await http
+      .patch('/api/users/me/profile')
+      .set(tenantHeaders(tenant.id, userToken))
+      .send({ mentorVisibilityEnabled: false })
+      .expect(200);
+
+    expect((res.body as Record<string, unknown>).mentorVisibilityEnabled).toBe(false);
+  });
+
+  it('AN-28: MENTI aynı alanı gönderirse 403 ROL_UYUMSUZ (komşu uç desenİ: submitMatchingPreferences)', async () => {
+    const menti = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'APPROVED' });
+    const tokens = await loginAs(http, menti.email, menti.rawPassword);
+
+    const res = await http
+      .patch('/api/users/me/profile')
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .send({ mentorVisibilityEnabled: false })
+      .expect(403);
+
+    expect((res.body as Record<string, unknown>).error).toBe('ROL_UYUMSUZ');
+  });
 });

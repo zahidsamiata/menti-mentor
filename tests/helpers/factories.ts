@@ -44,6 +44,8 @@ export interface UserSeed {
   discType?: 'D' | 'I' | 'S' | 'C';
   sectorTags?: string[];
   password?: string;
+  // AN-28: mentörün menti havuzunda görünürlük tercihi (User.mentorVisibilityEnabled, @default(true)).
+  mentorVisibilityEnabled?: boolean;
 }
 
 const DEFAULT_PASSWORD = 'Test1234!';
@@ -74,6 +76,9 @@ export async function createUser(seed: UserSeed): Promise<User & { rawPassword: 
       discType: seed.discType ?? null,
       sectorTags: seed.sectorTags ?? [],
       isActive: true,
+      ...(seed.mentorVisibilityEnabled !== undefined && {
+        mentorVisibilityEnabled: seed.mentorVisibilityEnabled,
+      }),
     },
   });
 

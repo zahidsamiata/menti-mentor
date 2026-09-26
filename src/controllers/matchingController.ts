@@ -106,6 +106,11 @@ function buildMentiFacingMentorItem(m: RankedMentor) {
     skills:          m.skills,
     matchScore:      Math.round(m.totalScore), // menti'ye yüzde olarak gösterilir
     compatibilityReason: reasons.join(' · ') || 'Genel profil uyumu',
+    // AN-28: kart soluk mu (KARAR-80/M7 — meşgul VEYA profili eksik, kart GİZLENMEZ) +
+    // "Randevu Al" gösterilebilir mi (KARAR-32 revizyonu — değilse yalnız mesaj). İç sebep
+    // detayı (isVisibilityFaded/isProfileFaded) menti'ye sızmaz, yalnız nihai iki bayrak döner.
+    isFaded:    m.isFaded,
+    isBookable: m.isBookable,
   };
 }
 

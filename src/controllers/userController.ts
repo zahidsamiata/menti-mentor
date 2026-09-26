@@ -374,6 +374,10 @@ const UpdateMyProfileSchema = z.object({
   // Array alanlar
   skills:    z.array(z.string().min(1).max(100)).max(30).optional(),
   sectorTags: SECTOR_TAGS_SCHEMA,
+  // AN-28: mentörün menti havuzunda GÖRÜNÜR kalmayı istemesi — yalnız MENTOR rolü için
+  // anlamlı (aşağıda ROL_UYUMSUZ kontrolü, onboardingController.submitMatchingPreferences
+  // ile aynı desen). MENTI/ADMIN gönderirse 403.
+  mentorVisibilityEnabled: z.boolean().optional(),
 }).strict();
 
 export async function updateMyProfile(req: RequestWithTenant, res: Response) {
@@ -384,11 +388,20 @@ export async function updateMyProfile(req: RequestWithTenant, res: Response) {
 
   const user = await prisma.user.findFirst({
     where: { id: req.auth.userId, tenantId: req.tenant.tenantId },
-    select: { id: true },
+    select: { id: true, role: true },
   });
   if (!user) return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
 
-  const { education, pastProjects, volunteerHistory, ...rest } = parsed.data;
+  const { education, pastProjects, volunteerHistory, mentorVisibilityEnabled, ...rest } = parsed.data;
+
+  // Rol uyumu (komşu uç: onboardingController.submitMatchingPreferences): yalnız MENTOR kendi
+  // görünürlüğünü değiştirebilir — MENTI/ADMIN bu alanı gönderirse yanlış-rol sinyali reddedilir.
+  if (mentorVisibilityEnabled !== undefined && user.role !== 'MENTOR') {
+    return res.status(403).json({
+      error: 'ROL_UYUMSUZ',
+      message: 'Yalnızca mentörler görünürlük tercihini değiştirebilir.',
+    });
+  }
 
   const updated = await prisma.user.update({
     where: { id: user.id },
@@ -398,6 +411,7 @@ export async function updateMyProfile(req: RequestWithTenant, res: Response) {
       ...(education        !== undefined && { education }),
       ...(pastProjects     !== undefined && { pastProjects }),
       ...(volunteerHistory !== undefined && { volunteerHistory }),
+      ...(mentorVisibilityEnabled !== undefined && { mentorVisibilityEnabled }),
     },
     select: {
       id:               true,
@@ -412,6 +426,7 @@ export async function updateMyProfile(req: RequestWithTenant, res: Response) {
       sectorTags:       true,
       linkedinUrl:      true,
       instagramUrl:     true,
+      mentorVisibilityEnabled: true,
       updatedAt:        true,
     },
   });
