@@ -12,6 +12,7 @@ import {
   getAllConsents,
   revokeConsent,
   hasValidConsent,
+  hasCurrentSignupConsent,
   CONSENT_VERSION,
   SIGNUP_CONSENT_TYPES,
 } from '../src/services/consentService.js';
@@ -92,6 +93,28 @@ describe('consentService — tipli + sürümlü rıza', () => {
     expect(await hasValidConsent({ userId: user.id }, 'ACIK_RIZA')).toBe(true);
     expect(await hasValidConsent({ userId: user.id }, 'ACIK_RIZA', 'v1.0')).toBe(true);
     expect(await hasValidConsent({ userId: user.id }, 'ACIK_RIZA', 'v2.0')).toBe(false);
+  });
+
+  // GV-18: rıza sürümü değişince kullanıcı yeniden onay görecek — bu, o kontrolün çekirdeği.
+  it('hasCurrentSignupConsent: hiç rıza yoksa false', async () => {
+    expect(await hasCurrentSignupConsent({ userId: user.id })).toBe(false);
+  });
+
+  it('hasCurrentSignupConsent: kayıt rızası (AYDINLATMA+ACIK_RIZA) güncel sürümde ise true', async () => {
+    await recordSignupConsent({ userId: user.id }, 'FORM');
+    expect(await hasCurrentSignupConsent({ userId: user.id })).toBe(true);
+  });
+
+  it('hasCurrentSignupConsent: yalnız BİR tip eski sürümde kalırsa false (ikisi de güncel olmalı)', async () => {
+    await recordConsent({ userId: user.id }, 'AYDINLATMA', { source: 'FORM', version: CONSENT_VERSION });
+    await recordConsent({ userId: user.id }, 'ACIK_RIZA', { source: 'FORM', version: 'eski-surum' });
+    expect(await hasCurrentSignupConsent({ userId: user.id })).toBe(false);
+  });
+
+  it('hasCurrentSignupConsent: rıza geri çekilirse false (yeniden onay gerekir)', async () => {
+    await recordSignupConsent({ userId: user.id }, 'FORM');
+    await revokeConsent({ userId: user.id }, 'ACIK_RIZA');
+    expect(await hasCurrentSignupConsent({ userId: user.id })).toBe(false);
   });
 
   it('geçersiz özne (ikisi dolu / ikisi boş) → hata', async () => {

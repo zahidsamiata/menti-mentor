@@ -13,7 +13,7 @@ import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthState
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
 import { ensureMembershipSafe } from '../services/membership.js';
-import { recordSignupConsent } from '../services/consentService.js';
+import { recordSignupConsent, hasCurrentSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { hashRefreshToken, refreshTokenWhere } from '../services/refreshToken.js';
@@ -267,6 +267,7 @@ interface SessionUserSource {
   discType: string | null;
   discVector: unknown;
   needsOrientation: boolean;
+  needsReconsent: boolean;
 }
 
 function toSessionUser(user: SessionUserSource) {
@@ -280,6 +281,9 @@ function toSessionUser(user: SessionUserSource) {
     discType: user.discType,
     discLetters: discLettersFromVector(user.discVector), // #12: türetilmiş 1–3 harf (ör. "DI")
     needsOrientation: user.needsOrientation,
+    // GV-18: rıza metni sürümü güncellenip kullanıcının aktif rızası eskide kalırsa true.
+    // Bugün CONSENT_VERSION yer tutucu olduğundan hiçbir aktif kullanıcı için tetiklenmez.
+    needsReconsent: user.needsReconsent,
   };
 }
 
@@ -395,10 +399,12 @@ export async function login(req: Request, res: Response) {
   // Retention: son aktivite anını kaydet (fire-and-forget, giriş akışını bloklamaz).
   void recordUserActivity(user.id);
 
+  const needsReconsent = !(await hasCurrentSignupConsent({ userId: user.id }));
+
   return res.json({
     accessToken,
     expiresIn: 3600,
-    user: toSessionUser(user),
+    user: toSessionUser({ ...user, needsReconsent }),
     tenant,
   });
 }
@@ -522,10 +528,12 @@ export async function refresh(req: Request, res: Response) {
 
   setRefreshCookie(res, newRefreshTokenValue);
 
+  const needsReconsent = !(await hasCurrentSignupConsent({ userId: stored.user.id }));
+
   return res.json({
     accessToken,
     expiresIn: 3600,
-    user: toSessionUser(stored.user),
+    user: toSessionUser({ ...stored.user, needsReconsent }),
     tenant: await loadSessionTenant(stored.user.tenantId),
   });
 }
@@ -775,11 +783,15 @@ export async function getMe(req: RequestWithTenant, res: Response) {
     },
   });
 
+  // GV-18: rıza sürümü güncel mi (bkz. toSessionUser'daki aynı alan).
+  const needsReconsent = !(await hasCurrentSignupConsent({ userId: user.id }));
+
   // #12: kendi profili — DISC çoklu-harf türetilir (vektör kendi verisi, zaten dönüyor).
   return res.json({
     ...user,
     tenantId: req.tenant.tenantId, // KR-03: istemci kurum markasını bu kimlikle eşler (oturumdan)
     discLetters: discLettersFromVector(user.discVector),
+    needsReconsent,
     tenant: tenant
       ? {
           id: tenant.id,
@@ -792,4 +804,25 @@ export async function getMe(req: RequestWithTenant, res: Response) {
         }
       : null,
   });
+}
+
+// ─── POST /api/auth/reconsent — GV-18: rıza metni sürümü güncellenince kullanıcı yeniden onaylar ──
+export async function reconsent(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Oturum açılmamış.' });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { id: req.auth.userId, tenantId: req.tenant.tenantId, isActive: true },
+    select: { id: true },
+  });
+  if (!user) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+  }
+
+  // Kayıttaki AYDINLATMA+ACIK_RIZA dual-write ile AYNI yardımcı — yeni satır açar, eskisi silinmez
+  // (denetim izi korunur). Sürüm her zaman GÜNCEL CONSENT_VERSION ile yazılır.
+  await recordSignupConsent({ userId: user.id }, 'FORM');
+
+  return res.json({ needsReconsent: false });
 }

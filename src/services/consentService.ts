@@ -160,3 +160,16 @@ export async function hasValidConsent(
   if (requiredVersion && active.version !== requiredVersion) return false;
   return true;
 }
+
+/**
+ * GV-18: kayıt rızası (AYDINLATMA + ACIK_RIZA) GÜNCEL sürümde mi? İkisinden biri eksik/eski
+ * sürümdeyse false — çağıran (authController) kullanıcıya yeniden onay gerektiğini bildirir.
+ * `CONSENT_VERSION` bugün yer tutucu ('v1.0', bkz. dosya başı TODO) — avukat metni gelip sürüm
+ * gerçekten artana kadar bu kontrol hiçbir aktif kullanıcı için true dönmez (hepsi zaten v1.0).
+ */
+export async function hasCurrentSignupConsent(subject: ConsentSubject, db: Db = prisma): Promise<boolean> {
+  for (const type of SIGNUP_CONSENT_TYPES) {
+    if (!(await hasValidConsent(subject, type, CONSENT_VERSION, db))) return false;
+  }
+  return true;
+}
