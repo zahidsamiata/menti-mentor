@@ -283,3 +283,58 @@ describe('Y1-B9: kurulumdaki / incelemedeki kurum KİLİTLENMEZ', () => {
     expect(res.body.verificationStatus).toBe('PENDING_REVIEW');
   });
 });
+
+describe('Y1-B9: askıdaki kurumda KVKK md.11 veri hakları kesilmez', () => {
+  let http: TestAgent;
+  let tenant: Tenant;
+  let menti: User;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http = agent();
+    tenant = await createTenant();
+    await createAdminUser(tenant.id);
+    menti = await createMenti(tenant.id);
+  });
+
+  const suspend = async (how: 'freeze' | 'reject') => {
+    await http.post(`/api/platform/tenants/${tenant.id}/${how}`).set('Cookie', platformCookie()).send({}).expect(200);
+  };
+
+  for (const how of ['freeze', 'reject'] as const) {
+    it(`${how}: kendi verisini dışa aktarma 200; diğer uçlar hâlâ 403 KURUM_ASKIDA`, async () => {
+      await suspend(how);
+      const exp = await http.get('/api/me/data-export').set(tenantHeaders(tenant.id, tokenFor(menti)));
+      expect(exp.status).toBe(200);
+
+      const other = await http.get('/api/meetings/active').set(tenantHeaders(tenant.id, tokenFor(menti)));
+      expect(other.status).toBe(403);
+      expect(other.body.error).toBe(SUSPENDED);
+      const profile = await http.get(`/api/users/${menti.id}`).set(tenantHeaders(tenant.id, tokenFor(menti)));
+      expect(profile.status).toBe(403);
+      expect(profile.body.error).toBe(SUSPENDED);
+    });
+  }
+
+  it('dondurulmuş kurumda hesabını kapatma (anonimleştirme) çalışır', async () => {
+    await suspend('freeze');
+    const res = await http
+      .post('/api/me/delete-account')
+      .set(tenantHeaders(tenant.id, tokenFor(menti)))
+      .send({ confirmEmail: menti.email });
+    expect(res.status).toBe(200);
+
+    const u = await testPrisma.user.findUnique({ where: { id: menti.id }, select: { isActive: true, email: true } });
+    expect(u?.isActive).toBe(false);
+    expect(u?.email).not.toBe(menti.email);
+  });
+
+  it('muafiyet yalnız izin listesindeki yöntem+yol için: sondaki "/" ve sorgu dizesi de muaf, başka yöntem değil', async () => {
+    await suspend('freeze');
+    const slash = await http.get('/api/me/data-export/?x=1').set(tenantHeaders(tenant.id, tokenFor(menti)));
+    expect(slash.status).toBe(200);
+    const wrongMethod = await http.post('/api/me/data-export').set(tenantHeaders(tenant.id, tokenFor(menti))).send({});
+    expect(wrongMethod.status).toBe(403);
+    expect(wrongMethod.body.error).toBe(SUSPENDED);
+  });
+});

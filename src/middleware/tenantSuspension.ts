@@ -27,6 +27,37 @@ export function isTenantSuspended(tenant: TenantStatusFields): boolean {
   return !tenant.isActive || tenant.verificationStatus === 'REJECTED';
 }
 
+/**
+ * Askı kapısından MUAF uçlar — TEK liste (requireTenant adım 4b burayı okur).
+ *
+ * - `GET /api/auth/me`: oturum/durum okuma. Reddedilen kurumun yöneticisi ret ekranını
+ *   (`/onboarding/stk/pending-review`), askıdaki üye askı bilgisini (`tenant.isSuspended`) buradan görür.
+ * - `GET /api/me/data-export`, `POST /api/me/delete-account`: KVKK md.11 veri sahibi hakları
+ *   (verisini öğrenme/alma, silinmesini isteme; hesap kapatma ACIK_RIZA'yı da geri çeker).
+ *   Bunlar YASAL haktır, ürün tercihi değildir: kurumun askıya alınması üyenin kendi verisi
+ *   üzerindeki hakkını kesemez. Uçlar kimliği token'dan alır (IDOR yok) ve rate-limitlidir.
+ *
+ * Yeni bir uç buraya eklenmeden önce: yalnız KENDİ verisini okuyan/silen ya da oturum durumunu
+ * gösteren uç olmalı; kurum verisi dönen ya da kurum adına yazan uç ASLA eklenmez.
+ */
+const SUSPENSION_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
+  { method: 'GET',  path: '/api/auth/me' },
+  { method: 'GET',  path: '/api/me/data-export' },
+  { method: 'POST', path: '/api/me/delete-account' },
+];
+
+/**
+ * İstek askı kapısından muaf mı? `originalUrl` kullanılır (router mount'undan bağımsız tam yol);
+ * sorgu dizesi atılır, Express'in varsayılan yönlendirmesiyle uyumlu olsun diye büyük/küçük harf
+ * ve sondaki "/" normalize edilir.
+ */
+export function isSuspensionExemptRequest(method: string, originalUrl: string): boolean {
+  const rawPath = originalUrl.split('?')[0] ?? '';
+  const path = (rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath).toLowerCase();
+  const upperMethod = method.toUpperCase();
+  return SUSPENSION_EXEMPT_ROUTES.some((r) => r.method === upperMethod && r.path === path);
+}
+
 /** Askıdaki kurumun üyesine dönen yanıt (403). Dondurma/ret ayrımı ve iç detay verilmez. */
 export const TENANT_SUSPENDED_BODY = {
   error:   'KURUM_ASKIDA',
