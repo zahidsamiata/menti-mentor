@@ -1,6 +1,6 @@
 import type { UserProfile, UserRole } from '@prisma/client';
 import { prisma } from '../db.js';
-import { discToOcean, deriveArchetype, mergeWithSjt } from './disc-to-ocean.adapter.js';
+import { discToOcean, deriveArchetype, mergeWithSjt, toOceanScale } from './disc-to-ocean.adapter.js';
 import {
   type OceanVector,
   BLOCKED_PAIRS,
@@ -89,12 +89,16 @@ export async function computeAndStoreProfile(
   });
   if (!profile) throw new Error(`UserProfile bulunamadı: ${userId}`);
 
-  const discDerived = discToOcean({
-    d: profile.discD,
-    i: profile.discI,
-    s: profile.discS,
-    c: profile.discC,
-  });
+  // PS-A1 (KARAR-10): profile.discD/I/S/C 0-1 ölçeğinde (oran) saklanır — discToOcean ise
+  // 0-100 ölçeği bekler. toOceanScale bu tek, açık dönüşüm noktasıdır (bkz. disc-to-ocean.adapter.ts).
+  const discDerived = discToOcean(
+    toOceanScale({
+      D: profile.discD,
+      I: profile.discI,
+      S: profile.discS,
+      C: profile.discC,
+    }),
+  );
   const ocean = sjtOverrides ? mergeWithSjt(discDerived, sjtOverrides) : discDerived;
   const archetype = deriveArchetype(ocean, role);
   const profileSource =
