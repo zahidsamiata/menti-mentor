@@ -8,6 +8,7 @@ import supertest from 'supertest';
 import { agent, createTestApp } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createAdminUser, createTenant } from './helpers/factories.js';
+import { signToken, PLATFORM_AUDIENCE } from '../src/middleware/jwtAuth.js';
 
 // logger.info fire-and-forget olabilir → kaydı kısa süre bekle.
 async function waitForAuditLog(message: string, tries = 30) {
@@ -29,6 +30,16 @@ async function platformAgent() {
     })
     .expect(200);
   return plat;
+}
+
+// Platform çerezi path:'/api/platform' ile sınırlı → /api/super-admin isteklerine agent göndermez;
+// tenant-verification.test.ts ile aynı desen: token doğrudan üretilip çerez elle eklenir.
+function makePlatformCookie(): string {
+  const token = signToken(
+    { sub: 'platform-admin', tenantId: '__platform__', role: 'ADMIN', fullName: 'Platform Yöneticisi', isPlatformAdmin: true },
+    { audience: PLATFORM_AUDIENCE },
+  );
+  return `platform_token=${encodeURIComponent(token)}`;
 }
 
 const REPORTER_CONTACT = 'gizli-bildiren@example.org';
@@ -81,8 +92,7 @@ describe('Y-02 · platform okuma uçları denetim izi', () => {
       where: { id: admin.id },
       data: { email: 'kurum-yoneticisi@ornek-kurum.org', fullName: 'Kurum Yöneticisi' },
     });
-    const plat = await platformAgent();
-    const res = await plat.get('/api/super-admin/tenants/pending').expect(200);
+    const res = await agent().get('/api/super-admin/tenants/pending').set('Cookie', makePlatformCookie()).expect(200);
     const body = JSON.stringify(res.body);
     expect(body).not.toContain('kurum-yoneticisi@ornek-kurum.org');
     expect(body).not.toContain('Kurum Yöneticisi');
