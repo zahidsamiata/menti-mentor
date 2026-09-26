@@ -8,6 +8,7 @@ import {
   getMessages,
   markRead,
   unreadCount,
+  rejectConversation,
 } from '../controllers/conversationController.js';
 
 const router = Router();
@@ -26,5 +27,7 @@ router.get('/:id/messages', requireAuth(), getMessages as unknown as RequestHand
 router.post('/:id/messages', requireAuth(), sendMessage as unknown as RequestHandler);
 // POST /:id/read      → okundu işaretle (yalnız katılımcı)
 router.post('/:id/read', requireAuth(), markRead as unknown as RequestHandler);
+// POST /:id/reject    → mesaj talebini nazikçe reddet (yalnız mentör, U-18)
+router.post('/:id/reject', requireAuth(), rejectConversation as unknown as RequestHandler);
 
 export default router;

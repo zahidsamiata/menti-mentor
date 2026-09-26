@@ -189,3 +189,135 @@ describe('Chat v1 — konuşma + mesajlaşma + ownership', () => {
     expect(thread.body.messages).toHaveLength(2);
   });
 });
+
+describe('U-18 — mesaj talebi reddi (Conversation.rejectedAt)', () => {
+  let http: TestAgent;
+  let tenantId: string;
+  let mentor: Awaited<ReturnType<typeof createMentor>>;
+  let otherMentor: Awaited<ReturnType<typeof createMentor>>;
+  let menti: Awaited<ReturnType<typeof createMenti>>;
+  let admin: Awaited<ReturnType<typeof createAdminUser>>;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http = agent();
+    const tenant = await createTenant();
+    tenantId = tenant.id;
+    mentor = await createMentor(tenantId);
+    otherMentor = await createMentor(tenantId);
+    menti = await createMenti(tenantId);
+    admin = await createAdminUser(tenantId);
+  });
+
+  async function startConversation(msg = 'Merhaba, sizinle çalışmak istiyorum çünkü sektörünüz ilgi alanım.') {
+    const res = await http
+      .post('/api/conversations')
+      .set(tenantHeaders(tenantId, tokenFor(menti)))
+      .send({ mentorUserId: mentor.id, message: msg })
+      .expect(201);
+    return res.body.conversation.id as string;
+  }
+
+  it('mentör kendi konuşmasını reddedebilir — 200, rejectedAt dolu (DB\'de doğrulanır)', async () => {
+    const convId = await startConversation();
+
+    const res = await http
+      .post(`/api/conversations/${convId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .expect(200);
+    expect(res.body.conversation.id).toBe(convId);
+    expect(res.body.conversation.rejectedAt).toBeTruthy();
+
+    const row = await testPrisma.conversation.findUnique({ where: { id: convId } });
+    expect(row?.rejectedAt).toBeInstanceOf(Date);
+  });
+
+  it('menti reddetmeye çalışırsa engellenir (404) — yalnız mentör reddedebilir', async () => {
+    const convId = await startConversation();
+
+    await http
+      .post(`/api/conversations/${convId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(menti)))
+      .expect(404);
+
+    const row = await testPrisma.conversation.findUnique({ where: { id: convId } });
+    expect(row?.rejectedAt).toBeNull();
+  });
+
+  it('aynı-tenant admin reddetmeye çalışırsa engellenir (404)', async () => {
+    const convId = await startConversation();
+
+    await http
+      .post(`/api/conversations/${convId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(admin)))
+      .expect(404);
+  });
+
+  it('IDOR: başka bir mentörün konuşmasını reddetmeye çalışma engellenir (404)', async () => {
+    const convId = await startConversation();
+
+    await http
+      .post(`/api/conversations/${convId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(otherMentor)))
+      .expect(404);
+
+    const row = await testPrisma.conversation.findUnique({ where: { id: convId } });
+    expect(row?.rejectedAt).toBeNull();
+  });
+
+  it('reddedilen konuşmaya mesaj göndermeye çalışma — hem mentör hem menti 409, DB\'ye yazılmaz', async () => {
+    const convId = await startConversation();
+    await http
+      .post(`/api/conversations/${convId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .expect(200);
+
+    await http
+      .post(`/api/conversations/${convId}/messages`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .send({ message: 'artık yazamam' })
+      .expect(409);
+    await http
+      .post(`/api/conversations/${convId}/messages`)
+      .set(tenantHeaders(tenantId, tokenFor(menti)))
+      .send({ message: 'ben de yazamam' })
+      .expect(409);
+
+    const thread = await http
+      .get(`/api/conversations/${convId}/messages`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .expect(200);
+    expect(thread.body.messages).toHaveLength(1); // yalnız ilk mesaj — reddedilmiş konuşmaya EKLENMEDİ
+    expect(thread.body.rejectedAt).toBeTruthy();
+  });
+
+  it('reddedilen bir çifte "yeniden başlatma" (POST /api/conversations) ile mesaj sızdırılamaz — 409', async () => {
+    const convId = await startConversation();
+    await http
+      .post(`/api/conversations/${convId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .expect(200);
+
+    await http
+      .post('/api/conversations')
+      .set(tenantHeaders(tenantId, tokenFor(menti)))
+      .send({ mentorUserId: mentor.id, message: 'tekrar deniyorum' })
+      .expect(409);
+  });
+
+  it('idempotency: iki kez reddetme ikinci seferde de 200 döner (no-op), rejectedAt değişmez', async () => {
+    const convId = await startConversation();
+
+    const first = await http
+      .post(`/api/conversations/${convId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .expect(200);
+    const firstRejectedAt = first.body.conversation.rejectedAt as string;
+
+    const second = await http
+      .post(`/api/conversations/${convId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .expect(200);
+    expect(second.body.conversation.rejectedAt).toBe(firstRejectedAt);
+  });
+});
