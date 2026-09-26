@@ -474,6 +474,12 @@ model Conversation {
   mentorLastReadAt DateTime?
   mentiLastReadAt  DateTime?
 
+  // AN-26 (KARAR-53 ④): yanıtsız mentör hatırlatma/eskalasyon guard'ları — her aşama bir kez.
+  // YALNIZ e-posta gerçekten gittiyse yazılır (U-16). null = o aşama henüz gönderilmedi.
+  mentorReminder1SentAt DateTime? // 3. gün — mentöre 1. hatırlatma
+  mentorReminder2SentAt DateTime? // 7. gün — mentöre 2. hatırlatma
+  adminEscalatedAt      DateTime? // 10. gün — kurum yöneticisine eskalasyon
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
