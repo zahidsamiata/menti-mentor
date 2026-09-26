@@ -13,6 +13,7 @@ import {
   markFeedbackPrompted,
   approveMeetingByMentor,
   rejectMeetingByMentor,
+  markMeetingNotHappened,
 } from '../controllers/meetingController.js';
 import {
   submitFeedback,
@@ -113,6 +114,13 @@ router.post(
   '/:meetingId/reject',
   requireRole('MENTOR'),
   rejectMeetingByMentor as unknown as RequestHandler,
+);
+// POST /:meetingId/mark-not-happened → Mentor otomatik-tamamlanmış toplantıyı düzeltir
+// (U-01, COMPLETED → CANCELLED, "gerçekleşmedi")
+router.post(
+  '/:meetingId/mark-not-happened',
+  requireRole('MENTOR'),
+  markMeetingNotHappened as unknown as RequestHandler,
 );
 
 // ─── Görüşme Check-in (kısa zorunlu + derin opsiyonel) ───────────────────────
