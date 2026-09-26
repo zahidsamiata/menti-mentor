@@ -52,7 +52,9 @@ app.use(helmet({
 
 // Y-01: origin listesi config'ten (boşluk-toleranslı parse) gelir — env'de virgülden
 // sonra boşluk olsa bile origin doğru eşleşir.
-app.use(cors({ origin: config.allowedOrigins, credentials: true }));
+// exposedHeaders: frontend ayrı origin'de; dosya indirmede (F-18 KPI CSV) sunucunun önerdiği
+// dosya adını okuyabilmesi için Content-Disposition tarayıcıya açılır (CORS varsayılanı gizler).
+app.use(cors({ origin: config.allowedOrigins, credentials: true, exposedHeaders: ['Content-Disposition'] }));
 app.use(express.json({ limit: '1mb' }));
 app.use(requestLogger);
 

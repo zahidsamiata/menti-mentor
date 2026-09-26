@@ -124,3 +124,4 @@ describe('F-18: KPI raporu CSV dışa aktarımı', () => {
     expect(JSON.stringify(logs[0])).not.toMatch(/@/);
   });
 });
+
