@@ -83,6 +83,38 @@ function byScoreDescThenId<T extends { totalScore: number }>(idOf: (item: T) => 
   };
 }
 
+// ─── AN-07 · Aday toplama: skorlamadan ÖNCE kesme yok ─────────────────────────
+//
+// Önceden aday sorgusu `orderBy: id` + `take: 500` ile SKORDAN ÖNCE kesiliyordu: 500'den
+// kalabalık (paylaşımlı) havuzda id'si büyük en iyi adaylar hiç skorlanmıyordu (PS-01
+// kararlı ama kapsayıcı değildi). Artık adaylar id-artan sayfalarla (keyset: id > son id)
+// toplanır, HEPSİ skorlanır, kesme skordan SONRA yapılır.
+// Sayfa boyu eski take ile aynı (500) → küçük havuzda tek sorgu, davranış birebir.
+// MAX_MATCH_CANDIDATES bellek/süre emniyet tavanıdır (tek kurum + havuz için fiilen erişilmez);
+// aşılırsa id-artan ilk MAX_MATCH_CANDIDATES aday skorlanır (kararlı, PS-01).
+//
+// Önbellek BİLİNÇLİ OLARAK YOK: sonuç blok listesi (KR-19), kurum askısı (Y1-B9b), profil,
+// müsaitlik ve üyelik yazmalarına bağlı; bunların hepsinde geçersizleştirme gerekmeden
+// önbellek eski (ör. engellenmiş) adayı gösterebilir. Maliyetin ağır kısmı (menti yönünde
+// mentör başına profil-tamamlanma sorguları) artık yalnız döndürülen ilk N'e yapıldığı için
+// önbelleğe gerek kalmadı.
+export const MATCH_CANDIDATE_PAGE_SIZE = 500;
+export const MAX_MATCH_CANDIDATES = 5000;
+
+async function collectCandidatePages<T extends { id: string }>(
+  fetchPage: (afterId: string | undefined) => Promise<T[]>,
+): Promise<T[]> {
+  const all: T[] = [];
+  let afterId: string | undefined;
+  while (all.length < MAX_MATCH_CANDIDATES) {
+    const page = await fetchPage(afterId);
+    all.push(...page);
+    if (page.length < MATCH_CANDIDATE_PAGE_SIZE) break;
+    afterId = page[page.length - 1]!.id;
+  }
+  return all.slice(0, MAX_MATCH_CANDIDATES);
+}
+
 export async function rankMentisForMentor(args: {
   mentorId: string;
   mentorTenantId: string;
@@ -169,11 +201,12 @@ export async function rankMentisForMentor(args: {
   // Aday sorgusu: User.role (global) yerine TenantMembership.role (tenant-başına) kontrol eder.
   // tenantId: { in: eligibleTenantIds } korunur — hem Prisma RLS override hem shared-pool genişlemesi için.
   // Filtreleme SIKILAŞTIRILDI: User.tenantId eligibility + per-tenant MENTI membership aktifliği.
-  const candidates = await prisma.user.findMany({
+  // AN-07: sayfalı toplama — skorlamadan önce kesme yok (bkz. collectCandidatePages).
+  const candidates = await collectCandidatePages((afterId) => prisma.user.findMany({
     where: {
       // Kendi kendine eşleşme yok (PS-07 bulgusu): paylaşımlı havuzda aynı kişi başka kurumda
       // menti olabilir; aday listesinde kendini görmemeli (opt-in ucundaki SELF_MATCH_YASAK ile aynı kural).
-      id: { not: args.mentorId },
+      id: afterId ? { not: args.mentorId, gt: afterId } : { not: args.mentorId },
       isActive: true,
       approvalStatus: 'APPROVED',
       tenantId: { in: eligibleTenantIds },
@@ -194,12 +227,10 @@ export async function rankMentisForMentor(args: {
       interactionStyle: true,
       expectationCategories: true,
     },
-    // Kararlı sıra (PS-01): take:500 kesmesi artık hep aynı 500 adayı seçer (id artan).
-    // ⚠️ 500'den kalabalık havuzda kesme SKORDAN ÖNCE yapılır → id'si büyük adaylar hiç
-    // skorlanmaz (kararlı ama kapsayıcı değil). Kapsayıcılık AN-07 (take:500 + cache) işidir.
+    // Kararlı sıra (PS-01) + keyset sayfalama (AN-07): id artan, sayfa başına 500.
     orderBy: { id: 'asc' },
-    take: 500,
-  });
+    take: MATCH_CANDIDATE_PAGE_SIZE,
+  }));
 
   const opts = {
     mentorTimeCommitment:   mentor.timeCommitment as string | null | undefined,
@@ -427,9 +458,13 @@ export async function rankMentorsForMenti(args: {
   // okunmuyordu, engellenen mentör menti'nin listesinde görünmeye devam ediyordu.
   const blockedMentorIds = buildBlockedCounterpartSet(menti.id, tenantConfig?.blockedPairs);
 
-  const rawMentors = await prisma.user.findMany({
+  // AN-07: sayfalı toplama — skorlamadan önce kesme yok (bkz. collectCandidatePages).
+  // Yalnız skor + kart için gereken hafif alanlar okunur; ağır zenginleştirme (müsaitlik,
+  // profil tamamlanma) aşağıda yalnız döndürülecek ilk N mentöre yapılır.
+  const rawMentors = await collectCandidatePages((afterId) => prisma.user.findMany({
     where: {
-      id: { not: args.mentiId }, // kendi kendine eşleşme yok (bkz. rankMentisForMentor)
+      // kendi kendine eşleşme yok (bkz. rankMentisForMentor)
+      id: afterId ? { not: args.mentiId, gt: afterId } : { not: args.mentiId },
       isActive: true,
       approvalStatus: 'APPROVED',
       tenantId: { in: eligibleTenantIds },
@@ -445,12 +480,10 @@ export async function rankMentorsForMenti(args: {
       skills: true,
       mentorVisibilityEnabled: true,
     },
-    // Kararlı sıra (PS-01): take:500 kesmesi artık hep aynı 500 adayı seçer (id artan).
-    // ⚠️ 500'den kalabalık havuzda kesme SKORDAN ÖNCE yapılır → id'si büyük adaylar hiç
-    // skorlanmaz (kararlı ama kapsayıcı değil). Kapsayıcılık AN-07 (take:500 + cache) işidir.
+    // Kararlı sıra (PS-01) + keyset sayfalama (AN-07): id artan, sayfa başına 500.
     orderBy: { id: 'asc' },
-    take: 500,
-  });
+    take: MATCH_CANDIDATE_PAGE_SIZE,
+  }));
 
   // İdari blok kontrolü — sonraki müsaitlik/tamamlanma sorgularından ÖNCE filtrelenir
   // (blocklu mentör için gereksiz sorgu yapılmaz).
@@ -464,10 +497,28 @@ export async function rankMentorsForMenti(args: {
   // Hata → varsayılan 0.6/0.4 (patlama yok).
   const { sectorWeight, discWeight } = await getScoringWeightsSafe(args.mentiTenantId);
 
+  // Önce SKORLA + SIRALA + KES (AN-07): skor yalnız sektör/DISC'e bağlı, bookable/completeness
+  // sıralamayı etkilemez → zenginleştirme kesmeden sonra yapılabilir, sonuç birebir aynı.
+  const scored = mentors.map((m) => {
+    const breakdown = computeTotalScore({
+      mentiTags:   menti.sectorTags,
+      mentorTags:  m.sectorTags,
+      mentiDisc:   menti.discType as DiscType | null,
+      mentorDisc:  m.discType as DiscType | null,
+      mentiVector,
+      sectorWeight,
+      discWeight,
+    });
+    return { mentor: m, breakdown, totalScore: breakdown.totalScore };
+  });
+  scored.sort(byScoreDescThenId((s) => s.mentor.id));
+  // limit verilmezse eski üst sınır (500) korunur — ağır zenginleştirme sınırsız büyümesin.
+  const top = scored.slice(0, args.limit || MATCH_CANDIDATE_PAGE_SIZE);
+
   // AN-28: "randevu alınabilir mi" — en az bir aktif müsaitlik bloğu var mı, TEK toplu sorguyla
   // (N+1 yasak, CLAUDE.md "Koşullu Paralellik"). groupBy, mentör başına ayrı sorgu yerine tüm
-  // adayları tek seferde döner.
-  const mentorIds = mentors.map((m) => m.id);
+  // adayları tek seferde döner. AN-07: yalnız döndürülecek mentörler için.
+  const mentorIds = top.map((s) => s.mentor.id);
   const activeBlockGroups = mentorIds.length
     ? await prisma.availabilityBlock.groupBy({
         by: ['userId'],
@@ -480,8 +531,9 @@ export async function rankMentorsForMenti(args: {
   // AN-28/U-19: profil "çekirdek tamamlanma" — computeProfileCompleteness UserProfile yoksa
   // THROW eder (nadir ama olası: mentör onboarding'i bitirmemiş). Tek mentörün profili eksik
   // diye TÜM liste çökmesin → try/catch, güvenli varsayılan = soluk göster (coreComplete:false).
+  // AN-07: yalnız döndürülecek ilk N mentör için (önceden 500 adayın hepsi için çalışıyordu).
   const coreCompleteFlags = await Promise.all(
-    mentors.map(async (m) => {
+    top.map(async ({ mentor: m }) => {
       try {
         const result = await computeProfileCompleteness(m.id, m.tenantId);
         return result.coreComplete;
@@ -491,17 +543,7 @@ export async function rankMentorsForMenti(args: {
     }),
   );
 
-  const items: RankedMentor[] = mentors.map((m, idx) => {
-    const breakdown = computeTotalScore({
-      mentiTags:   menti.sectorTags,
-      mentorTags:  m.sectorTags,
-      mentiDisc:   menti.discType as DiscType | null,
-      mentorDisc:  m.discType as DiscType | null,
-      mentiVector,
-      sectorWeight,
-      discWeight,
-    });
-
+  const items: RankedMentor[] = top.map(({ mentor: m, breakdown }, idx) => {
     const isVisibilityFaded = !m.mentorVisibilityEnabled;
     const hasActiveBlock    = bookableUserIds.has(m.id);
     const isBookable         = hasActiveBlock && m.mentorVisibilityEnabled;
@@ -525,6 +567,5 @@ export async function rankMentorsForMenti(args: {
     };
   });
 
-  items.sort(byScoreDescThenId((m) => m.mentorId));
-  return { items: args.limit ? items.slice(0, args.limit) : items };
+  return { items };
 }
