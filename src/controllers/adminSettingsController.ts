@@ -5,6 +5,8 @@ import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
+import { maskEmail, maskName } from '../services/mask.js';
+import { auditPlatformAction } from '../services/platformAudit.js';
 
 // Tenant ADMIN kapısı: authenticateTenantAdmin (middleware/tenantAdminAuth.ts) — GV-11.
 
@@ -328,7 +330,7 @@ export async function updateTenantStatus(req: Request, res: Response) {
 
 // ─── GET /api/super-admin/tenants/pending ─────────────────────────────────────
 
-export async function listPendingTenants(_req: Request, res: Response) {
+export async function listPendingTenants(req: Request, res: Response) {
   const tenants = await prisma.tenant.findMany({
     where: { verificationStatus: 'PENDING_REVIEW' },
     select: {
@@ -341,14 +343,22 @@ export async function listPendingTenants(_req: Request, res: Response) {
       createdAt:          true,
       users: {
         where: { role: 'ADMIN' },
-        select: { id: true, email: true, fullName: true },
+        select: { fullName: true, email: true },
         take: 1,
       },
     },
     orderBy: { createdAt: 'asc' },
   });
 
-  return res.json({ items: tenants, total: tenants.length });
+  // Y-02 komşu uç: `/api/platform/tenants/pending` (platformController.maskPendingTenantRow, KVKK md.89) ile AYNI
+  // koruma — başvuran yöneticinin kimliği maskeli, okuma denetim izi bırakır. Bu uç frontend'de kullanılmıyor
+  // (mükerrer, K-13); kaldırılması silme protokolüne tabidir, o güne kadar sızıntı kapalı tutulur.
+  const items = tenants.map((t) => ({
+    ...t,
+    users: t.users.map((u) => ({ fullName: maskName(u.fullName), email: maskEmail(u.email) })),
+  }));
+  await auditPlatformAction('VIEW_PENDING_TENANTS', req, { count: items.length, via: 'super-admin' });
+  return res.json({ items, total: items.length });
 }
 
 // ─── PATCH /api/super-admin/tenants/:id/verify ────────────────────────────────
