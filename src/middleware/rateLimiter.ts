@@ -144,6 +144,26 @@ export function passwordResetRateLimiter(req: Request, res: Response, next: Next
   return next();
 }
 
+// ─── Oturum içi şifre değiştirme (GV-19) ─────────────────────────────────────
+// POST /auth/change-password mevcut şifreyi doğrular → erişim anahtarı ele geçirilmiş bir
+// oturumdan mevcut şifreyi tahmin etmeye (brute-force) açıktır. İki kova birlikte sayılır:
+// kullanıcı başına (imzalı erişim anahtarından) ve IP başına. Eşik şifre sıfırlamayla aynı
+// sıkılıkta (varsayılan 5/dk). Aynı in-memory sayaçlar → setup.ts'teki resetRateLimiters sıfırlar.
+/** POST /api/auth/change-password — kullanıcı + IP başına sıkı limit (varsayılan 5/dk). */
+export function passwordChangeRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['PASSWORD_CHANGE_RATE_RPM'] ?? 5);
+  const withinIpLimit = checkLimit(`pwchange:ip:${clientIp(req)}`, limit);
+  const withinUserLimit = checkLimit(`pwchange:${generalRateLimitKey(req)}`, limit);
+  if (!withinIpLimit || !withinUserLimit) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla şifre değiştirme denemesi. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
 // ─── Public onboarding / kötüye-kullanım koruması ────────────────────────────
 // Aşağıdaki endpoint'ler kasıtlı public'tir ve çoğu X-Tenant-Id taşımaz → hepsi
 // generalRateLimiter'ın zayıf 'anon' kovasına düşer. Login/passwordReset deseniyle

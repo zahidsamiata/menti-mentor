@@ -199,6 +199,8 @@ export async function getPlatformLogs(req: Request, res: Response) {
     prisma.systemLog.count({ where }),
   ]);
 
+  // Y-02 (KVKK Md.12): platform okuma uçları da iz bırakır — kim, ne zaman, hangi filtreyle (PII yok).
+  await auditPlatformAction('VIEW_PLATFORM_LOGS', req, { count: logs.length, level, category });
   return res.json({ items: logs, total });
 }
 
@@ -234,7 +236,7 @@ export function maskPendingTenantRow(t: PendingTenantRow) {
 }
 
 // GET /api/platform/tenants/pending
-export async function listPendingTenants(_req: Request, res: Response) {
+export async function listPendingTenants(req: Request, res: Response) {
   const tenants = await prisma.tenant.findMany({
     where: { verificationStatus: 'PENDING_REVIEW' },
     select: {
@@ -256,6 +258,7 @@ export async function listPendingTenants(_req: Request, res: Response) {
   });
 
   const items = tenants.map(maskPendingTenantRow);
+  await auditPlatformAction('VIEW_PENDING_TENANTS', req, { count: items.length });
   return res.json({ items, total: items.length });
 }
 
@@ -285,6 +288,7 @@ export async function listAllTenants(req: Request, res: Response) {
     prisma.tenant.count(),
   ]);
 
+  await auditPlatformAction('VIEW_ALL_TENANTS', req, { count: items.length, page });
   return res.json({ items, total, page, limit });
 }
 
@@ -427,6 +431,7 @@ export async function listSuspicionReports(req: Request, res: Response) {
     contact: maskContact(contact),
   }));
 
+  await auditPlatformAction('VIEW_SUSPICION_REPORTS', req, { count: items.length });
   return res.json({ items, total: items.length });
 }
 

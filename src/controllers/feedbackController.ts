@@ -37,7 +37,7 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
     where: { id: meetingId, tenantId: req.tenant.tenantId },
     select: { id: true, status: true, mentorUserId: true, mentiUserId: true, hasFeedback: true },
   });
-  if (!meeting) return res.status(404).json({ error: 'NOT_FOUND', message: 'Toplantı bulunamadı.' });
+  if (!meeting) return res.status(404).json({ error: 'NOT_FOUND', message: 'Görüşme bulunamadı.' });
 
   // SAHİPLİK (güvenlik): yazma yolunda taraf kontrolü EKSİKTİ — kimliği doğrulanmış herhangi
   // bir kullanıcı, tarafı olmadığı bir görüşmeye değerlendirme yazıp mentörün kalıcı kalite
@@ -57,10 +57,10 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
   }
 
   if (meeting.status !== 'COMPLETED') {
-    return res.status(409).json({ error: 'DURUM_HATASI', message: 'Geri bildirim yalnızca tamamlanmış toplantılar için verilebilir.' });
+    return res.status(409).json({ error: 'DURUM_HATASI', message: 'Geri bildirim yalnızca tamamlanmış görüşmeler için verilebilir.' });
   }
   if (meeting.hasFeedback) {
-    return res.status(409).json({ error: 'ZATEN_MEVCUT', message: 'Bu toplantı için geri bildirim zaten gönderildi.' });
+    return res.status(409).json({ error: 'ZATEN_MEVCUT', message: 'Bu görüşme için geri bildirim zaten gönderildi.' });
   }
 
   const data = parsed.data;
@@ -283,8 +283,8 @@ export async function sendPendingFeedbackReminders(req: RequestWithTenant, res: 
 
   const failed = attempted - delivered;
   return res.json({
-    message: `${delivered} toplantı için hatırlatma e-postası gönderildi${
-      failed > 0 ? ` (${failed} toplantıya gönderilemedi).` : '.'
+    message: `${delivered} görüşme için hatırlatma e-postası gönderildi${
+      failed > 0 ? ` (${failed} görüşmeye gönderilemedi).` : '.'
     }`,
     count: attempted,
     delivered,

@@ -16,17 +16,18 @@ import { ensureMembershipSafe } from '../services/membership.js';
 import { recordSignupConsent, hasCurrentSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
-import { hashRefreshToken, refreshTokenWhere } from '../services/refreshToken.js';
+import { hashRefreshToken, refreshTokenLookupKeys, refreshTokenWhere } from '../services/refreshToken.js';
 import { verifyInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
+import { passwordSchema } from '../services/passwordPolicy.js';
 
 
 // ─── Validation şemaları ──────────────────────────────────────────────────────
 
 const RegisterSchema = z.object({
   email: z.string().email('Geçerli bir e-posta adresi girin'),
-  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  password: passwordSchema,
   fullName: z.string().min(2, 'Ad soyad zorunlu').max(120),
   role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol mentör ya da menti olmalı.' }),
   tenantSlug: z.string().min(1, 'Kuruluş kodu zorunlu'),
@@ -51,7 +52,14 @@ const ForgotPasswordSchema = z.object({
 
 const ResetPasswordSchema = z.object({
   token: z.string().min(1, 'Token zorunlu'),
-  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  password: passwordSchema,
+});
+
+// GV-19: oturum içi şifre değiştirme. Mevcut şifre yalnız "boş değil" kontrolünden geçer —
+// eski kurala göre belirlenmiş şifreler de doğrulanabilmeli (LoginSchema ile aynı).
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Mevcut şifre zorunlu').max(1024),
+  newPassword: passwordSchema,
 });
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
@@ -621,6 +629,80 @@ export async function resetPassword(req: Request, res: Response) {
   ]);
 
   return res.json({ message: 'Şifreniz başarıyla güncellendi. Lütfen tekrar giriş yapın.' });
+}
+
+// ─── POST /api/auth/change-password — GV-19: oturum içi şifre değiştirme ─────
+/**
+ * Kimlik OTURUMDAN (req.auth) alınır, gövdeden DEĞİL — komşu uçlar getMe/reconsent ile aynı desen.
+ * Hash ve oturum düşürme resetPassword ile aynı: BCRYPT_ROUNDS + refresh token silme. Fark:
+ * isteği yapan oturum (refresh çerezi) KORUNUR, kullanıcı bu cihazda çıkışa zorlanmaz; diğer tüm
+ * cihazlardaki oturumlar düşer. Çerez yoksa hepsi silinir ve yanıtta belirtilir.
+ */
+export async function changePassword(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Oturum açılmamış.' });
+  }
+
+  const parsed = validateRequest(ChangePasswordSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
+  const { currentPassword, newPassword } = parsed.data;
+
+  const user = await prisma.user.findFirst({
+    where: { id: req.auth.userId, tenantId: req.tenant.tenantId, isActive: true },
+    select: { id: true, password: true, authProvider: true },
+  });
+  if (!user) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+  }
+
+  // OAuth (Google/LinkedIn) hesabının uygulamada şifresi yoktur; şifre o sağlayıcıda yönetilir.
+  if (user.authProvider !== 'LOCAL' || !user.password) {
+    return res.status(409).json({
+      error: 'SIFRE_DEGISTIRILEMEZ',
+      message: 'Hesabınız Google veya LinkedIn ile açıldığı için şifre bu sağlayıcı üzerinden yönetilir.',
+    });
+  }
+
+  const currentMatches = await bcrypt.compare(currentPassword, user.password);
+  if (!currentMatches) {
+    return res.status(400).json({
+      error: 'MEVCUT_SIFRE_HATALI',
+      message: 'Mevcut şifre hatalı.',
+    });
+  }
+
+  if (await bcrypt.compare(newPassword, user.password)) {
+    return res.status(400).json({
+      error: 'SIFRE_AYNI',
+      message: 'Yeni şifre mevcut şifrenizden farklı olmalı.',
+    });
+  }
+
+  const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+
+  // Bu isteği yapan oturumun refresh kaydı korunur (yalnız bu kullanıcıya aitse eşleşir);
+  // diğer tüm oturumlar düşer. Şifre güncelleme + oturum düşürme tek transaction.
+  const currentRefreshToken = getRefreshTokenFromCookie(req);
+  const keepKeys = currentRefreshToken ? refreshTokenLookupKeys(currentRefreshToken) : [];
+  const [, revoked] = await prisma.$transaction([
+    prisma.user.update({ where: { id: user.id }, data: { password: hashedPassword } }),
+    prisma.refreshToken.deleteMany({
+      where: keepKeys.length > 0
+        ? { userId: user.id, token: { notIn: keepKeys } }
+        : { userId: user.id },
+    }),
+  ]);
+
+  const currentSessionKept = keepKeys.length > 0
+    && (await prisma.refreshToken.count({ where: { userId: user.id, token: { in: keepKeys } } })) > 0;
+
+  return res.json({
+    message: currentSessionKept
+      ? 'Şifreniz güncellendi. Diğer cihazlardaki oturumlarınız kapatıldı.'
+      : 'Şifreniz güncellendi. Tüm oturumlarınız kapatıldı; bir sonraki yenilemede tekrar giriş yapmanız gerekebilir.',
+    currentSessionKept,
+    revokedSessions: revoked.count,
+  });
 }
 
 // ─── OAuth: provider başlatma + callback ─────────────────────────────────────

@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
-import { loginRateLimiter, passwordResetRateLimiter, registerRateLimiter } from '../middleware/rateLimiter.js';
+import { loginRateLimiter, passwordChangeRateLimiter, passwordResetRateLimiter, registerRateLimiter } from '../middleware/rateLimiter.js';
 import {
   register,
   login,
@@ -13,6 +13,7 @@ import {
   getMe,
   reapply,
   reconsent,
+  changePassword,
 } from '../controllers/authController.js';
 
 const router = Router();
@@ -45,6 +46,16 @@ router.get('/me', requireTenant as unknown as RequestHandler, getMe as unknown a
 // POST /api/auth/reconsent — GV-18: rıza metni sürümü güncellenince kullanıcı yeniden onaylar.
 // Kimlik oturumdan (req.auth) alınır, gövdeden DEĞİL — komşu uç `getMe` ile aynı desen.
 router.post('/reconsent', requireTenant as unknown as RequestHandler, reconsent as unknown as RequestHandler);
+
+// POST /api/auth/change-password — GV-19: oturum içi şifre değiştirme (mevcut şifre zorunlu).
+// Kimlik oturumdan (req.auth) — komşu uçlar getMe/reconsent ile aynı desen. passwordChangeRateLimiter:
+// mevcut şifre doğrulaması içerdiğinden kullanıcı + IP başına brute-force koruması.
+router.post(
+  '/change-password',
+  passwordChangeRateLimiter,
+  requireTenant as unknown as RequestHandler,
+  changePassword as unknown as RequestHandler,
+);
 
 // POST /api/auth/reapply — reddedilen kullanıcı tekrar başvurur (İş 3 P3).
 // loginRateLimiter: şifre doğrulaması içerdiğinden IP-bazlı brute-force koruması.

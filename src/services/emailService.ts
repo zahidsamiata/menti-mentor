@@ -104,9 +104,9 @@ export async function sendMeetingRequestEmail(args: {
   const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   await send(
     args.toEmail,
-    'Yeni Toplantı Talebi',
+    'Yeni Görüşme Talebi',
     `<p>Merhaba ${escapeHtml(args.mentorName)},</p>
-     <p><strong>${escapeHtml(args.mentiName)}</strong> sizinle <strong>${tarih}</strong> tarihinde bir toplantı talep etti.</p>
+     <p><strong>${escapeHtml(args.mentiName)}</strong> sizinle <strong>${tarih}</strong> tarihinde bir görüşme talep etti.</p>
      <p>Lütfen sisteme giriş yaparak talebi onaylayın veya reddedin.</p>`,
   );
 }
@@ -120,10 +120,10 @@ export async function sendMeetingApprovalEmail(args: {
   const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   await send(
     args.toEmail,
-    'Toplantı Talebiniz Onaylandı',
+    'Görüşme Talebiniz Onaylandı',
     `<p>Merhaba ${escapeHtml(args.mentiName)},</p>
-     <p><strong>${escapeHtml(args.mentorName)}</strong>, <strong>${tarih}</strong> tarihli toplantı talebinizi onayladı.</p>
-     <p>Toplantıya hazırlıklı gelmeyi unutmayın!</p>`,
+     <p><strong>${escapeHtml(args.mentorName)}</strong>, <strong>${tarih}</strong> tarihli görüşme talebinizi onayladı.</p>
+     <p>Görüşmeye hazırlıklı gelmeyi unutmayın!</p>`,
   );
 }
 
@@ -340,9 +340,9 @@ export async function sendFeedbackReminderEmail(args: {
   const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   return send(
     args.toEmail,
-    'Toplantı Geri Bildiriminizi Bekliyoruz',
+    'Görüşme Geri Bildiriminizi Bekliyoruz',
     `<p>Merhaba ${escapeHtml(args.recipientName)},</p>
-     <p>${tarih} tarihli toplantı için henüz geri bildirim vermediniz.</p>
+     <p>${tarih} tarihli görüşme için henüz geri bildirim vermediniz.</p>
      <p>Birkaç dakikanızı ayırarak değerlendirmenizi tamamlamanız, eşleşme kalitesini artırmaktadır.</p>`,
   );
 }
