@@ -35,6 +35,11 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
+# V-16: /health'in commit alanı için — build sırasında geçilmezse 'unknown' kalır
+# (sabit ama yanlış bir sürüm göstermekten iyidir). Dokploy tarafı: 03-PO-ELLE-ISLER.md.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 USER backend
 ENV NODE_ENV=production
 EXPOSE 3000
