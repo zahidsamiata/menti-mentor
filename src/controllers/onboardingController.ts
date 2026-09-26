@@ -200,9 +200,14 @@ const VALID_QUESTION_IDS = new Set<number>(ONBOARDING_DISC_QUESTIONS.map((q) => 
 // ─── DISC Puanlama Motoru ─────────────────────────────────────────────────────
 
 interface DiscResult {
-  vector:   Record<DiscDimension, number>; // 0.00-1.00 normalize
-  dominant: DiscDimension;
-  scores:   Record<DiscDimension, number>; // ham sayım
+  vector:     Record<DiscDimension, number>; // 0.00-1.00 normalize
+  dominant:   DiscDimension;
+  scores:     Record<DiscDimension, number>; // ham sayım
+  // PS-02: discVectorService.recalcDiscVector ile aynı formül (cevaplanan / havuz).
+  // Payda burada sabit onboarding soru havuzudur (ONBOARDING_DISC_QUESTIONS.length) —
+  // bu akış Question tablosunu kullanmaz, dinamik havuz sayımı uygulanamaz.
+  // Eksikse (undefined) scoring.ts/discVectorService.ts vektörü YOK sayar (PS-02 hata zinciri).
+  confidence: number; // 0-1
 }
 
 // Eşit skor durumunda tiebreak sırası: D > I > S > C.
@@ -211,7 +216,7 @@ interface DiscResult {
 // Sabit sıra, JavaScript sort kararlılığına güvenmemek için explicit olarak uygulanır.
 const DISC_TIEBREAK_ORDER: DiscDimension[] = ['D', 'I', 'S', 'C'];
 
-function calculateDiscResult(
+export function calculateDiscResult(
   answers: Array<{ questionId: number; selectedOption: string }>,
 ): DiscResult {
   const scores: Record<DiscDimension, number> = { D: 0, I: 0, S: 0, C: 0 };
@@ -246,7 +251,15 @@ function calculateDiscResult(
     'D',
   );
 
-  return { vector, dominant, scores };
+  // Güven skoru: cevaplanan soru / toplam havuz (max 1.0).
+  // SubmitDiscSchema en az 6, en fazla 8 soru zorunlu kılar (havuzun tamamı 8);
+  // yine de Math.min(1, …) ile pool boyutu ileride değişse bile üst sınır korunur.
+  const confidence = Math.min(
+    1,
+    Math.round((answers.length / ONBOARDING_DISC_QUESTIONS.length) * 1000) / 1000,
+  );
+
+  return { vector, dominant, scores, confidence };
 }
 
 // ─── POST /api/users/profile/complete ────────────────────────────────────────
@@ -461,11 +474,16 @@ export async function submitDiscTest(req: RequestWithTenant, res: Response) {
   const result     = calculateDiscResult(parsed.data.answers);
   const resultCard = DISC_RESULT_CARDS[result.dominant];
 
+  // PS-02: confidence olmadan yazılan vektörü scoring.ts/discVectorService.ts YOK sayıyordu
+  // (`vector.confidence > 0` → undefined > 0 → false), kullanıcının onboarding cevapları
+  // eşleştirmede sessizce atlanıyordu. Persist edilen vektöre gerçek confidence dahil edilir.
+  const persistedDiscVector = { ...result.vector, confidence: result.confidence };
+
   // discResultCard: "Aha Anı" kartı + ham skorlar (debug ve analytics için)
   const discResultCard = {
     ...resultCard,
     dominant:    result.dominant,
-    discVector:  result.vector,
+    discVector:  persistedDiscVector,
     rawScores:   result.scores,
     completedAt: new Date().toISOString(),
   };
@@ -474,7 +492,7 @@ export async function submitDiscTest(req: RequestWithTenant, res: Response) {
     where: { id: req.auth.userId },
     data: {
       discType:       result.dominant,
-      discVector:     result.vector,
+      discVector:     persistedDiscVector,
       discResultCard,
     },
     select: {
