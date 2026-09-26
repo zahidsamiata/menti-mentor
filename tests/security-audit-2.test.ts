@@ -16,7 +16,7 @@ import supertest from 'supertest';
 import express from 'express';
 import cors from 'cors';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
-import { cleanDb } from './helpers/db.js';
+import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createMentor, createMenti, createAdminUser } from './helpers/factories.js';
 import feedbackLogRoutes from '../src/routes/feedbackLogRoutes.js';
 import platformRoutes from '../src/routes/platformRoutes.js';
@@ -331,5 +331,29 @@ describe('ORTA-3: createAgreement — taraf kontrolü', () => {
       .send(agreementBody(mentor.id, menti.id));
 
     expect(res.status).toBe(201);
+  });
+
+  // KR-19: yönetici bloğu — createAgreement hiç kontrol etmiyordu (kod-inceleme-2026-09-24.md D4).
+  it('yönetici tarafından bloklanmış çift anlaşma oluşturamaz → 403, DB\'ye yazılmaz', async () => {
+    await testPrisma.tenant.update({
+      where: { id: tenant.id },
+      data: {
+        blockedPairs: [
+          { fromUserId: mentor.id, toUserId: menti.id, blockedAt: new Date().toISOString(), blockedBy: 'test-admin' },
+        ],
+      },
+    });
+    const { accessToken } = await loginAs(http, mentor.email, mentor.rawPassword);
+    const res = await http
+      .post('/api/agreements')
+      .set(tenantHeaders(tenant.id, accessToken))
+      .send(agreementBody(mentor.id, menti.id));
+
+    expect(res.status).toBe(403);
+    expect((res.body as { error: string }).error).toBe('ISLEM_YAPILAMIYOR');
+    const count = await testPrisma.mentorshipAgreement.count({
+      where: { tenantId: tenant.id, mentorId: mentor.id, mentiId: menti.id },
+    });
+    expect(count).toBe(0);
   });
 });

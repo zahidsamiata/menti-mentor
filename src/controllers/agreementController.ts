@@ -18,6 +18,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
+import { isPairBlocked } from '../services/blockList.js';
 
 const CreateAgreementSchema = z.object({
   mentorId: z.string().min(1),
@@ -62,6 +63,16 @@ export async function createAgreement(req: RequestWithTenant, res: Response) {
   ]);
   if (!mentor || mentor.role !== 'MENTOR') return res.status(404).json({ error: 'MENTOR_BULUNAMADI' });
   if (!menti  || menti.role  !== 'MENTI')  return res.status(404).json({ error: 'MENTI_BULUNAMADI' });
+
+  // KR-19: idari blok — bu akış cross-tenant desteklemez (her iki taraf da aynı tenantId'de
+  // aranır), tek tenant'ın blockedPairs'ı yeterli. Varlık ifşası yok, jenerik hata.
+  const tenantForBlockCheck = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { blockedPairs: true },
+  });
+  if (isPairBlocked(tenantForBlockCheck?.blockedPairs, d.mentorId, d.mentiId)) {
+    return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
+  }
 
   // Zaten aktif anlaşma var mı?
   const existing = await prisma.mentorshipAgreement.findFirst({

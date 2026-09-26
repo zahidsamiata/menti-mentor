@@ -4,6 +4,7 @@ import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, type Di
 import { getAlgorithmWeights } from './algorithmTuner.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
 import { computeProfileCompleteness } from './profile-completeness.service.js';
+import { buildBlockedCounterpartSet } from './blockList.js';
 
 export type RankedMenti = {
   mentiId: string;
@@ -38,21 +39,6 @@ async function getScoringWeightsSafe(
   } catch {
     return { sectorWeight: 0.6, discWeight: 0.4 };
   }
-}
-
-// Mentor için bu tenant'ta idari olarak bloklanmış menti ID kümesini oluşturur.
-// JSON blob bozuk veya array değilse boş küme döner (defensive).
-function buildBlockedMentiSet(mentorId: string, blockedPairs: unknown): Set<string> {
-  if (!Array.isArray(blockedPairs)) return new Set();
-  const blocked = new Set<string>();
-  for (const pair of blockedPairs as Array<Record<string, unknown>>) {
-    if (typeof pair !== 'object' || pair === null) continue;
-    const from = pair['fromUserId'];
-    const to   = pair['toUserId'];
-    if (from === mentorId && typeof to   === 'string') blocked.add(to);
-    if (to   === mentorId && typeof from === 'string') blocked.add(from);
-  }
-  return blocked;
 }
 
 // Kararlı sıralama (PS-01): eşit skorda id artan ayırıcı. Skor/sıralama mantığı değişmez;
@@ -137,7 +123,7 @@ export async function rankMentisForMentor(args: {
     [];
 
   // BUG FIX: Admin'in idari blok listesini motora uygula (önceden hiç okunmuyordu).
-  const blockedMentiIds = buildBlockedMentiSet(mentor.id, tenantConfig?.blockedPairs);
+  const blockedMentiIds = buildBlockedCounterpartSet(mentor.id, tenantConfig?.blockedPairs);
 
   // Güvenlik düzeltmesi: Cross-tenant adayları önceden filtrele.
   // Tüm shared-pool tenant ID'lerini tek sorguda çek; döngü içi N+1 sorgusunu önle.
@@ -395,10 +381,22 @@ export async function rankMentorsForMenti(args: {
 
   // Eligible tenant listesi: kendi tenant'ı + her iki taraf da shared-pool ise diğerleri
   // (rankMentisForMentor ile AYNI cross-tenant güvenlik deseni).
-  const sharedTenants = await prisma.tenant.findMany({
-    where: { isSharedPoolActive: true },
-    select: { id: true },
-  });
+  // tenantConfig aynı Promise.all'da okunur (N+1 yasak) — KR-19: idari blok listesi
+  // (blockedPairs) daha önce bu yönde HİÇ okunmuyordu, yalnız rankMentisForMentor
+  // (mentör→menti) tarafında uygulanıyordu. Hangi tenant'ın blockedPairs'ı okunacağı
+  // rankMentisForMentor ile SİMETRİK: çağıranın KENDİ tenant'ı (args.mentiTenantId) —
+  // mentörün home tenant'ı değil. Cross-tenant'ta karşı tarafın admin'inin koyduğu blok
+  // bu yönden görünmez; bu rankMentisForMentor'un da mevcut davranışıdır (tutarlılık).
+  const [sharedTenants, tenantConfig] = await Promise.all([
+    prisma.tenant.findMany({
+      where: { isSharedPoolActive: true },
+      select: { id: true },
+    }),
+    prisma.tenant.findUnique({
+      where:  { id: args.mentiTenantId },
+      select: { blockedPairs: true },
+    }),
+  ]);
   const sharedIds = new Set(sharedTenants.map((t) => t.id));
   const eligibleTenantIds = [
     args.mentiTenantId,
@@ -407,7 +405,11 @@ export async function rankMentorsForMenti(args: {
     ),
   ];
 
-  const mentors = await prisma.user.findMany({
+  // BUG FIX (KR-19): Admin'in idari blok listesi bu yönde de uygulanır — önceden hiç
+  // okunmuyordu, engellenen mentör menti'nin listesinde görünmeye devam ediyordu.
+  const blockedMentorIds = buildBlockedCounterpartSet(menti.id, tenantConfig?.blockedPairs);
+
+  const rawMentors = await prisma.user.findMany({
     where: {
       id: { not: args.mentiId }, // kendi kendine eşleşme yok (bkz. rankMentisForMentor)
       isActive: true,
@@ -431,6 +433,12 @@ export async function rankMentorsForMenti(args: {
     orderBy: { id: 'asc' },
     take: 500,
   });
+
+  // İdari blok kontrolü — sonraki müsaitlik/tamamlanma sorgularından ÖNCE filtrelenir
+  // (blocklu mentör için gereksiz sorgu yapılmaz).
+  const mentors = blockedMentorIds.size > 0
+    ? rawMentors.filter((m) => !blockedMentorIds.has(m.id))
+    : rawMentors;
 
   const mentiVector = menti.discVector as DiscVector | null;
 
