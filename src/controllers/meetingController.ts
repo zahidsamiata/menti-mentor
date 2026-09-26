@@ -670,6 +670,50 @@ export async function rejectMeetingByMentor(req: RequestWithTenant, res: Respons
   return res.json({ meeting: updated });
 }
 
+const MarkNotHappenedSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
+// 4-c) markMeetingNotHappened — Mentör, otomatik-tamamlanmış bir toplantıyı düzeltir (U-01).
+//
+// KARAR-80/M11: bitiş saati geçen SCHEDULED toplantılar cron ile otomatik COMPLETED olur
+// (cronScheduler.ts runAutoCompleteMeetingsCron). Otomasyon yanılabilir (ör. toplantı aslında
+// hiç olmadı) — mentör bunu "gerçekleşmedi" diyerek düzeltebilir. CANCELLED'a döner: yeni bir
+// NO_SHOW enum değeri gerekmiyor, CANCELLED zaten check-in/feedback akışını kapatıyor (ikisi de
+// yalnız COMPLETED'ta açılır).
+//
+// Yetki (IDOR): approveMeetingByMentor/rejectMeetingByMentor ile AYNI desen — yalnızca
+// görüşmenin kendi mentörü (ADMIN değil, PO kararı: "yalnızca meeting'in mentörü").
+export async function markMeetingNotHappened(req: RequestWithTenant, res: Response) {
+  const ctx = getCtx(req);
+  if (!ctx) return res.status(401).json({ error: 'Kimlik veya tenant bağlamı yok.' });
+  const { userId, tenantId } = ctx;
+
+  const meetingId = req.params['meetingId'] as string;
+  const parsed = MarkNotHappenedSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
+  }
+
+  const meeting = await prisma.meeting.findFirst({
+    where:  { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.COMPLETED },
+    select: { id: true },
+  });
+  if (!meeting) {
+    return res.status(404).json({
+      error:   'NOT_FOUND',
+      message: 'Tamamlanmış toplantı bulunamadı veya yetkiniz yok.',
+    });
+  }
+
+  const updated = await prisma.meeting.update({
+    where: { id: meetingId },
+    data:  { status: MeetingStatus.CANCELLED, notes: parsed.data.reason ?? 'Mentör tarafından "gerçekleşmedi" olarak işaretlendi.' },
+  });
+
+  return res.json({ meeting: updated });
+}
+
 // 4) getActiveMeetings — Kullanıcının aktif + yakın geçmiş görüşmeleri
 export async function getActiveMeetings(req: RequestWithTenant, res: Response) {
   const ctx = getCtx(req);

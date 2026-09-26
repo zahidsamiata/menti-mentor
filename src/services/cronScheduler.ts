@@ -265,6 +265,34 @@ export async function runFeedbackReminderCron(): Promise<{ sent: number }> {
   }
 }
 
+// ─── Görev: Otomatik Toplantı Tamamlama (U-01, ÇIKIŞ BLOKERİ) ────────────────
+//
+// KARAR-80/M11 (2026-09-26): kimse tıklamadan, bitiş saati (endsAt) geçmiş SCHEDULED
+// toplantılar otomatik COMPLETED olur. Bu olmadan check-in + feedback akışı (ikisi de
+// status==='COMPLETED' şartına bakıyor — meetingCheckInController.ts, feedbackController.ts)
+// HİÇBİR toplantı için açılmıyordu; ana ürün döngüsü tamamen ölüydü.
+//
+// Mentör yanlış otomatik-tamamlamayı sonradan düzeltebilir: POST /:meetingId/mark-not-happened
+// ("gerçekleşmedi") → CANCELLED (meetingController.ts). Yeni bir NO_SHOW enum değeri EKLENMEDİ:
+// CANCELLED zaten "bu toplantı sayılmaz" anlamına geliyor (bkz. rejectMeetingByMentor, aynı
+// enum'u PENDING→CANCELLED için kullanıyor) ve downstream hiçbir akış COMPLETED dışında
+// açılmadığı için CANCELLED'a dönmek check-in/feedback'i güvenle kapatır — migration gerekmez.
+export async function runAutoCompleteMeetingsCron(): Promise<{ completed: number }> {
+  void logger.info('SYSTEM', 'Cron: Otomatik toplantı tamamlama başladı');
+  try {
+    const now = new Date();
+    const result = await prisma.meeting.updateMany({
+      where: { status: 'SCHEDULED', endsAt: { lt: now } },
+      data:  { status: 'COMPLETED' },
+    });
+    void logger.info('SYSTEM', 'Cron: Otomatik toplantı tamamlama tamamlandı', { completed: result.count });
+    return { completed: result.count };
+  } catch (err) {
+    void logger.error('SYSTEM', 'Cron: Otomatik toplantı tamamlama başarısız', { error: String(err) });
+    return { completed: 0 };
+  }
+}
+
 // ─── Görev: Anlaşma Yenileme Kontrolü ────────────────────────────────────────
 
 const RENEWAL_WARN_DAYS = 7; // Bitmeden 7 gün önce bildir
@@ -423,6 +451,13 @@ export function startCronScheduler(): void {
     void runWeeklyPurge();
   }, { timezone: 'UTC' });
 
+  // Her 15 dakikada bir — Otomatik toplantı tamamlama (U-01, ÇIKIŞ BLOKERİ).
+  // Sık aralık bilinçli: check-in/feedback toplantı biter bitmez açılmalı, günlük/haftalık
+  // cron'lar (feedback hatırlatıcısı zaten en az 1 saat bekliyor) burada yetersiz kalırdı.
+  cron.schedule('*/15 * * * *', () => {
+    void runAutoCompleteMeetingsCron();
+  }, { timezone: 'UTC' });
+
   // Her 6 saatte bir — Taslak tenant kurtarma e-postası (Faz 3)
   cron.schedule('0 */6 * * *', () => {
     void runDraftTenantReminder();
@@ -455,6 +490,7 @@ export function startCronScheduler(): void {
 
   console.log('[CRON] Haftalık görevler zamanlandı: Pazar 02:00 (tuning) + 03:00 (purge) UTC');
   console.log('[CRON] Faz 3 cron\'ları aktif: Her 6h (taslak reminder) + Her gün 04:00 (taslak temizlik) + 09:00 (feedback hatırlatıcı) UTC');
+  console.log('[CRON] U-01: Her 15dk otomatik toplantı tamamlama aktif.');
 }
 
 // ─── Manuel tetikleme (admin endpoint'inden çağrılır) ────────────────────────
