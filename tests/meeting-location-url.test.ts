@@ -30,6 +30,13 @@ function isoUtc(d: Date, hh: number, mm: number): string {
   t.setUTCHours(hh, mm, 0, 0);
   return t.toISOString();
 }
+// bookMeeting, mentörün müsaitlik bloğuna uymayan her talebi 409 ile reddeder (K-05 ailesi,
+// bu dosyanın kapsamı dışında ama testin geçmesi için gerçek koşulu sağlamak gerekiyor).
+// Blok'un kendi timezone'ını 'UTC' vererek FUTURE_DATE'in UTC gün/saatiyle birebir eşleştiriyoruz.
+function utcWeekday(d: Date): 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN' {
+  const label = d.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short' }).toUpperCase();
+  return label as 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN';
+}
 
 describe('GV-03: isHttpUrl', () => {
   it('http ve https kabul, diğer şemalar ve bozuk adres red', () => {
@@ -58,6 +65,14 @@ describe('KARAR-7: bookMeeting artık locationUrl kabul etmiyor (mentör onayda 
   });
 
   it('menti locationUrl gönderse bile görüşme linksiz (null) oluşur — mentör onayda girecek', async () => {
+    // K-05 ailesi: bookMeeting, mentörün müsaitlik bloğuna uymayan talebi 409 ile reddeder —
+    // bu testin odağı locationUrl olduğu için mentöre isteğin saatini kapsayan bir blok tanımlanır.
+    await testPrisma.availabilityBlock.create({
+      data: {
+        tenantId: tenant.id, userId: mentor.id, isActive: true, timezone: 'UTC',
+        weekday: utcWeekday(FUTURE_DATE), startTime: '08:00', endTime: '12:00',
+      },
+    });
     const res = await http.post('/api/meetings/book').set(tenantHeaders(tenant.id, mentiToken)).send({
       mentorUserId: mentor.id,
       format: 'ONLINE',
