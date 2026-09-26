@@ -359,3 +359,43 @@ export async function sendSuspicionReportAlert(args: { toEmail: string; reportId
      Lütfen platform panelindeki şüphe bildirimleri bölümünden inceleyin.</p>`,
   );
 }
+
+// AN-26 (KARAR-53 ④): menti mesaj talebi başlattı, mentör henüz yanıt vermedi → mentöre nazik hatırlatma
+// (3. ve 7. gün). Menti adı ve mesaj METNİ e-postaya KONMAZ — yalnız "bir menti" + konuşma bağlantısı.
+export async function sendMentorResponseReminderEmail(args: {
+  toEmail: string;
+  mentorName: string;
+  conversationId: string;
+  reminderNo: 1 | 2;
+}): Promise<boolean> {
+  const conversationUrl = `${config.frontendBaseUrl}/messages/${encodeURIComponent(args.conversationId)}`;
+  const opening = args.reminderNo === 1
+    ? 'Bir menti birkaç gün önce size mesaj gönderdi ve yanıtınızı bekliyor.'
+    : 'Bir menti yaklaşık bir haftadır yanıtınızı bekliyor.';
+  return send(
+    args.toEmail,
+    'Bir menti yanıtınızı bekliyor',
+    `<p>Merhaba ${escapeHtml(args.mentorName)},</p>
+     <p>${opening}</p>
+     <p>Kısa bir yanıt bile menti için çok değerli. Uygun değilseniz bunu nazikçe belirtmeniz de yeterli.</p>
+     <p><a href="${escapeHtml(conversationUrl)}">Konuşmayı açmak için tıklayın</a></p>`,
+  );
+}
+
+// AN-26 (KARAR-53 ④): 10 gündür yanıtsız kalan talep → kurum yöneticisine eskalasyon.
+// Yalnız mentör adı + bekleme süresi; menti adı ve mesaj içeriği KONMAZ (veri minimizasyonu).
+export async function sendMentorNoResponseEscalationEmail(args: {
+  toEmail: string;
+  adminName: string;
+  mentorName: string;
+  daysWaiting: number;
+}): Promise<boolean> {
+  return send(
+    args.toEmail,
+    'Yanıt bekleyen bir mentorluk talebi var',
+    `<p>Merhaba ${escapeHtml(args.adminName)},</p>
+     <p>Mentör <strong>${escapeHtml(args.mentorName)}</strong>, bir mentinin mesaj talebine
+        <strong>${escapeHtml(args.daysWaiting)} gündür</strong> yanıt vermedi.</p>
+     <p>Uygun görürseniz mentörle kısaca iletişime geçebilirsiniz.</p>`,
+  );
+}

@@ -16,7 +16,12 @@ import { prisma } from '../db.js';
 import { tuneScoringWeights } from './algorithmTuner.js';
 import { findMatchesDueForCheckpoint } from './feedback.service.js';
 import { purgeExpiredData } from './gdprService.js';
-import { sendDraftTenantReminderEmail, sendFeedbackReminderEmail } from './emailService.js';
+import {
+  sendDraftTenantReminderEmail,
+  sendFeedbackReminderEmail,
+  sendMentorNoResponseEscalationEmail,
+  sendMentorResponseReminderEmail,
+} from './emailService.js';
 import { notifyAdminsMentorCertLapsed } from './notificationService.js';
 import { CERT_CONFIG } from './certification.service.js';
 import { logger } from './logger.js';
@@ -435,6 +440,265 @@ export async function runCheckpointFeedbackReminderCron(): Promise<{
   }
 }
 
+// ─── Görev: Yanıtsız Mentör Hatırlatma + Yönetici Eskalasyonu (AN-26) ─────────
+//
+// KARAR-53 ④: menti konuşma başlattı, mentör hiç yanıt vermedi →
+//   3. gün mentöre 1. hatırlatma · 7. gün 2. hatırlatma · 10. gün kurum yöneticisine eskalasyon.
+// Menti tarafına mesaj/alternatif mentör önerisi YOK (KARAR-22 B).
+// "Yanıt vermedi" = konuşmada mentörün gönderdiği hiç mesaj yok.
+// Kapsam (resolveMentorNudgeScope): yalnız aktif müsaitlik bloğu OLMAYAN mentör (KARAR-53 ④ "ne blok ne koşul";
+// koşul alanları şemada henüz yok); menti + mentör hesabı + mentörün ilgili kurum üyeliği aktif olmalı;
+// paylaşımlı havuzda (mentör konuşmanın kurumunda değil) hatırlatma gider, eskalasyon GİTMEZ (KARAR-98 bekleniyor).
+
+export const MENTOR_REMINDER_CONFIG = {
+  reminder1AfterDays: 3,
+  reminder2AfterDays: 7,
+  escalateAfterDays:  10,
+  // Bu yaştan eski konuşmalara bakılmaz: yayın anında eski yanıtsız konuşmalara toplu e-posta
+  // gitmesin; eskalasyon için 10-14. gün arası yeniden deneme penceresi kalır (SMTP/yönetici yoksa).
+  maxAgeDays:         14,
+} as const;
+
+export type MentorReminderStage = 'none' | 'reminder1' | 'reminder2' | 'escalate';
+
+export interface MentorReminderState {
+  createdAt: Date;
+  mentorHasReplied: boolean;
+  mentorReminder1SentAt: Date | null;
+  mentorReminder2SentAt: Date | null;
+  adminEscalatedAt: Date | null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Bu konuşma için bugün hangi aşama gönderilmeli? Saf fonksiyon.
+ * Kural: yalnız VADESİ GELMİŞ EN GEÇ aşama düşünülür. Cron bir/birkaç gün çalışmadıysa atlanan
+ * erken aşama sonradan gönderilmez (ör. 8. günde 1. hatırlatma artık anlamsız → yalnız 2.).
+ * Daha geç bir aşama zaten gönderildiyse erken aşama da gönderilmez.
+ */
+export function computeMentorReminderStage(state: MentorReminderState, now: Date): MentorReminderStage {
+  if (state.mentorHasReplied) return 'none';
+  const ageDays = (now.getTime() - state.createdAt.getTime()) / DAY_MS;
+  const cfg = MENTOR_REMINDER_CONFIG;
+  if (ageDays > cfg.maxAgeDays) return 'none';
+
+  if (ageDays >= cfg.escalateAfterDays) {
+    return state.adminEscalatedAt ? 'none' : 'escalate';
+  }
+  if (ageDays >= cfg.reminder2AfterDays) {
+    return state.mentorReminder2SentAt || state.adminEscalatedAt ? 'none' : 'reminder2';
+  }
+  if (ageDays >= cfg.reminder1AfterDays) {
+    return state.mentorReminder1SentAt || state.mentorReminder2SentAt || state.adminEscalatedAt
+      ? 'none'
+      : 'reminder1';
+  }
+  return 'none';
+}
+
+export interface MentorNudgeScopeInput {
+  mentorUserActive: boolean;
+  mentiUserActive: boolean;
+  // Mentörün "ilgili kurum"daki MENTOR üyeliği aktif mi (ilgili = konuşmanın kurumu, orada üyeliği
+  // yoksa mentörün ev kurumu). Üyelik hiç bulunamazsa false.
+  mentorMembershipActive: boolean;
+  // KARAR-53: ④ yalnız "ne blok ne koşul" hâlindeki mentör içindir. Koşul alanları (zaman aralığı +
+  // görüşme türü) şemada henüz YOK → tek ölçüt aktif AvailabilityBlock.
+  mentorHasActiveAvailabilityBlock: boolean;
+  // Konuşmanın kurumunda mentörün MENTOR üyeliği var mı (yoksa paylaşımlı havuz = farklı kurum).
+  mentorInConversationTenant: boolean;
+}
+
+export type MentorNudgeSkipReason = 'none' | 'inactive_party' | 'has_availability' | 'cross_tenant';
+
+export interface MentorNudgeScope {
+  canRemind: boolean;
+  canEscalate: boolean;
+  skipReason: MentorNudgeSkipReason;
+}
+
+/** Bu konuşmada mentör dürtülebilir mi / yöneticiye eskalasyon yapılabilir mi? Saf fonksiyon. */
+export function resolveMentorNudgeScope(input: MentorNudgeScopeInput): MentorNudgeScope {
+  if (!input.mentorUserActive || !input.mentiUserActive || !input.mentorMembershipActive) {
+    return { canRemind: false, canEscalate: false, skipReason: 'inactive_party' };
+  }
+  if (input.mentorHasActiveAvailabilityBlock) {
+    return { canRemind: false, canEscalate: false, skipReason: 'has_availability' };
+  }
+  if (!input.mentorInConversationTenant) {
+    // KARAR-98 bekleniyor: paylaşımlı havuzda eskalasyonun hangi kurumun yöneticisine gideceği PO kararı → şimdilik gönderilmez.
+    return { canRemind: true, canEscalate: false, skipReason: 'cross_tenant' };
+  }
+  return { canRemind: true, canEscalate: true, skipReason: 'none' };
+}
+
+export async function runMentorResponseReminderCron(now: Date = new Date()): Promise<{
+  reminder1: number;
+  reminder2: number;
+  escalated: number;
+  failed: number;
+}> {
+  void logger.info('SYSTEM', 'Cron: Yanıtsız mentör hatırlatması başladı');
+  const result = { reminder1: 0, reminder2: 0, escalated: 0, failed: 0 };
+  try {
+    const cfg = MENTOR_REMINDER_CONFIG;
+    const oldest = new Date(now.getTime() - cfg.maxAgeDays * DAY_MS);
+    const youngest = new Date(now.getTime() - cfg.reminder1AfterDays * DAY_MS);
+
+    // 1) Aday konuşmalar (tek sorgu). Son aşama zaten yazılmış olanlar baştan elenir.
+    const candidates = await prisma.conversation.findMany({
+      where: {
+        createdAt:        { gte: oldest, lte: youngest },
+        adminEscalatedAt: null,
+        tenant:           { isActive: true },
+        menti:            { isActive: true },
+      },
+      select: {
+        id: true, tenantId: true, mentorUserId: true, createdAt: true,
+        mentorReminder1SentAt: true, mentorReminder2SentAt: true, adminEscalatedAt: true,
+        mentor: { select: { email: true, fullName: true, isActive: true, tenantId: true } },
+        menti:  { select: { isActive: true } },
+      },
+    });
+    if (candidates.length === 0) {
+      void logger.info('SYSTEM', 'Cron: Yanıtsız mentör hatırlatması tamamlandı', result);
+      return result;
+    }
+
+    // 2) Mentör yanıt vermiş mi — N+1 yerine tek gruplu sorgu (konuşma × gönderen).
+    const senders = await prisma.message.groupBy({
+      by:    ['conversationId', 'senderUserId'],
+      where: { conversationId: { in: candidates.map((c) => c.id) } },
+    });
+    const repliedKeys = new Set(senders.map((s) => `${s.conversationId}:${s.senderUserId}`));
+
+    // 2b) Kapsam verisi — mentörlerin MENTOR üyelikleri + aktif müsaitlik blokları (iki toplu sorgu).
+    const mentorIds = [...new Set(candidates.map((c) => c.mentorUserId))];
+    const [mentorMemberships, mentorBlocks] = await Promise.all([
+      prisma.tenantMembership.findMany({
+        where:  { userId: { in: mentorIds }, role: 'MENTOR' },
+        select: { userId: true, tenantId: true, isActive: true },
+      }),
+      prisma.availabilityBlock.groupBy({
+        by:    ['userId'],
+        where: { userId: { in: mentorIds }, isActive: true },
+      }),
+    ]);
+    const membershipActive = new Map(mentorMemberships.map((m) => [`${m.userId}:${m.tenantId}`, m.isActive]));
+    const mentorsWithBlocks = new Set(mentorBlocks.map((b) => b.userId));
+
+    const planned = candidates
+      .map((c) => {
+        const inConvTenant = membershipActive.has(`${c.mentorUserId}:${c.tenantId}`);
+        const relevantTenantId = inConvTenant ? c.tenantId : c.mentor.tenantId;
+        return {
+          conv: c,
+          scope: resolveMentorNudgeScope({
+            mentorUserActive:                 c.mentor.isActive,
+            mentiUserActive:                  c.menti.isActive,
+            mentorMembershipActive:           membershipActive.get(`${c.mentorUserId}:${relevantTenantId}`) === true,
+            mentorHasActiveAvailabilityBlock: mentorsWithBlocks.has(c.mentorUserId),
+            mentorInConversationTenant:       inConvTenant,
+          }),
+          stage: computeMentorReminderStage({
+          createdAt:             c.createdAt,
+          mentorHasReplied:      repliedKeys.has(`${c.id}:${c.mentorUserId}`),
+          mentorReminder1SentAt: c.mentorReminder1SentAt,
+          mentorReminder2SentAt: c.mentorReminder2SentAt,
+          adminEscalatedAt:      c.adminEscalatedAt,
+        }, now),
+        };
+      })
+      .filter((p) => p.stage !== 'none' && p.scope.canRemind);
+
+    // 3) Eskalasyon alıcıları — kurum-içi rol TenantMembership'ten (User.role DEĞİL); tek sorgu.
+    const escalationTenantIds = [...new Set(
+      planned.filter((p) => p.stage === 'escalate' && p.scope.canEscalate).map((p) => p.conv.tenantId),
+    )];
+    const adminsByTenant = new Map<string, { email: string; fullName: string }[]>();
+    if (escalationTenantIds.length > 0) {
+      const adminMemberships = await prisma.tenantMembership.findMany({
+        where:  { tenantId: { in: escalationTenantIds }, role: 'ADMIN', isActive: true, user: { isActive: true } },
+        select: { tenantId: true, user: { select: { email: true, fullName: true } } },
+      });
+      for (const m of adminMemberships) {
+        const list = adminsByTenant.get(m.tenantId) ?? [];
+        list.push(m.user);
+        adminsByTenant.set(m.tenantId, list);
+      }
+    }
+
+    // 4) Gönder — guard alanı YALNIZ e-posta gerçekten gittiyse yazılır (U-16).
+    // Log'a yalnız konuşma/kurum kimliği yazılır; e-posta, isim, mesaj içeriği YAZILMAZ.
+    for (const { conv, stage, scope } of planned) {
+      try {
+        if (stage === 'reminder1' || stage === 'reminder2') {
+          const ok = await sendMentorResponseReminderEmail({
+            toEmail:        conv.mentor.email,
+            mentorName:     conv.mentor.fullName,
+            conversationId: conv.id,
+            reminderNo:     stage === 'reminder1' ? 1 : 2,
+          });
+          if (!ok) {
+            result.failed++;
+            void logger.warn('EMAIL', 'Mentör hatırlatması gönderilemedi — işaretlenmedi', { conversationId: conv.id, stage });
+            continue;
+          }
+          await prisma.conversation.update({
+            where: { id: conv.id },
+            data:  stage === 'reminder1' ? { mentorReminder1SentAt: now } : { mentorReminder2SentAt: now },
+          });
+          result[stage]++;
+          continue;
+        }
+
+        // stage === 'escalate'
+        if (!scope.canEscalate) {
+          void logger.info('SYSTEM', 'Eskalasyon atlandı: mentör başka kurumda (paylaşımlı havuz) — işaretlenmedi', {
+            conversationId: conv.id, tenantId: conv.tenantId, reason: scope.skipReason,
+          });
+          continue;
+        }
+        const admins = adminsByTenant.get(conv.tenantId) ?? [];
+        if (admins.length === 0) {
+          void logger.warn('SYSTEM', 'Eskalasyon: kurumda aktif yönetici yok — işaretlenmedi', {
+            conversationId: conv.id, tenantId: conv.tenantId,
+          });
+          continue;
+        }
+        const daysWaiting = Math.floor((now.getTime() - conv.createdAt.getTime()) / DAY_MS);
+        let anySent = false;
+        for (const admin of admins) {
+          const ok = await sendMentorNoResponseEscalationEmail({
+            toEmail:    admin.email,
+            adminName:  admin.fullName,
+            mentorName: conv.mentor.fullName,
+            daysWaiting,
+          });
+          if (ok) anySent = true;
+        }
+        if (!anySent) {
+          result.failed++;
+          void logger.warn('EMAIL', 'Eskalasyon e-postası gönderilemedi — işaretlenmedi', { conversationId: conv.id });
+          continue;
+        }
+        await prisma.conversation.update({ where: { id: conv.id }, data: { adminEscalatedAt: now } });
+        result.escalated++;
+      } catch (err) {
+        result.failed++;
+        void logger.error('SYSTEM', 'Yanıtsız mentör hatırlatması başarısız', { conversationId: conv.id, error: String(err) });
+      }
+    }
+
+    void logger.info('SYSTEM', 'Cron: Yanıtsız mentör hatırlatması tamamlandı', result);
+    return result;
+  } catch (err) {
+    void logger.error('SYSTEM', 'Cron: Yanıtsız mentör hatırlatması başarısız', { error: String(err) });
+    return result;
+  }
+}
+
 // ─── Scheduler başlatma ───────────────────────────────────────────────────────
 
 export function startCronScheduler(): void {
@@ -488,6 +752,12 @@ export function startCronScheduler(): void {
   // Her gün 11:00 UTC — Mentör sertifika yönetici bildirimi (geride kalan mentörler)
   cron.schedule('0 11 * * *', () => {
     void runMentorCertAdminNotifyCron();
+  }, { timezone: 'UTC' });
+
+  // Her gün 12:00 UTC (15:00 TR) — Yanıtsız mentör hatırlatma + yönetici eskalasyonu (AN-26).
+  // 10:00 UTC anlaşma yenilemeyle çakışmasın diye ayrı saat; iş saatinde gelen e-posta daha görünür.
+  cron.schedule('0 12 * * *', () => {
+    void runMentorResponseReminderCron();
   }, { timezone: 'UTC' });
 
   console.log('[CRON] Haftalık görevler zamanlandı: Pazar 02:00 (tuning) + 03:00 (purge) UTC');
