@@ -9,10 +9,31 @@ import {
   exportUserData,
   isSoleActiveTenantAdmin,
   ACCOUNT_CLOSED_MESSAGE,
+  GdprUserNotFoundError,
 } from '../services/gdprService.js';
 import { validateRequest } from '../middleware/validate.js';
 
 const UserIdSchema = z.object({ id: z.string().min(5) });
+
+// Hedef kullanıcı istek kurumunda yoksa (başka kurumun ID'si ya da hiç yok) jenerik 404 —
+// varlık ifşa edilmez; komşu uçlarla (adminController promote/demote vb.) aynı NOT_FOUND deseni.
+// K5-Y3b: önceden servis fırlatıyor, globalErrorHandler 500 dönüyordu.
+function sendUserNotFound(res: Response) {
+  return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+}
+
+// Servis çağrısını sarar: GdprUserNotFoundError → 404; diğer hatalar olduğu gibi yukarı çıkar.
+async function withUserNotFound<T>(res: Response, run: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof GdprUserNotFoundError) {
+      sendUserNotFound(res);
+      return undefined;
+    }
+    throw err;
+  }
+}
 
 // Self-servis hesap kapatmada yanlışlıkla tetiklemeyi önleyen teyit: kullanıcı KENDİ
 // e-postasını yazar. Büyük/küçük harf ve boşluk normalize edilerek karşılaştırılır.
@@ -29,7 +50,8 @@ export async function anonymizeUserHandler(req: RequestWithTenant, res: Response
     return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca tenant admin erişebilir.' });
   }
 
-  const result = await anonymizeUser(parsed.data.id, req.tenant.tenantId);
+  const result = await withUserNotFound(res, () => anonymizeUser(parsed.data.id, req.tenant.tenantId));
+  if (!result) return res;
   return res.json({ message: 'Kullanıcı KVKK kapsamında anonimleştirildi.', ...result });
 }
 
@@ -43,7 +65,8 @@ export async function hardDeleteUserHandler(req: RequestWithTenant, res: Respons
     return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca tenant admin erişebilir.' });
   }
 
-  const result = await hardDeleteUser(parsed.data.id, req.tenant.tenantId);
+  const result = await withUserNotFound(res, () => hardDeleteUser(parsed.data.id, req.tenant.tenantId));
+  if (!result) return res;
   return res.json({ message: ACCOUNT_CLOSED_MESSAGE, ...result });
 }
 
@@ -59,7 +82,8 @@ export async function exportUserDataHandler(req: RequestWithTenant, res: Respons
     return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca kullanıcı kendi verisini veya admin export edebilir.' });
   }
 
-  const result = await exportUserData(parsed.data.id, req.tenant.tenantId);
+  const result = await withUserNotFound(res, () => exportUserData(parsed.data.id, req.tenant.tenantId));
+  if (!result) return res;
   return res.json(result);
 }
 

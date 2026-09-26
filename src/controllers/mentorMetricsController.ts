@@ -67,6 +67,21 @@ export async function getMentorDashboardMetrics(req: RequestWithTenant, res: Res
   const mentorId = req.params['mentorId'] as string;
   const tenantId = req.tenant.tenantId;
 
+  // Kurum izolasyonu (K5-Y3b): requireSelfOrAdmin ADMIN'i her mentorId için geçirir. Hedef
+  // mentör İSTEK kurumunda yoksa (başka kurumun ID'si) jenerik 404 — komşu uç
+  // POST /mentors/:mentorId/visibility-optin (matchingController.setVisibilityOptIn) ile aynı desen.
+  // Önceden sorgular istek kurumuyla filtrelendiği için 200 + sıfır metrik dönüyordu (sızıntı yok
+  // ama "mentörün hiç verisi yok" gibi yanıltıcıydı). Kendi metriğine bakan mentör bu kontrole girmez.
+  if (req.auth?.userId !== mentorId) {
+    const mentor = await prisma.user.findFirst({
+      where: { id: mentorId, tenantId },
+      select: { id: true },
+    });
+    if (!mentor) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Mentor bulunamadı.' });
+    }
+  }
+
   const [pendingRequests, completedMeetings, activeMentiGroups, npsAgg, durationAgg, membership] =
     await Promise.all([
       prisma.meeting.count({
