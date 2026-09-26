@@ -10,7 +10,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser } from './helpers/factories.js';
-import { recordSignupConsent, CONSENT_VERSION } from '../src/services/consentService.js';
+import { recordSignupConsent, recordConsent, CONSENT_VERSION } from '../src/services/consentService.js';
+import { LEGACY_VERSION } from '../src/services/consentBackfill.js';
 import type { Tenant, User } from '@prisma/client';
 
 describe('GV-18: needsReconsent — login/me/refresh', () => {
@@ -32,6 +33,15 @@ describe('GV-18: needsReconsent — login/me/refresh', () => {
 
   it('güncel sürümde rıza varsa login needsReconsent:false döner', async () => {
     await recordSignupConsent({ userId: user.id }, 'FORM');
+    const res = await http.post('/api/auth/login').send({ email: user.email, password: user.rawPassword }).expect(200);
+    expect(res.body.user.needsReconsent).toBe(false);
+  });
+
+  // Bağımsız inceleme bulgusu (2026-09-26): 2026-08-28 öncesi backfill'lenmiş (yalnız ACIK_RIZA,
+  // LEGACY_VERSION, AYDINLATMA satırı hiç yok) gerçek canlı kullanıcı login olunca YANLIŞLIKLA
+  // needsReconsent:true görmemeli — bu senaryo düzeltmeden önce SONSUZA DEK true dönüyordu.
+  it('2026-08-28 backfill senaryosu (legacy ACIK_RIZA, AYDINLATMA yok) → login needsReconsent:false döner', async () => {
+    await recordConsent({ userId: user.id }, 'ACIK_RIZA', { source: 'BACKFILL', version: LEGACY_VERSION });
     const res = await http.post('/api/auth/login').send({ email: user.email, password: user.rawPassword }).expect(200);
     expect(res.body.user.needsReconsent).toBe(false);
   });

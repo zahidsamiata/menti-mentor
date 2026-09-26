@@ -16,6 +16,7 @@ import {
   CONSENT_VERSION,
   SIGNUP_CONSENT_TYPES,
 } from '../src/services/consentService.js';
+import { LEGACY_VERSION } from '../src/services/consentBackfill.js';
 import type { Tenant, User } from '@prisma/client';
 
 describe('consentService — tipli + sürümlü rıza', () => {
@@ -105,7 +106,7 @@ describe('consentService — tipli + sürümlü rıza', () => {
     expect(await hasCurrentSignupConsent({ userId: user.id })).toBe(true);
   });
 
-  it('hasCurrentSignupConsent: yalnız BİR tip eski sürümde kalırsa false (ikisi de güncel olmalı)', async () => {
+  it('hasCurrentSignupConsent: yalnız ACIK_RIZA kontrol edilir — o eski sürümdeyse false (AYDINLATMA güncel olsa bile)', async () => {
     await recordConsent({ userId: user.id }, 'AYDINLATMA', { source: 'FORM', version: CONSENT_VERSION });
     await recordConsent({ userId: user.id }, 'ACIK_RIZA', { source: 'FORM', version: 'eski-surum' });
     expect(await hasCurrentSignupConsent({ userId: user.id })).toBe(false);
@@ -115,6 +116,19 @@ describe('consentService — tipli + sürümlü rıza', () => {
     await recordSignupConsent({ userId: user.id }, 'FORM');
     await revokeConsent({ userId: user.id }, 'ACIK_RIZA');
     expect(await hasCurrentSignupConsent({ userId: user.id })).toBe(false);
+  });
+
+  // ⭐ Bağımsız inceleme bulgusu (2026-09-26, GV-18 PR #147): ilk sürüm hem AYDINLATMA hem
+  // ACIK_RIZA'nın TAM CONSENT_VERSION'da olmasını şart koşuyordu. 2026-08-28 backfill'i
+  // (consentBackfill.ts) yalnız ACIK_RIZA'yı ve CONSENT_VERSION'DAN FARKLI `LEGACY_VERSION`
+  // ile yazdı, AYDINLATMA'yı KASITLI hiç yazmadı (PO kararı) — bu yüzden 08-28 öncesi
+  // backfill'lenmiş HER canlı kullanıcı, hiçbir metin değişmeden, SONSUZA DEK
+  // needsReconsent:true görecekti. Bu test tam o senaryoyu kurup DOĞRU sonucu (false) kanıtlıyor.
+  it('hasCurrentSignupConsent: 2026-08-28 backfill (yalnız ACIK_RIZA, LEGACY_VERSION, AYDINLATMA YOK) → true', async () => {
+    await recordConsent({ userId: user.id }, 'ACIK_RIZA', { source: 'BACKFILL', version: LEGACY_VERSION });
+    const rows = await testPrisma.consent.findMany({ where: { userId: user.id } });
+    expect(rows).toHaveLength(1); // AYDINLATMA satırı YOK (backfill'in kendi tasarımı)
+    expect(await hasCurrentSignupConsent({ userId: user.id })).toBe(true);
   });
 
   it('geçersiz özne (ikisi dolu / ikisi boş) → hata', async () => {
