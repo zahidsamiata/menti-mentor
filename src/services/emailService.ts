@@ -346,3 +346,16 @@ export async function sendFeedbackReminderEmail(args: {
      <p>Birkaç dakikanızı ayırarak değerlendirmenizi tamamlamanız, eşleşme kalitesini artırmaktadır.</p>`,
   );
 }
+
+// AN-09: public şüphe formundan yeni kayıt geldiğinde platform yöneticisine haber verir.
+// Bilinçli olarak YALNIZ kayıt no gider — bildirenin adı/iletişimi/açıklaması e-postaya (ve SMTP sağlayıcısına)
+// konmaz; içerik platform panelinde okunur.
+export async function sendSuspicionReportAlert(args: { toEmail: string; reportId: string }): Promise<boolean> {
+  return send(
+    args.toEmail,
+    'Yeni şüphe bildirimi',
+    `<p>Platforma yeni bir şüphe bildirimi geldi (kayıt no: <strong>${escapeHtml(args.reportId)}</strong>).</p>
+     <p>Kişisel verilerin korunması için bildirimin içeriği bu e-postaya eklenmedi.
+     Lütfen platform panelindeki şüphe bildirimleri bölümünden inceleyin.</p>`,
+  );
+}
