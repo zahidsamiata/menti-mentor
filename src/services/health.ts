@@ -13,6 +13,10 @@ export interface HealthStatus {
   env: string;
   ts: string;
   version: string;
+  // V-16: canlıda hangi backend commit'inin koştuğunu gösterir. `GIT_SHA` build-arg'ı
+  // Dockerfile'da ENV'e yazılır; wire edilmemişse (ör. Dokploy build-arg'ı henüz
+  // ayarlanmadıysa) 'unknown' döner — sabit ama yanlış bir sürüm göstermekten iyidir.
+  commit: string;
   uptime: number;
 }
 
@@ -45,6 +49,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     env: config.nodeEnv,
     ts: new Date().toISOString(),
     version: process.env.npm_package_version ?? '0.1.0',
+    commit: process.env.GIT_SHA ?? 'unknown',
     uptime: Math.floor(process.uptime()),
   };
 }
