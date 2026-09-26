@@ -388,15 +388,19 @@ export async function updateMyProfile(req: RequestWithTenant, res: Response) {
 
   const user = await prisma.user.findFirst({
     where: { id: req.auth.userId, tenantId: req.tenant.tenantId },
-    select: { id: true, role: true },
+    select: { id: true },
   });
   if (!user) return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
 
   const { education, pastProjects, volunteerHistory, mentorVisibilityEnabled, ...rest } = parsed.data;
 
-  // Rol uyumu (komşu uç: onboardingController.submitMatchingPreferences): yalnız MENTOR kendi
-  // görünürlüğünü değiştirebilir — MENTI/ADMIN bu alanı gönderirse yanlış-rol sinyali reddedilir.
-  if (mentorVisibilityEnabled !== undefined && user.role !== 'MENTOR') {
+  // Rol uyumu (komşu uç: onboardingController.submitMatchingPreferences): kurum-içi rol KAYNAĞI
+  // TenantMembership'tir (req.auth.role, middleware/tenant.ts'te üyelikten okunur) — User.role
+  // DEĞİL (CLAUDE.md § Veri Modeli). Çapraz-tenant/shared-pool üyelikte User.role "ev" tenant'ına
+  // ait olduğundan işlem yapılan tenant'taki gerçek rolden farklı olabilir (bağımsız inceleme
+  // bulgusu, AN-28 PR #146). Yalnız MENTOR kendi görünürlüğünü değiştirebilir — MENTI/ADMIN bu
+  // alanı gönderirse yanlış-rol sinyali reddedilir.
+  if (mentorVisibilityEnabled !== undefined && req.auth.role !== 'MENTOR') {
     return res.status(403).json({
       error: 'ROL_UYUMSUZ',
       message: 'Yalnızca mentörler görünürlük tercihini değiştirebilir.',

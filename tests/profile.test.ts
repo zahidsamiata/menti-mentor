@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
-import { cleanDb } from './helpers/db.js';
+import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser } from './helpers/factories.js';
 import type { Tenant } from '@prisma/client';
 
@@ -154,5 +154,26 @@ describe('PATCH /api/users/me/profile', () => {
       .expect(403);
 
     expect((res.body as Record<string, unknown>).error).toBe('ROL_UYUMSUZ');
+  });
+
+  // AN-28 bağımsız inceleme bulgusu: rol kontrolü User.role yerine req.auth.role (=
+  // TenantMembership.role, middleware/tenant.ts'te üyelikten okunur) kullanmalı — CLAUDE.md
+  // "kurum-içi rol kaynağı TenantMembership'tir, User.role DEĞİL". User.role ile üyelik rolü
+  // AYRIŞTIĞINDA (ör. üyelik sonradan yükseltilmiş ama User.role senkron değil) doğru kaynak kazanmalı.
+  it("AN-28: User.role='MENTI' ama TenantMembership.role='MENTOR' ise görünürlük değiştirilebilir (üyelik kazanır)", async () => {
+    const menti = await createUser({ tenantId: tenant.id, role: 'MENTI', approvalStatus: 'APPROVED' });
+    await testPrisma.tenantMembership.updateMany({
+      where: { userId: menti.id, tenantId: tenant.id },
+      data: { role: 'MENTOR' },
+    });
+    const tokens = await loginAs(http, menti.email, menti.rawPassword);
+
+    const res = await http
+      .patch('/api/users/me/profile')
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .send({ mentorVisibilityEnabled: false })
+      .expect(200);
+
+    expect((res.body as Record<string, unknown>).mentorVisibilityEnabled).toBe(false);
   });
 });
