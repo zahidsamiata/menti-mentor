@@ -41,10 +41,14 @@ describe('U-08: eşleşme uçlarında onay kapısı', () => {
     expect(res.body.items).toBeUndefined();
   });
 
-  it('negatif: reddedilmiş menti de göremez (403)', async () => {
+  it('negatif: reddedilmiş menti de göremez (401, oturum GV-10 ile geçersiz kılınır)', async () => {
+    // GV-10: requireTenant REJECTED hesabı route'a hiç ulaştırmadan 401 HESAP_PASIF ile keser
+    // (session-revocation.test.ts ile aynı davranış) — bu yüzden buradaki 403 ONAY_BEKLENIYOR
+    // kapısına hiç gelinmez. PENDING farklıdır: PENDING middleware'de engellenmez (bkz. üstteki test).
     const menti = await createMenti(tenantId, { approvalStatus: 'REJECTED' });
     const res = await http.get(`/api/mentis/${menti.id}/mentor-matches`).set(tenantHeaders(tenantId, tokenFor(menti)));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('HESAP_PASIF');
   });
 
   it('negatif: onay bekleyen mentör menti adaylarını göremez (403)', async () => {
