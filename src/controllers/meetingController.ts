@@ -4,7 +4,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { isHttpUrl } from '../services/safeUrl.js';
 import { UserRole, MeetingFormat, MeetingStatus, Weekday } from '@prisma/client';
-import { sendMeetingRequestEmail, sendMeetingApprovalEmail } from '../services/emailService.js';
+import { sendMeetingRequestEmail, sendMeetingApprovalEmail, sendMeetingRejectedEmail } from '../services/emailService.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isPairBlocked } from '../services/blockList.js';
@@ -292,7 +292,13 @@ export async function listMeetings(req: RequestWithTenant, res: Response) {
     },
   });
 
-  return res.json({ items: meetings, total: meetings.length });
+  // P-05 / KARAR-22 (B): `notes` mentörün iç notudur (ret gerekçesi, "gerçekleşmedi" nedeni) —
+  // menti bu gerekçeyi ASLA görmez. Yalnız görüşmenin mentörü ve ADMIN görür.
+  const items = meetings.map((m) =>
+    isAdmin || m.mentorUserId === meId ? m : { ...m, notes: null },
+  );
+
+  return res.json({ items, total: items.length });
 }
 
 const UpdateMeetingSchema = z.object({
@@ -701,7 +707,10 @@ export async function rejectMeetingByMentor(req: RequestWithTenant, res: Respons
 
   const meeting = await prisma.meeting.findFirst({
     where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },
-    select: { id: true },
+    select: {
+      id: true, mentiUserId: true, startsAt: true,
+      menti: { select: { fullName: true, email: true } },
+    },
   });
   if (!meeting) {
     return res.status(404).json({ error: 'Bekleyen görüşme bulunamadı veya yetkiniz yok.' });
@@ -711,6 +720,21 @@ export async function rejectMeetingByMentor(req: RequestWithTenant, res: Respons
     where: { id: meetingId },
     data:  { status: MeetingStatus.CANCELLED, notes: reason ?? null },
   });
+
+  // P-05 / KARAR-22 (B): onay yoluyla simetri — reddedilen menti sessiz kalmasın.
+  // Jenerik nazik metin; mentörün gerekçesi (reason) e-postaya/bildirime KONMAZ.
+  // Yanıtı bekletmez, başarısızlık reddi bozmaz; log PII'siz.
+  const { notifyMeetingRequestDeclined } = await import('../services/notificationService.js');
+  void notifyMeetingRequestDeclined(meeting.mentiUserId, tenantId);
+  void sendMeetingRejectedEmail({
+    toEmail:     meeting.menti.email,
+    mentiName:   meeting.menti.fullName,
+    scheduledAt: meeting.startsAt,
+  }).catch((err: unknown) =>
+    logger.warn('EMAIL', 'Ret bildirimi gönderilemedi', {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  );
 
   return res.json({ meeting: updated });
 }
