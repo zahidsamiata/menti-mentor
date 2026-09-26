@@ -179,7 +179,7 @@ async function checkOrientationLock(mentiId: string, res: Response): Promise<boo
   if (menti?.needsOrientation) {
     res.status(403).json({
       error:   'ORYANTASYON_KILIDI',
-      message: 'Bu menti oryantasyon kilidi nedeniyle yeni toplantı oluşturamaz.',
+      message: 'Bu menti oryantasyon kilidi nedeniyle yeni görüşme oluşturamaz.',
     });
     return true;
   }
@@ -311,7 +311,7 @@ export async function updateMeetingStatus(req: RequestWithTenant, res: Response)
       menti:  { select: { fullName: true, email: true, needsOrientation: true } },
     },
   });
-  if (!existing) return res.status(404).json({ error: 'NOT_FOUND', message: 'Toplantı bulunamadı.' });
+  if (!existing) return res.status(404).json({ error: 'NOT_FOUND', message: 'Görüşme bulunamadı.' });
 
   // Yetki (IDOR): route ADMIN|MENTOR'a açık ama bir MENTÖR yalnızca KENDİ görüşmesinin
   // statüsünü değiştirebilmeli. Aksi hâlde başka bir mentör, meetingId tahmin ederek
@@ -672,10 +672,10 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
   }
 
   if (outcome.kind === 'not_found') {
-    return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+    return res.status(404).json({ error: 'Bekleyen görüşme bulunamadı veya yetkiniz yok.' });
   }
   if (outcome.kind === 'missing_link') {
-    return res.status(400).json({ error: 'Online görüşmeyi onaylamak için toplantı bağlantısı girmelisiniz.' });
+    return res.status(400).json({ error: 'Online görüşmeyi onaylamak için görüşme bağlantısı girmelisiniz.' });
   }
   if (outcome.kind === 'conflict') {
     return res.status(409).json({ error: 'Bu saatte sizin ya da mentinin onaylanmış başka bir görüşmesi var.' });
@@ -704,7 +704,7 @@ export async function rejectMeetingByMentor(req: RequestWithTenant, res: Respons
     select: { id: true },
   });
   if (!meeting) {
-    return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+    return res.status(404).json({ error: 'Bekleyen görüşme bulunamadı veya yetkiniz yok.' });
   }
 
   const updated = await prisma.meeting.update({
@@ -747,7 +747,7 @@ export async function markMeetingNotHappened(req: RequestWithTenant, res: Respon
   if (!meeting) {
     return res.status(404).json({
       error:   'NOT_FOUND',
-      message: 'Tamamlanmış toplantı bulunamadı veya yetkiniz yok.',
+      message: 'Tamamlanmış görüşme bulunamadı veya yetkiniz yok.',
     });
   }
 
