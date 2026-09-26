@@ -11,8 +11,8 @@
  * Beklenen kodlar mevcut kod davranışından alınmıştır (tahmin değil):
  *   - requireAuth / requireRole / requireSelfOrAdmin → 401 / 403 (`middleware/authorize.ts`)
  *   - kontrolcüdeki `findFirst({ id, tenantId })` bulamazsa → 404
- *   - gdprService kullanıcıyı bulamazsa `throw` eder → globalErrorHandler 500 (veri sızmaz;
- *     404 daha doğru olurdu — bkz. ilgili testteki not).
+ *   - gdprService kullanıcıyı bulamazsa `GdprUserNotFoundError` fırlatır → kontrolcü 404
+ *     (K5-Y3b: önceden globalErrorHandler 500 dönüyordu).
  *
  * Genel "başka kurumun X-Tenant-Id başlığı → 403" ara katman davranışı uçtan bağımsızdır ve
  * `hardening.test.ts` / `tenant-suspension.test.ts`'te test edilir; burada UCA ÖZGÜ kaynak
@@ -90,9 +90,9 @@ describe('Y3-1: GET /api/users/:id/export', () => {
   });
 
   it('(c) başka kurumun yöneticisi veriyi alamaz; profil/e-posta dönmez', async () => {
-    const res = await http.get(url(mentiA.id)).set(authAs(adminB));
-    // Mevcut davranış: exportUserData kullanıcıyı bulamayınca throw → 500 (veri sızmaz).
-    expect([404, 500]).toContain(res.status);
+    // K5-Y3b: kurum dışı hedef → jenerik 404 (önceden 500).
+    const res = await http.get(url(mentiA.id)).set(authAs(adminB)).expect(404);
+    expect(res.body.error).toBe('NOT_FOUND');
     expect(res.body).not.toHaveProperty('profile');
     expect(JSON.stringify(res.body)).not.toContain(mentiA.email);
   });
@@ -131,9 +131,9 @@ describe('Y3-2: KVKK anonimleştirme / hard-delete', () => {
 
     it(`${c.name} (c) başka kurumun yöneticisi → reddedilir; kullanıcı ANONİMLEŞMEZ`, async () => {
       const before = await userSnapshot(mentiA.id);
-      const res = await c.call(mentiA.id).set(authAs(adminB));
-      // Mevcut davranış: anonymizeUser kullanıcıyı kurumda bulamayınca throw → 500.
-      expect([404, 500]).toContain(res.status);
+      // K5-Y3b: kurum dışı hedef → jenerik 404 (önceden 500).
+      const res = await c.call(mentiA.id).set(authAs(adminB)).expect(404);
+      expect(res.body.error).toBe('NOT_FOUND');
       const after = await userSnapshot(mentiA.id);
       expect(after).toEqual(before);
       expect(after?.isActive).toBe(true);
@@ -424,17 +424,13 @@ describe('Y3-10: GET /api/mentors/:mentorId/dashboard-metrics', () => {
     expect(res.body).not.toHaveProperty('activeMentees');
   });
 
-  it('(c) başka kurumun yöneticisi A kurumundaki mentörün verisini göremez (sayılar sıfır, isim yok)', async () => {
-    // Mevcut davranış: requireSelfOrAdmin ADMIN'i geçirir; tüm sorgular İSTEK kurumuyla (B)
-    // filtrelendiği için 200 + boş metrik döner. Veri sızmaz; 404 dönmemesi ayrı bir iyileştirme.
-    const res = await http.get(url(mentorA.id)).set(authAs(adminB));
-    if (res.status === 200) {
-      expect(res.body.pendingRequests).toBe(0);
-      expect(res.body.completedMeetings).toBe(0);
-      expect(res.body.activeMentees).toEqual([]);
-    } else {
-      expect([403, 404]).toContain(res.status);
-    }
+  it('(c) başka kurumun yöneticisi → 404, sayılar/isimler dönmez', async () => {
+    // K5-Y3b: kurum dışı mentör → jenerik 404 (önceden 200 + sıfır metrik; komşu
+    // visibility-optin ucu ile aynı desen).
+    const res = await http.get(url(mentorA.id)).set(authAs(adminB)).expect(404);
+    expect(res.body.error).toBe('NOT_FOUND');
+    expect(res.body).not.toHaveProperty('pendingRequests');
+    expect(res.body).not.toHaveProperty('activeMentees');
     expect(JSON.stringify(res.body)).not.toContain(mentiA.fullName);
   });
 
