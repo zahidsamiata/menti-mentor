@@ -13,7 +13,7 @@ import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthState
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
 import { ensureMembershipSafe } from '../services/membership.js';
-import { recordSignupConsent } from '../services/consentService.js';
+import { recordSignupConsent, recordGranularSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { hashRefreshToken, refreshTokenWhere } from '../services/refreshToken.js';
@@ -38,6 +38,20 @@ const RegisterSchema = z.object({
   // Davet token'ı (opsiyonel) — FE davet linkindeki token'ı iletir. Geçerliyse davetli
   // APPROVED olur (davet = onay; PO kararı 2026-09-01, Seçenek A). Yoksa PENDING kalır.
   inviteToken: z.string().optional(),
+  // AN-30 / KARAR-34 — granüler rıza ekranı (FE flag'i `NEXT_PUBLIC_GRANULAR_CONSENT_ENABLED`
+  // ile KAPALI; açılınca FE bu alanı gönderir). OPSİYONEL: alan YOKSA eski `kvkkConsent` tek-kutu
+  // davranışı AYNEN kalır (geriye dönük uyumluluk — mevcut istemciler tek satır bile değişmeden çalışır).
+  // Zorunlu 4 madde `z.literal(true)` ile korunur — false/eksik gelirse Zod otomatik 400 döner.
+  granularConsent: z
+    .object({
+      discMatching: z.literal(true, { message: 'DISC eşleştirme onayı zorunludur.' }),
+      foreignStorage: z.literal(true, { message: 'Yurt dışı saklama onayı zorunludur.' }),
+      dataProcessing: z.literal(true, { message: 'Veri işleme onayı zorunludur.' }),
+      anonymizedImprovement: z.literal(true, { message: 'Anonim iyileştirme onayı zorunludur.' }),
+      crossTenantSharing: z.boolean().optional(),
+      oceanProfiling: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 const LoginSchema = z.object({
@@ -137,7 +151,7 @@ export async function register(req: Request, res: Response) {
   const parsed = validateRequest(RegisterSchema, req.body, res);
   if (!parsed.success) return parsed.response;
 
-  const { email, password, fullName, role, tenantSlug, inviteToken } = parsed.data;
+  const { email, password, fullName, role, tenantSlug, inviteToken, granularConsent } = parsed.data;
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
@@ -208,7 +222,22 @@ export async function register(req: Request, res: Response) {
         approvalStatus: true,
       },
     });
-    await recordSignupConsent({ userId: created.id }, 'FORM', { db: tx });
+    // AN-30 / KARAR-34: FE flag açıksa granüler rıza gönderilir → o yazılır, eski
+    // `recordSignupConsent` ÇAĞRILMAZ (AYDINLATMA+ACIK_RIZA zaten MANDATORY grubunda).
+    // Flag kapalıyken (granularConsent yok) davranış AYNEN eskisi gibi kalır.
+    if (granularConsent) {
+      await recordGranularSignupConsent(
+        { userId: created.id },
+        {
+          mandatory: true,
+          crossTenantSharing: granularConsent.crossTenantSharing,
+          oceanProfiling: granularConsent.oceanProfiling,
+        },
+        { source: 'FORM', db: tx },
+      );
+    } else {
+      await recordSignupConsent({ userId: created.id }, 'FORM', { db: tx });
+    }
     return created;
   });
 
