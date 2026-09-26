@@ -19,6 +19,7 @@ import type { ConsentType, ConsentSource, Consent } from '@prisma/client';
 import type { PrismaExtended } from '../db.js';
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
+import { LEGACY_VERSION } from './consentBackfill.js';
 
 /**
  * Rıza metni sürümü.
@@ -159,4 +160,34 @@ export async function hasValidConsent(
   if (!active) return false;
   if (requiredVersion && active.version !== requiredVersion) return false;
   return true;
+}
+
+// GV-18 (bağımsız inceleme düzeltmesi, 2026-09-26): 2026-08-28 backfill'i (consentBackfill.ts)
+// yalnız ACIK_RIZA'yı ve CONSENT_VERSION'DAN FARKLI bir `LEGACY_VERSION` ('v1.0-legacy') ile
+// yazdı — AYDINLATMA'yı KASITLI hiç yazmadı (PO kararı: "olmamış onayı kayda geçirmek eksik
+// kayıttan kötü"). İlk yazdığımız hasCurrentSignupConsent hem AYDINLATMA'nın hem ACIK_RIZA'nın
+// TAM CONSENT_VERSION'da olmasını şart koşuyordu → 08-28 öncesi backfill'lenmiş HER kullanıcı
+// (AYDINLATMA satırı hiç var olmayacağı için) SONSUZA DEK "yeniden onay gerekiyor" görecekti —
+// bugün, hiçbir metin değişmeden. `LEGACY_VERSION`, CONSENT_VERSION'ın BUGÜNKÜ ('v1.0') baseline
+// metniyle eşdeğerdir — bu yüzden sabit 'v1.0' literaliyle karşılaştırılır, CONSENT_VERSION
+// sembolüyle DEĞİL (CONSENT_VERSION ileride değişince legacy kullanıcılar da doğru şekilde
+// yeniden onay istemeli, bu ad-hoc muafiyet SÜREKLİ olmamalı).
+const LEGACY_BASELINE_VERSION = 'v1.0';
+
+function normalizeConsentVersion(version: string): string {
+  return version === LEGACY_VERSION ? LEGACY_BASELINE_VERSION : version;
+}
+
+/**
+ * GV-18: kayıt rızası GÜNCEL sürümde mi? Yalnız ACIK_RIZA kontrol edilir (KVKK Md.5/1 açık
+ * rıza — geri çekilebilir, hukuki ağırlığı olan tip). AYDINLATMA "bir onay değil bilgilendirme
+ * beyanıdır, geri çekilmez" (bkz. gdprService.ts revokeConsent yorumu) ve legacy kullanıcılarda
+ * hiç yoktur — onu da şart koşmak yukarıdaki hatayı üretir.
+ * `CONSENT_VERSION` bugün yer tutucu ('v1.0') — avukat metni gelip sürüm gerçekten artana kadar
+ * bu kontrol hiçbir aktif kullanıcı (yeni VEYA legacy) için true dönmez.
+ */
+export async function hasCurrentSignupConsent(subject: ConsentSubject, db: Db = prisma): Promise<boolean> {
+  const active = await getActiveConsent(subject, 'ACIK_RIZA', db);
+  if (!active) return false;
+  return normalizeConsentVersion(active.version) === CONSENT_VERSION;
 }
