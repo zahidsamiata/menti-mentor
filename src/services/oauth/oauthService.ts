@@ -7,7 +7,12 @@
  * Upsert stratejisi:
  *  1. E-posta + aynı provider → mevcut kullanıcıya giriş yap (profil güncellemesi yok)
  *  2. E-posta + farklı provider → 409 çakışma hatası (hesapları otomatik birleştirme güvenlik riski)
- *  3. E-posta yok (yeni kullanıcı) → PENDING onay durumuyla kayıt yap
+ *  3. E-posta yok (yeni kullanıcı) → PENDING onay durumuyla kayıt yap (davetliyse APPROVED)
+ *
+ * Onay kapısı (Y1-B8): şifreli girişle (authController.login) AYNI kural — onay bekleyen (PENDING)
+ * ya da reddedilen (REJECTED) hesaba access/refresh token VERİLMEZ; `kind: 'BLOCKED'` döner ve
+ * frontend kullanıcıyı bekleme / red ekranına yönlendirir. Eskiden OAuth yolu bu kapıyı atlıyordu:
+ * aynı kullanıcı şifreyle 403 alırken Google/LinkedIn ile oturum açabiliyordu.
  *
  * Neden 2. senaryoda otomatik merge yok? Kullanıcı A, B'nin e-postasını bilerek
  * farklı bir provider üzerinden hesap devralabilir. Güvenli birleştirme ayrı
@@ -15,6 +20,7 @@
  */
 
 import crypto from 'node:crypto';
+import type { UserApprovalStatus } from '@prisma/client';
 import { prisma } from '../../db.js';
 import { verifyInvitationToken } from '../invitationToken.js';
 import { signToken } from '../../middleware/jwtAuth.js';
@@ -35,7 +41,15 @@ export async function handleOAuthCallback(
 ): Promise<OAuthCallbackResult> {
   const existingUser = await prisma.user.findUnique({
     where: { email: profile.email },
-    select: { id: true, tenantId: true, role: true, fullName: true, authProvider: true, isActive: true },
+    select: {
+      id: true,
+      tenantId: true,
+      role: true,
+      fullName: true,
+      authProvider: true,
+      isActive: true,
+      approvalStatus: true,
+    },
   });
 
   if (existingUser) {
@@ -55,9 +69,18 @@ async function handleExistingUser(
     fullName: string;
     authProvider: string;
     isActive: boolean;
+    approvalStatus: UserApprovalStatus;
   },
   profile: OAuthUserProfile,
 ): Promise<OAuthCallbackResult> {
+  // Reddedilen hesap: şifreli girişteki sırayla aynı — REJECTED hesabın isActive=false olabileceği
+  // için pasif kontrolünden ÖNCE bakılır, yoksa kullanıcı red yerine "pasif" mesajı görürdü.
+  // Sağlayıcı eşleşmesi aşağıda ayrıca kontrol edilir; burada yalnız kendi sağlayıcısıyla gelen
+  // (e-postanın sahibi olduğu kanıtlanmış) kullanıcıya durum bildirilir.
+  if (user.approvalStatus === 'REJECTED' && user.authProvider === profile.provider) {
+    return { kind: 'BLOCKED', code: 'HESAP_REDDEDILDI', isNewUser: false };
+  }
+
   // Hesap aktif değilse erken çık
   if (!user.isActive) {
     throw new OAuthConflictError('HESAP_PASIF', 'Bu hesap devre dışı bırakılmıştır.');
@@ -79,8 +102,13 @@ async function handleExistingUser(
     );
   }
 
+  // Onay bekleyen hesap: token YOK (Y1-B8) — şifreli girişteki HESAP_ONAY_BEKLENIYOR ile aynı.
+  if (user.approvalStatus === 'PENDING') {
+    return { kind: 'BLOCKED', code: 'HESAP_ONAY_BEKLENIYOR', isNewUser: false };
+  }
+
   const { accessToken, refreshToken } = await issueTokenPair(user.id, user.tenantId, user.role, user.fullName);
-  return { accessToken, refreshToken, isNewUser: false };
+  return { kind: 'SESSION', accessToken, refreshToken, isNewUser: false };
 }
 
 // ─── Yeni kullanıcı ─────────────────────────────────────────────────────────
@@ -142,8 +170,10 @@ async function handleNewUser(
 
   // Admin "onaya bak" bildirimi yalnız onay bekleyen kayıtta (form kaydıyla aynı).
   // Arka planda — giriş akışını yavaşlatmamalı.
+  // Onay bekleyen yeni başvuru: kayıt alındı ama token YOK (Y1-B8) — form kaydı da token vermez.
   if (approvalStatus === 'PENDING') {
     void notifyAdmins(tenant, newUser.fullName, state.role);
+    return { kind: 'BLOCKED', code: 'HESAP_ONAY_BEKLENIYOR', isNewUser: true };
   }
 
   const { accessToken, refreshToken } = await issueTokenPair(
@@ -152,7 +182,7 @@ async function handleNewUser(
     newUser.role,
     newUser.fullName,
   );
-  return { accessToken, refreshToken, isNewUser: true };
+  return { kind: 'SESSION', accessToken, refreshToken, isNewUser: true };
 }
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
