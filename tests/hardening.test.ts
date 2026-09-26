@@ -173,6 +173,68 @@ describe('Hardening: Boş Havuz / Algoritmik Kilitlenme', () => {
   });
 });
 
+// ─── KR-19: menti→mentör yönü de idari bloğu uygular ─────────────────────────
+// D4 bulgusu (kod-inceleme-2026-09-24.md): rankMentisForMentor (yukarısı) bidirectional
+// bloğu ZATEN uyguluyordu; rankMentorsForMenti (menti'nin "bana uygun mentörler" listesi)
+// blok kontrolünü HİÇ yapmıyordu — engellenen mentör menti'nin listesinde görünmeye devam
+// ediyordu. Bu blok, aynı motoru TERS yönde doğrular.
+
+describe('Hardening: KR-19 — menti→mentör listesinde idari blok', () => {
+  let http: TestAgent;
+  let tenant: Tenant;
+  let mentorBlocked:   User & { rawPassword: string };
+  let mentorVisible:   User & { rawPassword: string };
+  let menti:           User & { rawPassword: string };
+  let mentiToken:      string;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http   = agent();
+    tenant = await createTenant();
+    mentorBlocked = await createMentor(tenant.id, { discType: 'C', sectorTags: ['teknoloji'] });
+    mentorVisible = await createMentor(tenant.id, { discType: 'C', sectorTags: ['teknoloji'] });
+    menti         = await createMenti(tenant.id, { discType: 'D', sectorTags: ['teknoloji'] });
+
+    const tokens = await loginAs(http, menti.email, menti.rawPassword);
+    mentiToken   = tokens.accessToken;
+  });
+
+  it('yönetici bloğu — bloklanmış mentör menti\'nin listesinde GÖRÜNMEZ', async () => {
+    // Blok yön-bağımsızdır: kayıt fromUserId=menti, toUserId=mentorBlocked olarak
+    // yazılsa da (rankMentisForMentor tarafında olduğu gibi) her iki yönde de etkili olmalı.
+    await testPrisma.tenant.update({
+      where: { id: tenant.id },
+      data: {
+        blockedPairs: [
+          { fromUserId: menti.id, toUserId: mentorBlocked.id, blockedAt: new Date().toISOString(), blockedBy: 'test-admin' },
+        ],
+      },
+    });
+
+    const res = await http
+      .get(`/api/mentis/${menti.id}/mentor-matches`)
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .expect(200);
+
+    const body = res.body as { items: { mentorId: string }[] };
+    const ids = body.items.map((i) => i.mentorId);
+    expect(ids).not.toContain(mentorBlocked.id);
+    expect(ids).toContain(mentorVisible.id);
+  });
+
+  it('regresyon: blok YOKSA her iki mentör de listede görünür', async () => {
+    const res = await http
+      .get(`/api/mentis/${menti.id}/mentor-matches`)
+      .set(tenantHeaders(tenant.id, mentiToken))
+      .expect(200);
+
+    const body = res.body as { items: { mentorId: string }[] };
+    const ids = body.items.map((i) => i.mentorId);
+    expect(ids).toContain(mentorBlocked.id); // bu testte hiç blok yok, isim yanıltıcı değil
+    expect(ids).toContain(mentorVisible.id);
+  });
+});
+
 // ─── Test 3: Sabotajcı Menti — DISC Submit Zod Zırhı ─────────────────────────
 
 describe('Hardening: Sabotajcı Menti /disc/submit', () => {
