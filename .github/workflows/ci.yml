@@ -56,3 +56,46 @@ jobs:
       # Service container health-check garantili olduğundan warm-up ilk denemede geçer.
       - name: Run tests
         run: npx vitest run
+
+  # KR-16: Canlı imajın açılışı internete ve değişken Prisma sürümüne bağlı olmasın.
+  # Kanıt: (a) ağsız konteynerde Prisma CLI + schema engine hazır, sürüm lockfile ile aynı;
+  # (b) imajdaki CLI gerçek migration'ları boş (CI'ın geçici) Postgres'ine uygular.
+  docker-prisma:
+    name: Docker imajı — Prisma CLI ağsız
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: menti_mentor_image_check
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: İmajı derle
+        run: docker build -t menti-backend:ci --build-arg GIT_SHA=${{ github.sha }} .
+
+      - name: Ağsız — Prisma CLI sürümü ve motorlar
+        run: |
+          set -o pipefail
+          docker run --rm --network none menti-backend:ci ./node_modules/.bin/prisma --version | tee prisma-version.txt
+          expected=$(node -p "require('./package-lock.json').packages['node_modules/prisma'].version")
+          echo "lockfile prisma sürümü: $expected"
+          grep -E "^prisma +: ${expected}$" prisma-version.txt
+          grep -E "^Schema Engine +: schema-engine-cli " prisma-version.txt
+
+      - name: migrate deploy — boş test DB'sine gerçek migration'lar
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL=postgresql://postgres:postgres@localhost:5432/menti_mentor_image_check \
+            menti-backend:ci ./node_modules/.bin/prisma migrate deploy
