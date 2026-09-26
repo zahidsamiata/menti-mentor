@@ -17,7 +17,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { cleanDb, testPrisma } from './helpers/db.js';
-import { createTenant, createUser } from './helpers/factories.js';
+import { createTenant, createUser, createUserProfile, createMentor, createMenti } from './helpers/factories.js';
 import { agent, loginAs, tenantHeaders } from './helpers/request.js';
 import { anonymizeUser, hardDeleteUser } from '../src/services/gdprService.js';
 
@@ -41,6 +41,7 @@ describe('anonymizeUser → User PII alanları temizlenir', () => {
         enneagramWing: '3w4',
         discResultCard: { archetype: 'Test' },
         discVector: { D: 0.5, I: 0.2, S: 0.2, C: 0.1 },
+        rejectionReason: 'GİZLİ-RET-GEREKÇESİ-xyz',
       },
     });
   });
@@ -62,6 +63,61 @@ describe('anonymizeUser → User PII alanları temizlenir', () => {
     expect(u!.email).toContain('@anon.invalid'); // gerçek e-posta değil, anonim
     expect(u!.email).not.toContain('ornek'); // orijinal PII izi yok
     expect(u!.isActive).toBe(false);
+  });
+
+  // GV-08 (güvenlik konseyi §2.B.2): password ve rejectionReason daha önce atlanıyordu —
+  // KARAR-39'dan bağımsız, tartışmasız birer PII/kimlik-bilgisi bug'ıydı.
+  it('GV-08: password ve rejectionReason anonimleştirme sonrası null', async () => {
+    await anonymizeUser(userId, tenantId);
+
+    const u = await testPrisma.user.findUnique({ where: { id: userId } });
+    expect(u!.password).toBeNull();
+    expect(u!.rejectionReason).toBeNull();
+  });
+});
+
+describe('anonymizeUser → GV-08: Match arketip kopyası + UserReport.reviewNote', () => {
+  it('Match.mentorArchetype/mentiArchetype anonimleşen tarafın alanı placeholder olur, karşı taraf KORUNUR', async () => {
+    await cleanDb();
+    const tenant = await createTenant();
+    const mentor = await createMentor(tenant.id);
+    const menti = await createMenti(tenant.id);
+    const mentorProfile = await createUserProfile(mentor.id, { archetype: 'M2', archetypeRole: 'MENTOR' });
+    const mentiProfile = await createUserProfile(menti.id, { archetype: 'm3', archetypeRole: 'MENTI' });
+    const match = await testPrisma.match.create({
+      data: {
+        tenantId: tenant.id, mentorId: mentorProfile.id, mentiId: mentiProfile.id,
+        predictedScore: 0.8, sectorScore: 0.7, characterScore: 0.9,
+        mentorArchetype: 'M2', mentiArchetype: 'm3',
+      },
+    });
+
+    await anonymizeUser(mentor.id, tenant.id);
+
+    const after = await testPrisma.match.findUnique({ where: { id: match.id } });
+    expect(after!.mentorArchetype).toBe('[silindi]');
+    expect(after!.mentiArchetype).toBe('m3'); // karşı tarafın verisi dokunulmadı
+  });
+
+  it('GV-08: reviewNote yazan (reviewedBy) anonimleşince not temizlenir; reporter/target etkilenmez', async () => {
+    await cleanDb();
+    const tenant = await createTenant();
+    const reporter = await createUser({ tenantId: tenant.id, role: 'MENTI' });
+    const target = await createUser({ tenantId: tenant.id, role: 'MENTOR' });
+    const admin = await createUser({ tenantId: tenant.id, role: 'ADMIN' });
+    const report = await testPrisma.userReport.create({
+      data: {
+        tenantId: tenant.id, reporterUserId: reporter.id, targetUserId: target.id,
+        reason: 'OTHER', description: 'şikayet metni',
+        reviewNote: 'ADMİN-İNCELEME-NOTU-xyz', reviewedBy: admin.id, status: 'REVIEWED',
+      },
+    });
+
+    await anonymizeUser(admin.id, tenant.id);
+
+    const after = await testPrisma.userReport.findUnique({ where: { id: report.id } });
+    expect(after!.reviewNote).toBeNull();
+    expect(after!.description).toBe('şikayet metni'); // reporter/target anonimleşmedi, dokunulmadı
   });
 });
 
@@ -98,6 +154,7 @@ describe('anonymizeUser → bağlı serbest-metin PII temizlenir (madde 93)', ()
         startsAt: new Date(), endsAt: new Date(Date.now() + 3600_000),
         notes: `görüşme notu ${SECRET}`, requestMessage: `talep ${SECRET}`,
         phoneNumber: '+90 555 111 22 33', locationText: `adres ${SECRET}`,
+        format: 'ONLINE', locationUrl: 'https://meet.google.com/gizli-link',
       },
     });
     meetingId = meeting.id;
@@ -151,6 +208,7 @@ describe('anonymizeUser → bağlı serbest-metin PII temizlenir (madde 93)', ()
     expect(meeting!.requestMessage).toBeNull();
     expect(meeting!.phoneNumber).toBeNull();
     expect(meeting!.locationText).toBeNull();
+    expect(meeting!.locationUrl).toBeNull(); // GV-08: daha önce atlanıyordu
 
     const checkIn = await testPrisma.meetingCheckIn.findFirst({ where: { userId: userA } });
     expect(checkIn!.openNote).toBeNull();
