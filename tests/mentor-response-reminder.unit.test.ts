@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeMentorReminderStage,
+  resolveMentorNudgeScope,
+  type MentorNudgeScopeInput,
   type MentorReminderState,
 } from '../src/services/cronScheduler.js';
 
@@ -57,5 +59,36 @@ describe('AN-26 · computeMentorReminderStage', () => {
     expect(computeMentorReminderStage(state(14), NOW)).toBe('escalate');
     expect(computeMentorReminderStage(state(14.01), NOW)).toBe('none');
     expect(computeMentorReminderStage(state(60), NOW)).toBe('none');
+  });
+});
+
+describe('AN-26 · resolveMentorNudgeScope', () => {
+  const base: MentorNudgeScopeInput = {
+    mentorUserActive: true,
+    mentiUserActive: true,
+    mentorMembershipActive: true,
+    mentorHasActiveAvailabilityBlock: false,
+    mentorInConversationTenant: true,
+  };
+
+  it('ne blok ne koşul, aynı kurum, herkes aktif → hatırlatma + eskalasyon', () => {
+    expect(resolveMentorNudgeScope(base)).toEqual({ canRemind: true, canEscalate: true, skipReason: 'none' });
+  });
+
+  it('KARAR-53 ④ kapsamı: aktif müsaitlik bloğu olan mentör hiç dürtülmez', () => {
+    expect(resolveMentorNudgeScope({ ...base, mentorHasActiveAvailabilityBlock: true }))
+      .toEqual({ canRemind: false, canEscalate: false, skipReason: 'has_availability' });
+  });
+
+  it('pasif menti / pasif mentör / mentörün pasif kurum üyeliği → hiçbir e-posta', () => {
+    for (const over of [{ mentiUserActive: false }, { mentorUserActive: false }, { mentorMembershipActive: false }]) {
+      expect(resolveMentorNudgeScope({ ...base, ...over }))
+        .toEqual({ canRemind: false, canEscalate: false, skipReason: 'inactive_party' });
+    }
+  });
+
+  it('paylaşımlı havuz (mentör başka kurumda) → hatırlatma evet, eskalasyon HAYIR (KARAR-98 bekleniyor)', () => {
+    expect(resolveMentorNudgeScope({ ...base, mentorInConversationTenant: false }))
+      .toEqual({ canRemind: true, canEscalate: false, skipReason: 'cross_tenant' });
   });
 });

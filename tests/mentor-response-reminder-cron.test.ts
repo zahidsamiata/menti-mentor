@@ -138,6 +138,73 @@ describe('runMentorResponseReminderCron', () => {
     expect(after.mentorReminder2SentAt).not.toBeNull();
   });
 
+  it('KARAR-53 ④ kapsamı: aktif müsaitlik bloğu olan mentöre hatırlatma/eskalasyon GİTMEZ', async () => {
+    await testPrisma.availabilityBlock.create({
+      data: { userId: mentor.id, tenantId, weekday: 'MON', startTime: '10:00', endTime: '12:00' },
+    });
+    await conversation(3.5);
+    await conversation(10.5, {
+      mentiUserId: (await createMenti(tenantId)).id,
+    });
+    await runMentorResponseReminderCron(NOW);
+    expect(mocks.reminder).not.toHaveBeenCalled();
+    expect(mocks.escalation).not.toHaveBeenCalled();
+  });
+
+  it('pasif müsaitlik bloğu kapsamı değiştirmez — hatırlatma gider', async () => {
+    await testPrisma.availabilityBlock.create({
+      data: { userId: mentor.id, tenantId, weekday: 'MON', startTime: '10:00', endTime: '12:00', isActive: false },
+    });
+    await conversation(3.5);
+    await runMentorResponseReminderCron(NOW);
+    expect(mocks.reminder).toHaveBeenCalledTimes(1);
+  });
+
+  it('menti hesabı pasifse hiçbir e-posta gitmez', async () => {
+    await testPrisma.user.update({ where: { id: menti.id }, data: { isActive: false } });
+    const conv = await conversation(10.5);
+    await conversation(3.5, { mentiUserId: (await createMenti(tenantId)).id }).then(async (c) => {
+      await testPrisma.user.update({ where: { id: c.mentiUserId }, data: { isActive: false } });
+    });
+    await runMentorResponseReminderCron(NOW);
+    expect(mocks.reminder).not.toHaveBeenCalled();
+    expect(mocks.escalation).not.toHaveBeenCalled();
+    expect((await getConv(conv.id)).adminEscalatedAt).toBeNull();
+  });
+
+  it('mentörün kurum üyeliği pasifse hiçbir e-posta gitmez', async () => {
+    await testPrisma.tenantMembership.update({
+      where: { userId_tenantId: { userId: mentor.id, tenantId } },
+      data: { isActive: false },
+    });
+    await conversation(3.5);
+    await conversation(10.5, { mentiUserId: (await createMenti(tenantId)).id });
+    await runMentorResponseReminderCron(NOW);
+    expect(mocks.reminder).not.toHaveBeenCalled();
+    expect(mocks.escalation).not.toHaveBeenCalled();
+  });
+
+  it('paylaşımlı havuz: mentör başka kurumdaysa hatırlatma gider ama 10. gün eskalasyonu GİTMEZ', async () => {
+    const mentorTenant = await createTenant({ name: 'Mentör STK' });
+    await createAdminUser(mentorTenant.id);
+    const crossMentor = await createMentor(mentorTenant.id);
+
+    const early = await testPrisma.conversation.create({
+      data: { tenantId, mentorUserId: crossMentor.id, mentiUserId: menti.id, createdAt: ago(3.5) },
+    });
+    const otherMenti = await createMenti(tenantId);
+    const late = await testPrisma.conversation.create({
+      data: { tenantId, mentorUserId: crossMentor.id, mentiUserId: otherMenti.id, createdAt: ago(10.5) },
+    });
+
+    const r = await runMentorResponseReminderCron(NOW);
+    expect(r.reminder1).toBe(1);
+    expect(mocks.reminder).toHaveBeenCalledWith(expect.objectContaining({ toEmail: crossMentor.email, conversationId: early.id }));
+    expect(mocks.escalation).not.toHaveBeenCalled();
+    expect(r.escalated).toBe(0);
+    expect((await getConv(late.id)).adminEscalatedAt).toBeNull();
+  });
+
   it('14 günden eski konuşmaya dokunulmaz', async () => {
     await conversation(20);
     await runMentorResponseReminderCron(NOW);

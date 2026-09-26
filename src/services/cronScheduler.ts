@@ -446,6 +446,9 @@ export async function runCheckpointFeedbackReminderCron(): Promise<{
 //   3. gün mentöre 1. hatırlatma · 7. gün 2. hatırlatma · 10. gün kurum yöneticisine eskalasyon.
 // Menti tarafına mesaj/alternatif mentör önerisi YOK (KARAR-22 B).
 // "Yanıt vermedi" = konuşmada mentörün gönderdiği hiç mesaj yok.
+// Kapsam (resolveMentorNudgeScope): yalnız aktif müsaitlik bloğu OLMAYAN mentör (KARAR-53 ④ "ne blok ne koşul";
+// koşul alanları şemada henüz yok); menti + mentör hesabı + mentörün ilgili kurum üyeliği aktif olmalı;
+// paylaşımlı havuzda (mentör konuşmanın kurumunda değil) hatırlatma gider, eskalasyon GİTMEZ (KARAR-98 bekleniyor).
 
 export const MENTOR_REMINDER_CONFIG = {
   reminder1AfterDays: 3,
@@ -494,6 +497,42 @@ export function computeMentorReminderStage(state: MentorReminderState, now: Date
   return 'none';
 }
 
+export interface MentorNudgeScopeInput {
+  mentorUserActive: boolean;
+  mentiUserActive: boolean;
+  // Mentörün "ilgili kurum"daki MENTOR üyeliği aktif mi (ilgili = konuşmanın kurumu, orada üyeliği
+  // yoksa mentörün ev kurumu). Üyelik hiç bulunamazsa false.
+  mentorMembershipActive: boolean;
+  // KARAR-53: ④ yalnız "ne blok ne koşul" hâlindeki mentör içindir. Koşul alanları (zaman aralığı +
+  // görüşme türü) şemada henüz YOK → tek ölçüt aktif AvailabilityBlock.
+  mentorHasActiveAvailabilityBlock: boolean;
+  // Konuşmanın kurumunda mentörün MENTOR üyeliği var mı (yoksa paylaşımlı havuz = farklı kurum).
+  mentorInConversationTenant: boolean;
+}
+
+export type MentorNudgeSkipReason = 'none' | 'inactive_party' | 'has_availability' | 'cross_tenant';
+
+export interface MentorNudgeScope {
+  canRemind: boolean;
+  canEscalate: boolean;
+  skipReason: MentorNudgeSkipReason;
+}
+
+/** Bu konuşmada mentör dürtülebilir mi / yöneticiye eskalasyon yapılabilir mi? Saf fonksiyon. */
+export function resolveMentorNudgeScope(input: MentorNudgeScopeInput): MentorNudgeScope {
+  if (!input.mentorUserActive || !input.mentiUserActive || !input.mentorMembershipActive) {
+    return { canRemind: false, canEscalate: false, skipReason: 'inactive_party' };
+  }
+  if (input.mentorHasActiveAvailabilityBlock) {
+    return { canRemind: false, canEscalate: false, skipReason: 'has_availability' };
+  }
+  if (!input.mentorInConversationTenant) {
+    // KARAR-98 bekleniyor: paylaşımlı havuzda eskalasyonun hangi kurumun yöneticisine gideceği PO kararı → şimdilik gönderilmez.
+    return { canRemind: true, canEscalate: false, skipReason: 'cross_tenant' };
+  }
+  return { canRemind: true, canEscalate: true, skipReason: 'none' };
+}
+
 export async function runMentorResponseReminderCron(now: Date = new Date()): Promise<{
   reminder1: number;
   reminder2: number;
@@ -513,11 +552,13 @@ export async function runMentorResponseReminderCron(now: Date = new Date()): Pro
         createdAt:        { gte: oldest, lte: youngest },
         adminEscalatedAt: null,
         tenant:           { isActive: true },
+        menti:            { isActive: true },
       },
       select: {
         id: true, tenantId: true, mentorUserId: true, createdAt: true,
         mentorReminder1SentAt: true, mentorReminder2SentAt: true, adminEscalatedAt: true,
-        mentor: { select: { email: true, fullName: true, isActive: true } },
+        mentor: { select: { email: true, fullName: true, isActive: true, tenantId: true } },
+        menti:  { select: { isActive: true } },
       },
     });
     if (candidates.length === 0) {
@@ -532,21 +573,49 @@ export async function runMentorResponseReminderCron(now: Date = new Date()): Pro
     });
     const repliedKeys = new Set(senders.map((s) => `${s.conversationId}:${s.senderUserId}`));
 
+    // 2b) Kapsam verisi — mentörlerin MENTOR üyelikleri + aktif müsaitlik blokları (iki toplu sorgu).
+    const mentorIds = [...new Set(candidates.map((c) => c.mentorUserId))];
+    const [mentorMemberships, mentorBlocks] = await Promise.all([
+      prisma.tenantMembership.findMany({
+        where:  { userId: { in: mentorIds }, role: 'MENTOR' },
+        select: { userId: true, tenantId: true, isActive: true },
+      }),
+      prisma.availabilityBlock.groupBy({
+        by:    ['userId'],
+        where: { userId: { in: mentorIds }, isActive: true },
+      }),
+    ]);
+    const membershipActive = new Map(mentorMemberships.map((m) => [`${m.userId}:${m.tenantId}`, m.isActive]));
+    const mentorsWithBlocks = new Set(mentorBlocks.map((b) => b.userId));
+
     const planned = candidates
-      .map((c) => ({
-        conv: c,
-        stage: computeMentorReminderStage({
+      .map((c) => {
+        const inConvTenant = membershipActive.has(`${c.mentorUserId}:${c.tenantId}`);
+        const relevantTenantId = inConvTenant ? c.tenantId : c.mentor.tenantId;
+        return {
+          conv: c,
+          scope: resolveMentorNudgeScope({
+            mentorUserActive:                 c.mentor.isActive,
+            mentiUserActive:                  c.menti.isActive,
+            mentorMembershipActive:           membershipActive.get(`${c.mentorUserId}:${relevantTenantId}`) === true,
+            mentorHasActiveAvailabilityBlock: mentorsWithBlocks.has(c.mentorUserId),
+            mentorInConversationTenant:       inConvTenant,
+          }),
+          stage: computeMentorReminderStage({
           createdAt:             c.createdAt,
           mentorHasReplied:      repliedKeys.has(`${c.id}:${c.mentorUserId}`),
           mentorReminder1SentAt: c.mentorReminder1SentAt,
           mentorReminder2SentAt: c.mentorReminder2SentAt,
           adminEscalatedAt:      c.adminEscalatedAt,
         }, now),
-      }))
-      .filter((p) => p.stage !== 'none');
+        };
+      })
+      .filter((p) => p.stage !== 'none' && p.scope.canRemind);
 
     // 3) Eskalasyon alıcıları — kurum-içi rol TenantMembership'ten (User.role DEĞİL); tek sorgu.
-    const escalationTenantIds = [...new Set(planned.filter((p) => p.stage === 'escalate').map((p) => p.conv.tenantId))];
+    const escalationTenantIds = [...new Set(
+      planned.filter((p) => p.stage === 'escalate' && p.scope.canEscalate).map((p) => p.conv.tenantId),
+    )];
     const adminsByTenant = new Map<string, { email: string; fullName: string }[]>();
     if (escalationTenantIds.length > 0) {
       const adminMemberships = await prisma.tenantMembership.findMany({
@@ -562,10 +631,9 @@ export async function runMentorResponseReminderCron(now: Date = new Date()): Pro
 
     // 4) Gönder — guard alanı YALNIZ e-posta gerçekten gittiyse yazılır (U-16).
     // Log'a yalnız konuşma/kurum kimliği yazılır; e-posta, isim, mesaj içeriği YAZILMAZ.
-    for (const { conv, stage } of planned) {
+    for (const { conv, stage, scope } of planned) {
       try {
         if (stage === 'reminder1' || stage === 'reminder2') {
-          if (!conv.mentor.isActive) continue;
           const ok = await sendMentorResponseReminderEmail({
             toEmail:        conv.mentor.email,
             mentorName:     conv.mentor.fullName,
@@ -586,6 +654,12 @@ export async function runMentorResponseReminderCron(now: Date = new Date()): Pro
         }
 
         // stage === 'escalate'
+        if (!scope.canEscalate) {
+          void logger.info('SYSTEM', 'Eskalasyon atlandı: mentör başka kurumda (paylaşımlı havuz) — işaretlenmedi', {
+            conversationId: conv.id, tenantId: conv.tenantId, reason: scope.skipReason,
+          });
+          continue;
+        }
         const admins = adminsByTenant.get(conv.tenantId) ?? [];
         if (admins.length === 0) {
           void logger.warn('SYSTEM', 'Eskalasyon: kurumda aktif yönetici yok — işaretlenmedi', {
