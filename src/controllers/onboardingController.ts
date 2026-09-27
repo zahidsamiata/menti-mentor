@@ -479,12 +479,12 @@ export async function submitDiscTest(req: RequestWithTenant, res: Response) {
   // eşleştirmede sessizce atlanıyordu. Persist edilen vektöre gerçek confidence dahil edilir.
   const persistedDiscVector = { ...result.vector, confidence: result.confidence };
 
-  // discResultCard: "Aha Anı" kartı + ham skorlar (debug ve analytics için)
+  // discResultCard: "Aha Anı" kartı — DB'ye YALNIZ kart alanlarıyla yazılır (AJ-21).
+  // Kart peer bakışında (GET /api/users/:id) döndüğü için ham vektör/puan buraya gömülmez;
+  // ham vektörün tek kaynağı User.discVector'dır (yalnız self/admin seçiminde döner).
   const discResultCard = {
     ...resultCard,
     dominant:    result.dominant,
-    discVector:  persistedDiscVector,
-    rawScores:   result.scores,
     completedAt: new Date().toISOString(),
   };
 
@@ -507,7 +507,9 @@ export async function submitDiscTest(req: RequestWithTenant, res: Response) {
 
   return res.json({
     message: `Mizaç profilin hazır! Sen bir ${resultCard!.archetype}sın ${resultCard!.icon}`,
-    resultCard: discResultCard,
+    // Kişinin KENDİ sonuç ekranı "Uyum %" için vektörü kullanır (ResultStep) — yanıt şekli korunur,
+    // ham alanlar yalnız bu self yanıtında taşınır, DB'deki karta yazılmaz.
+    resultCard: { ...discResultCard, discVector: persistedDiscVector, rawScores: result.scores },
     user: {
       id:         updated.id,
       fullName:   updated.fullName,

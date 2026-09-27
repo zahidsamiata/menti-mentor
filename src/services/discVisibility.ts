@@ -27,3 +27,19 @@ export function canViewerSeeDiscType(
   if (viewerRole === 'MENTOR' && targetRole === 'MENTI') return true;
   return false;
 }
+
+/**
+ * AJ-21 (KVKK — psikometrik veri): kişinin KENDİSİ ve ADMIN dışındaki bakışlarda
+ * `discResultCard` yalnız arketip kartı alanlarını taşır. Eski onboarding sürümü karta ham
+ * DISC vektörünü (`discVector`) ve ham puanları (`rawScores`) da gömüyordu; bu kayıtlar DB'de
+ * durduğu sürece peer (ör. mentör→menti) yanıtına sızmasın diye okuma yolunda da süzülür.
+ * Ham vektörün tek meşru kaynağı `User.discVector` alanıdır (yalnız self/admin seçiminde döner).
+ */
+export const DISC_CARD_RAW_KEYS = ['discVector', 'rawScores'] as const;
+
+export function toPublicDiscResultCard<T>(card: T): T {
+  if (card === null || typeof card !== 'object' || Array.isArray(card)) return card;
+  const safe: Record<string, unknown> = { ...(card as Record<string, unknown>) };
+  for (const key of DISC_CARD_RAW_KEYS) delete safe[key];
+  return safe as T;
+}
