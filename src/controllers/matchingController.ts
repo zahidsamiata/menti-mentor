@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { rankMentisForMentor, rankMentorsForMenti, type RankedMenti, type RankedMentor } from '../services/matching.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
 import { validateRequest } from '../middleware/validate.js';
+import { rejectIfCallerNotApproved } from '../middleware/approvalGate.js';
 
 // KARAR 3: qualityMultiplier kullanıcıya gösterilmez (gizli yorumları dolaylı sızdırır).
 // DISC tipi açıklanmaz; bunun yerine nitel uyum gerekçesi üretilir.
@@ -16,24 +17,7 @@ function buildPublicItem(item: RankedMenti) {
   return { ...rest, compatibilityReason: reasons.join(' · ') || 'Genel profil uyumu' };
 }
 
-/**
- * U-08: onay kapısı — yöneticisi olmayan çağıran APPROVED değilse eşleşme verisi dönmez.
- * Komşu uç userController.listUsers ile aynı kural ve aynı yanıt (403 ONAY_BEKLENIYOR).
- * true dönerse yanıt yazılmıştır, çağıran return etmeli.
- */
-async function rejectIfCallerNotApproved(req: RequestWithTenant, res: Response): Promise<boolean> {
-  if (!req.auth || req.auth.role === 'ADMIN') return false;
-  const caller = await prisma.user.findFirst({
-    where:  { id: req.auth.userId, tenantId: req.tenant.tenantId },
-    select: { approvalStatus: true },
-  });
-  if (caller?.approvalStatus === 'APPROVED') return false;
-  res.status(403).json({
-    error: 'ONAY_BEKLENIYOR',
-    message: 'Eşleşme önerilerini görmek için yönetici onayı gerekli.',
-  });
-  return true;
-}
+// U-08: onay kapısı ortak yardımcıda (middleware/approvalGate.ts) — rank-mentors ile aynı kural.
 
 const DISC_VALUES = ['D', 'I', 'S', 'C'] as const;
 

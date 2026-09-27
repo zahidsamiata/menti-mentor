@@ -15,6 +15,7 @@ import {
   CertTopicError,
 } from '../services/certification.service.js';
 import { validateRequest } from '../middleware/validate.js';
+import { rejectIfCallerNotApproved } from '../middleware/approvalGate.js';
 
 const SjtAnswerSchema = z.object({
   questionCode: z.string().min(1),
@@ -88,6 +89,10 @@ export async function computeProfileHandler(req: RequestWithTenant, res: Respons
 
 // POST /api/scoring/rank-mentors
 export async function rankMentorsHandler(req: RequestWithTenant, res: Response) {
+  // AJ-20: komşu eşleşme uçlarıyla (matchingController) aynı onay kapısı — onay bekleyen hesap
+  // mentör kimlik no + uyum skoru listesini alamaz. ADMIN kapıya takılmaz.
+  if (await rejectIfCallerNotApproved(req, res)) return;
+
   const parsed = validateRequest(RankMentorsSchema, req.body, res);
   if (!parsed.success) return parsed.response;
 
