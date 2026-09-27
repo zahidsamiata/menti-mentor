@@ -16,31 +16,14 @@ import { hashRefreshToken } from '../services/refreshToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
 import { sendAlreadyRegisteredEmail } from '../services/emailService.js';
+import { setRefreshCookie, refreshTokenExpiresAt } from '../utils/authCookies.js';
 
 const BCRYPT_ROUNDS = 12;
-const REFRESH_TOKEN_EXPIRY_DAYS = 7;
-const REFRESH_COOKIE_NAME = 'mm_refresh';
-const isProd = process.env.NODE_ENV === 'production';
 
 // ─── Yardımcılar ──────────────────────────────────────────────────────────────
 
 function generateRefreshToken(): string {
   return crypto.randomBytes(64).toString('hex');
-}
-
-function refreshTokenExpiresAt(): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
-  return d;
-}
-
-function setRefreshCookie(res: Response, token: string): void {
-  res.cookie(REFRESH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'strict',
-    maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
-  });
 }
 
 const GENERIC_EMAIL_DOMAINS = new Set([

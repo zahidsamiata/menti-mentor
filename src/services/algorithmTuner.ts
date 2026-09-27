@@ -19,6 +19,7 @@
 
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 export type AlgorithmWeights = {
   sectorWeight: number;   // 0-1 (varsayılan: 0.60)
@@ -460,7 +461,7 @@ export async function rejectPendingAdjustment(tenantId: string): Promise<void> {
 async function notifyAdminsAboutPendingAdjustment(tenantId: string, result: TuningResult): Promise<void> {
   const admins = await prisma.user.findMany({
     where: { tenantId, role: 'ADMIN', isActive: true },
-    select: { email: true, fullName: true },
+    select: USER_CONTACT_SELECT,
   });
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { displayName: true, name: true } });
   const tenantName = tenant?.displayName ?? tenant?.name ?? tenantId;

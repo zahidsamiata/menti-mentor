@@ -20,6 +20,7 @@ import { sendDraftTenantReminderEmail, sendFeedbackReminderEmail } from './email
 import { notifyAdminsMentorCertLapsed } from './notificationService.js';
 import { CERT_CONFIG } from './certification.service.js';
 import { logger } from './logger.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 /**
  * Cron etkinleştirme koşulları (AND mantığı):
@@ -135,7 +136,7 @@ async function runDraftTenantReminder(): Promise<void> {
       drafts.map(async (t) => {
         const admin = await prisma.user.findFirst({
           where:  { tenantId: t.id, role: 'ADMIN', isActive: true },
-          select: { email: true, fullName: true },
+          select: USER_CONTACT_SELECT,
         });
         return { ...t, admin };
       }),
@@ -246,8 +247,8 @@ export async function runFeedbackReminderCron(): Promise<{ sent: number }> {
         endsAt: { lt: minAgo, gt: maxAgo },
       },
       include: {
-        mentor: { select: { fullName: true, email: true } },
-        menti:  { select: { fullName: true, email: true } },
+        mentor: { select: USER_CONTACT_SELECT },
+        menti:  { select: USER_CONTACT_SELECT },
       },
     });
 
@@ -311,8 +312,8 @@ export async function runAgreementRenewalCron(): Promise<{ prompted: number }> {
         expiresAt: { not: null, lte: warnThreshold },
       },
       include: {
-        mentor: { select: { email: true, fullName: true } },
-        menti:  { select: { email: true, fullName: true } },
+        mentor: { select: USER_CONTACT_SELECT },
+        menti:  { select: USER_CONTACT_SELECT },
       },
     });
 

@@ -6,6 +6,7 @@ import { sendFeedbackReminderEmail } from '../services/emailService.js';
 import { persistMentorQualityMultiplier } from '../services/scoring.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 const FeedbackSchema = z.object({
   // Menti → Mentor (1-5)
@@ -240,8 +241,8 @@ export async function sendPendingFeedbackReminders(req: RequestWithTenant, res: 
   const pendingMeetings = await prisma.meeting.findMany({
     where: { tenantId: req.tenant.tenantId, status: 'COMPLETED', hasFeedback: false },
     include: {
-      mentor: { select: { fullName: true, email: true } },
-      menti: { select: { fullName: true, email: true } },
+      mentor: { select: USER_CONTACT_SELECT },
+      menti: { select: USER_CONTACT_SELECT },
     },
   });
 

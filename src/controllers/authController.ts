@@ -23,7 +23,13 @@ import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
 import { passwordSchema } from '../services/passwordPolicy.js';
-
+import {
+  setRefreshCookie,
+  clearRefreshCookie,
+  getRefreshTokenFromCookie,
+  refreshTokenExpiresAt,
+} from '../utils/authCookies.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 // ─── Validation şemaları ──────────────────────────────────────────────────────
 
@@ -66,40 +72,8 @@ const ChangePasswordSchema = z.object({
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
-const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 const RESET_TOKEN_EXPIRY_MINUTES = 60;
 const BCRYPT_ROUNDS = 12;
-const REFRESH_COOKIE_NAME = 'mm_refresh';
-
-const isProd = process.env.NODE_ENV === 'production';
-
-function setRefreshCookie(res: Response, token: string): void {
-  res.cookie(REFRESH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'strict',
-    maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
-  });
-}
-
-// Oturum çerezini temizleyen tek yol: seçenekler set ile birebir aynı olmalı, yoksa tarayıcı
-// çerezi silmeyebilir (GV-23 — hesap kapatma da bunu kullanır).
-export function clearRefreshCookie(res: Response): void {
-  res.clearCookie(REFRESH_COOKIE_NAME, { httpOnly: true, secure: isProd, sameSite: 'strict' });
-}
-
-function getRefreshTokenFromCookie(req: Request): string | undefined {
-  const cookieHeader = req.headers['cookie'];
-  if (!cookieHeader) return undefined;
-  for (const part of cookieHeader.split(';')) {
-    const eqIdx = part.indexOf('=');
-    if (eqIdx === -1) continue;
-    const key = part.slice(0, eqIdx).trim();
-    const val = part.slice(eqIdx + 1).trim();
-    if (key === REFRESH_COOKIE_NAME) return decodeURIComponent(val);
-  }
-  return undefined;
-}
 
 /**
  * Token güvenlik modeli:
@@ -111,12 +85,6 @@ function getRefreshTokenFromCookie(req: Request): string | undefined {
  */
 function generateRefreshToken(): string {
   return crypto.randomBytes(64).toString('hex');
-}
-
-function refreshTokenExpiresAt(): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
-  return d;
 }
 
 function resetTokenExpiresAt(): Date {
@@ -242,7 +210,7 @@ export async function register(req: Request, res: Response) {
     // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
     const tenantAdmins = await prisma.user.findMany({
       where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
-      select: { email: true, fullName: true },
+      select: USER_CONTACT_SELECT,
     });
 
     for (const admin of tenantAdmins) {
