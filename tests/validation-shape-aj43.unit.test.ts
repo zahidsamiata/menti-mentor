@@ -35,6 +35,7 @@ import {
   respondToQuestion,
   submitResponses,
 } from '../src/controllers/questionController.js';
+import { checkSlugAvailability } from '../src/controllers/selfServeController.js';
 
 function mockRes() {
   const res: { statusCode?: number; body?: unknown; status: (c: number) => typeof res; json: (b: unknown) => typeof res } = {
@@ -97,5 +98,26 @@ describe('AJ-43: soru uçları ortak yardımcıdan geçer (message alan etiketli
     const body = expectCommonShape(res, true);
     expect(body.message).toMatch(/^Yanıtlar: /);
     expect(questionService.validateQuestionIds).not.toHaveBeenCalled();
+  });
+});
+
+describe('AJ-43: slug müsaitlik kontrolü ortak biçimde (GECERSIZ_SLUG değil)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('GET /self-serve/check-slug — geçersiz slug → 400 { error: VALIDATION, details }, DB sorgulanmaz', async () => {
+    const res = mockRes();
+    await checkSlugAvailability({ query: { slug: 'Büyük Harf!' } } as never, res as never);
+    const body = expectCommonShape(res, false);
+    expect(body.details.fieldErrors['slug']).toContain('Slug yalnızca küçük harf, rakam ve tire içerebilir');
+    expect(JSON.stringify(body)).not.toContain('GECERSIZ_SLUG');
+    expect(prismaMock.tenant.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('geçerli slug → 200 yolu değişmedi (available alanı döner)', async () => {
+    prismaMock.tenant.findUnique.mockResolvedValue(null);
+    const res = mockRes();
+    await checkSlugAvailability({ query: { slug: 'ornek-kurum' } } as never, res as never);
+    expect(res.statusCode).toBeUndefined();
+    expect(res.body).toEqual({ available: true, slug: 'ornek-kurum' });
   });
 });
