@@ -19,7 +19,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser, createUserProfile, createMentor, createMenti } from './helpers/factories.js';
 import { agent, loginAs, tenantHeaders } from './helpers/request.js';
-import { anonymizeUser, hardDeleteUser } from '../src/services/gdprService.js';
+import { anonymizeUser, exportUserData, hardDeleteUser } from '../src/services/gdprService.js';
 
 describe('anonymizeUser → User PII alanları temizlenir', () => {
   let userId: string;
@@ -287,6 +287,37 @@ describe('anonymizeUser → oturum/token iptali (madde 39)', () => {
     await anonymizeUser(user.id, tenant.id);
     const res = await http.get('/api/users/mentor-count').set(tenantHeaders(tenant.id, accessToken));
     expect(res.status).toBe(403);
+  });
+});
+
+describe('AN-52 — ürün-içi anket cevapları KVKK muamelesi', () => {
+  it('exportUserData dışa aktarımda görünür; anonymizeUser sonrası SİLİNİR (gider)', async () => {
+    await cleanDb();
+    const tenant = await createTenant();
+    const menti = await createUser({ tenantId: tenant.id, role: 'MENTI' });
+
+    await testPrisma.productSurveyResponse.create({
+      data: {
+        userId: menti.id,
+        tenantId: tenant.id,
+        questionKey: 'S1_BEKLEME',
+        answerKey: 'ENDISELIYIM',
+        respondedAt: new Date(),
+      },
+    });
+
+    // Dışa aktarımda görünür (kendi verisi)
+    const exported = await exportUserData(menti.id, tenant.id);
+    expect(exported.productSurveyResponses).toHaveLength(1);
+    expect(exported.productSurveyResponses[0]).toMatchObject({
+      questionKey: 'S1_BEKLEME',
+      answerKey: 'ENDISELIYIM',
+    });
+
+    // Anonimleştirme sonrası gider (UserResponse/DISC ile AYNI muamele)
+    await anonymizeUser(menti.id, tenant.id);
+    const remaining = await testPrisma.productSurveyResponse.count({ where: { userId: menti.id } });
+    expect(remaining).toBe(0);
   });
 });
 
