@@ -251,6 +251,9 @@ describe('F-05: public uçlar — anahtar VARKEN (Cloudflare fetch mock)', () =>
 
   it('pozitif: geçerli captchaToken → 201, kayıt oluşur', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true }) }) as unknown as typeof fetch;
+    // cleanDb() SuspicionReport'u TRUNCATE etmez (db.ts kasıtlı — bkz. cleanDb yorumu);
+    // bu dosyanın "anahtar YOKKEN" bloğu da bir kayıt oluşturuyor → mutlak sayı yerine fark.
+    const before = await testPrisma.suspicionReport.count();
 
     const res = await http.post('/api/suspicion-reports').send({
       tenantName: 'Şüpheli Kurum',
@@ -262,7 +265,7 @@ describe('F-05: public uçlar — anahtar VARKEN (Cloudflare fetch mock)', () =>
     });
 
     expect(res.status).toBe(201);
-    expect(await testPrisma.suspicionReport.count()).toBe(1);
+    expect(await testPrisma.suspicionReport.count()).toBe(before + 1);
   });
 
   it('negatif: POST /api/auth/register token yoksa 400, kullanıcı OLUŞMAZ', async () => {
