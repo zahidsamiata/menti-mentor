@@ -20,6 +20,7 @@ import { hashRefreshToken, refreshTokenLookupKeys, refreshTokenWhere } from '../
 import { verifyInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
+import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
 import { passwordSchema } from '../services/passwordPolicy.js';
 
 
@@ -149,10 +150,16 @@ export async function register(req: Request, res: Response) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
-    select: { id: true, name: true, displayName: true, verificationStatus: true },
+    select: { id: true, name: true, displayName: true, verificationStatus: true, isActive: true },
   });
   if (!tenant) {
     return res.status(400).json({ error: 'TENANT_BULUNAMADI', message: REGISTER_MESSAGES.TENANT_NOT_FOUND });
+  }
+
+  // Y1-B9: dondurulmuş / reddedilmiş kuruma yeni üye alınmaz (komşu kapı TENANT_ONAY_BEKLENIYOR ile
+  // aynı düzey: e-posta kontrolünden ÖNCE → e-posta numaralandırması açılmaz).
+  if (isTenantSuspended(tenant)) {
+    return res.status(403).json(TENANT_CLOSED_FOR_SIGNUP_BODY);
   }
 
   if (tenant.verificationStatus === 'PENDING_REVIEW') {
@@ -424,6 +431,7 @@ export async function login(req: Request, res: Response) {
  *  - Kimlik doğrulama e-posta+ŞİFRE ile (enumeration-safe: yanlış şifre → generic 401).
  *  - IDOR: yalnızca kimliği doğrulanan KENDİ hesabını etkiler (param yok, token yok).
  *  - Yalnızca REJECTED → PENDING geçişine izin verir; başka durum → 409.
+ *  - Kurum askıdaysa (Y1-B9b) → 403 KURUM_KAYDA_KAPALI (kayıt kapısıyla aynı; şifre doğrulamasından sonra).
  *  - Geçmiş KORUNUR: rejectionReason/rejectedBy/rejectedAt SİLİNMEZ (çok-yönetici: yeni bakan
  *    yönetici en son red gerekçesini görebilmeli). Test/DISC/profil verisine DOKUNULMAZ.
  */
@@ -434,7 +442,10 @@ export async function reapply(req: Request, res: Response) {
 
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, password: true, authProvider: true, approvalStatus: true, fullName: true },
+    select: {
+      id: true, password: true, authProvider: true, approvalStatus: true, fullName: true,
+      tenant: { select: { isActive: true, verificationStatus: true } },
+    },
   });
 
   // Enumeration koruması: kullanıcı yok / OAuth / şifre yanlış → hepsi aynı generic 401.
@@ -444,6 +455,12 @@ export async function reapply(req: Request, res: Response) {
   const passwordMatch = await bcrypt.compare(password, user.password);
   if (!passwordMatch) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
+  }
+
+  // Y1-B9b: askıdaki (dondurulmuş / reddedilmiş) kuruma yeniden başvuru = yeni üye kaydı → kayıttaki
+  // KURUM_KAYDA_KAPALI kapısıyla AYNI yanıt. Şifre doğrulandıktan SONRA → e-posta numaralandırması açılmaz.
+  if (isTenantSuspended(user.tenant)) {
+    return res.status(403).json(TENANT_CLOSED_FOR_SIGNUP_BODY);
   }
 
   // Yalnızca reddedilmiş başvuru tekrar gönderilebilir (şifre doğrulandı → durum açıklanabilir).
@@ -861,7 +878,7 @@ export async function getMe(req: RequestWithTenant, res: Response) {
     where: { id: req.tenant.tenantId },
     select: {
       id: true, name: true, displayName: true, slug: true, logoUrl: true, primaryColor: true,
-      verificationStatus: true, correctionNote: true,
+      verificationStatus: true, correctionNote: true, isActive: true,
     },
   });
 
@@ -882,6 +899,8 @@ export async function getMe(req: RequestWithTenant, res: Response) {
           logoUrl: tenant.logoUrl,
           primaryColor: tenant.primaryColor,
           verificationStatus: tenant.verificationStatus,
+          // Y1-B9: kurum askıda mı (dondurma/ret) — istemci askı bilgisini gösterebilsin.
+          isSuspended: isTenantSuspended(tenant),
           correctionNote: user.role === 'ADMIN' ? (tenant.correctionNote ?? null) : null,
         }
       : null,

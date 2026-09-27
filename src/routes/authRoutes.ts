@@ -40,7 +40,9 @@ router.post('/forgot-password', passwordResetRateLimiter, forgotPassword as unkn
 // passwordResetRateLimiter: IP-bazlı — token brute-force koruması.
 router.post('/reset-password', passwordResetRateLimiter, resetPassword as unknown as RequestHandler);
 
-// GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir)
+// GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir).
+// Y1-B9: askıdaki kurumda da açık (askı kapısı izin listesi: middleware/tenantSuspension.ts) —
+// reddedilen kurumun yöneticisi ret bilgisini, askıdaki üye askı durumunu (`tenant.isSuspended`) okur.
 router.get('/me', requireTenant as unknown as RequestHandler, getMe as unknown as RequestHandler);
 
 // POST /api/auth/reconsent — GV-18: rıza metni sürümü güncellenince kullanıcı yeniden onaylar.

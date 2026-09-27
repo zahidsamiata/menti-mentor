@@ -8,6 +8,7 @@ import { logoUrlSchema } from '../services/logoUrl.js';
 import { passwordSchema } from '../services/passwordPolicy.js';
 import { signToken } from '../middleware/jwtAuth.js';
 import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
+import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { ensureMembership } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
@@ -666,6 +667,8 @@ export async function joinViaInvitation(req: Request, res: Response) {
       primaryColor:    true,
       programTemplate: true,
       plan:            true,
+      isActive:           true,
+      verificationStatus: true,
     },
   });
 
@@ -675,6 +678,12 @@ export async function joinViaInvitation(req: Request, res: Response) {
       message: 'Bu davet linki artık geçerli bir kuruma ait değil.',
       valid:   false,
     });
+  }
+
+  // Y1-B9: dondurulmuş / reddedilmiş kurumun davet linki kayda götürmez (kayıt ucu da kapalı;
+  // burada kapatmak kullanıcıyı boşuna form doldurtmaz). Token imzalı → numaralandırma yok.
+  if (isTenantSuspended(tenant)) {
+    return res.status(403).json({ ...TENANT_CLOSED_FOR_SIGNUP_BODY, valid: false });
   }
 
   return res.json({

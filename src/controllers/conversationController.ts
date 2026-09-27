@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
-import { isPairBlocked } from '../services/blockList.js';
+import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { sendNewChatMessageEmail } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
@@ -162,13 +162,7 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   // aksine — oradaki "yalnız kendi tenant'ı" kısayolu liste sıralaması için yeterliyken,
   // burada tek bir eylemi (konuşma açma) engellemek için her iki taraf da kontrol edilir).
   // Varlık ifşası YOK: blok bilgisi kullanıcıya sızdırılmaz, jenerik hata döner.
-  const blockTenantIds = Array.from(new Set([tenantId, mentor.tenantId]));
-  const blockTenants = await prisma.tenant.findMany({
-    where: { id: { in: blockTenantIds } },
-    select: { blockedPairs: true },
-  });
-  const isBlocked = blockTenants.some((t) => isPairBlocked(t.blockedPairs, mentiId, mentor.id));
-  if (isBlocked) {
+  if (await isPairBlockedInTenants([tenantId, mentor.tenantId], mentiId, mentor.id)) {
     return res.status(403).json({
       error: 'ISLEM_YAPILAMIYOR',
       message: 'Bu işlem şu anda gerçekleştirilemiyor.',
@@ -228,6 +222,27 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   const side = sideOf(convo, req.auth.userId);
   if (!side) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Konuşma bulunamadı.' });
+  }
+
+  // KR-19b: idari blok, blok KONMADAN ÖNCE açılmış konuşmada da mesajlaşmayı durdurur
+  // (önceden yalnız startConversation kontrol ediyordu — K5-Y2 denetimi). startConversation ile
+  // AYNI kural: konuşmanın tenant'ı + iki tarafın home tenant'ı; blok yön bağımsız. Taraflık
+  // yukarıda doğrulandığı için 403 varlık ifşa etmez; jenerik metin, blok bilgisi sızmaz.
+  // Okuma (getMessages/listConversations) bilinçli olarak açık bırakıldı — ürün kararı.
+  const [mentorUser, mentiUser] = await Promise.all([
+    prisma.user.findUnique({ where: { id: convo.mentorUserId }, select: { tenantId: true } }),
+    prisma.user.findUnique({ where: { id: convo.mentiUserId }, select: { tenantId: true } }),
+  ]);
+  const blocked = await isPairBlockedInTenants(
+    [convo.tenantId, mentorUser?.tenantId, mentiUser?.tenantId],
+    convo.mentorUserId,
+    convo.mentiUserId,
+  );
+  if (blocked) {
+    return res.status(403).json({
+      error: 'ISLEM_YAPILAMIYOR',
+      message: 'Bu işlem şu anda gerçekleştirilemiyor.',
+    });
   }
 
   // Okundu-bazlı e-posta (mesaj oluşmadan ÖNCE): alıcı güncelse ilk okunmamışta mail.

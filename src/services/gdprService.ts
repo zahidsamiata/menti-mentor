@@ -51,6 +51,17 @@ export const ACCOUNT_CLOSED_MESSAGE =
   'Hesabınız kapatıldı ve kimliğinizle ilişkilendirilebilir verileriniz geri döndürülemez şekilde ' +
   'anonimleştirildi. Diğer kullanıcılarla ortak kayıtlarda (görüşme, mesaj) kimliğiniz kaldırıldı.';
 
+/**
+ * Hedef kullanıcı İSTEK kurumunda yok (başka kurumda olabilir ya da hiç yok).
+ * Kontrolcü bunu jenerik 404'e çevirir — varlık ifşa edilmez (K5-Y3b: önceden 500 dönüyordu).
+ */
+export class GdprUserNotFoundError extends Error {
+  constructor() {
+    super('GDPR hedef kullanıcısı istek kurumunda bulunamadı');
+    this.name = 'GdprUserNotFoundError';
+  }
+}
+
 // ─── 1. Anonimleştirme ────────────────────────────────────────────────────────
 
 export type AnonymizeResult = {
@@ -70,7 +81,7 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
   });
 
   if (!user) {
-    throw new Error(`Kullanıcı bulunamadı: ${userId}`);
+    throw new GdprUserNotFoundError();
   }
 
   // Fiziksel avatar dosyasını transaction SONRASI silmek için eski URL'i şimdi yakala
@@ -337,7 +348,7 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
   ]);
 
   if (!user) {
-    throw new Error(`Kullanıcı bulunamadı: ${userId}`);
+    throw new GdprUserNotFoundError();
   }
 
   void logger.info('SYSTEM', 'KVKK: Kullanıcı veri dışa aktarımı yapıldı', { userId, tenantId });
