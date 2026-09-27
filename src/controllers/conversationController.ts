@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
@@ -287,32 +288,65 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
     }),
   ]);
 
-  const items = await Promise.all(
-    convos.map(async (c) => {
-      const side = sideOf(c, me)!;
-      const lastRead = lastReadForSide(c, side);
-      const unread = await prisma.message.count({
+  // AJ-06: eskiden sayfadaki HER konuşma için ayrı unread-count + son-mesaj sorgusu vardı
+  // (sayfa boyutuyla orantılı N+1). Şimdi sayfa başına sabit 2 sorgu:
+  //  1) unread — her konuşmanın KENDİ eşiğine (lastReadForSide) göre OR koşuluyla groupBy;
+  //     eşik konuşmadan konuşmaya FARKLI olduğu için tek WHERE'le sayılamaz, bu yüzden her
+  //     konuşma kendi koşuluyla OR'a eklenir; count tek groupBy sorgusunda toplanır.
+  //  2) son mesaj — ham SQL `DISTINCT ON` (Postgres). ⚠️ Prisma'nın `findMany({ distinct })`
+  //     API'si `nativeDistinct` preview flag'i AÇIK OLMADAN (bu şemada kapalı — previewFeatures
+  //     yok, schema.prisma'ya DOKUNULMADI) SQL'e `DISTINCT ON` olarak inmez; eşleşen TÜM satırları
+  //     (mesaj içerikleriyle) belleğe çekip uygulama katmanında filtreler — uzun sohbetlerde eski
+  //     N+1'den daha kötü sonuç verir (bağımsız inceleme, PR #174 yorumu). Bu yüzden burada
+  //     Prisma.sql + Prisma.join ile parametreli ham SQL kullanılır (string birleştirme YOK →
+  //     enjeksiyon riski yok); Postgres DISTINCT ON'u index'le (`@@index([conversationId, createdAt])`)
+  //     sunucu tarafında, satır satır belleğe çekmeden uygular.
+  // Sayfa boş ise hiç sorgu atılmaz.
+  const convoIds = convos.map((c) => c.id);
+
+  const unreadGroups = convoIds.length === 0
+    ? []
+    : await prisma.message.groupBy({
+        by: ['conversationId'],
         where: {
-          conversationId: c.id,
-          senderUserId: { not: me },
-          ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
+          OR: convos.map((c) => {
+            const side = sideOf(c, me)!;
+            const lastRead = lastReadForSide(c, side);
+            return {
+              conversationId: c.id,
+              senderUserId: { not: me },
+              ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
+            };
+          }),
         },
+        _count: { _all: true },
       });
-      const last = await prisma.message.findFirst({
-        where: { conversationId: c.id },
-        orderBy: { createdAt: 'desc' },
-        select: { content: true, createdAt: true, senderUserId: true },
-      });
-      const counterpart = side === 'mentor' ? c.menti : c.mentor;
-      return {
-        id: c.id,
-        counterpart,
-        lastMessagePreview: last ? preview(last.content) : null,
-        lastMessageAt: c.lastMessageAt,
-        unread,
-      };
-    }),
-  );
+  const unreadByConvo = new Map(unreadGroups.map((g) => [g.conversationId, g._count._all]));
+
+  const lastMessages = convoIds.length === 0
+    ? []
+    : await prisma.$queryRaw<Array<{ conversationId: string; content: string }>>(
+        Prisma.sql`
+          SELECT DISTINCT ON ("conversationId") "conversationId", "content"
+          FROM "Message"
+          WHERE "conversationId" IN (${Prisma.join(convoIds)})
+          ORDER BY "conversationId", "createdAt" DESC
+        `,
+      );
+  const lastByConvo = new Map(lastMessages.map((m) => [m.conversationId, m]));
+
+  const items = convos.map((c) => {
+    const side = sideOf(c, me)!;
+    const last = lastByConvo.get(c.id) ?? null;
+    const counterpart = side === 'mentor' ? c.menti : c.mentor;
+    return {
+      id: c.id,
+      counterpart,
+      lastMessagePreview: last ? preview(last.content) : null,
+      lastMessageAt: c.lastMessageAt,
+      unread: unreadByConvo.get(c.id) ?? 0,
+    };
+  });
 
   return res.json({ items, total, limit, offset });
 }
