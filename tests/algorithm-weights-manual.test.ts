@@ -256,4 +256,45 @@ describe('9a: PUT /algorithm-tuner/weights — manuel ağırlık ayarı', () => 
       .expect(200);
     expect(resB.body.lastChange).toBeNull();
   });
+
+  // ─── AJ-48: GET /weights kurumun KAYITLI rapor sıklığını döndürür ────────────
+
+  it('GET /weights: kurumun kayıtlı reportingFrequency değerini döndürür (MONTHLY)', async () => {
+    await testPrisma.tenant.update({ where: { id: tenant.id }, data: { reportingFrequency: 'MONTHLY' } });
+    const res = await http
+      .get(WEIGHTS_PATH)
+      .set(tenantHeaders(tenant.id, adminToken))
+      .expect(200);
+    expect(res.body.reportingFrequency).toBe('MONTHLY');
+  });
+
+  it('TENANT İZOLASYONU (sıklık): B kurumunun sıklığı A yanıtına sızmaz; A, B başlığıyla okuyamaz (403)', async () => {
+    const tenantB = await createTenant();
+    await testPrisma.tenant.update({ where: { id: tenantB.id }, data: { reportingFrequency: 'BIWEEKLY' } });
+
+    // A kendi kurumunda varsayılanı (WEEKLY) görür — B'nin BIWEEKLY değeri değil.
+    const resA = await http
+      .get(WEIGHTS_PATH)
+      .set(tenantHeaders(tenant.id, adminToken))
+      .expect(200);
+    expect(resA.body.reportingFrequency).toBe('WEEKLY');
+
+    // A'nın token'ıyla B'nin başlığı → 403, B'nin değeri dönmez.
+    const resCross = await http
+      .get(WEIGHTS_PATH)
+      .set(tenantHeaders(tenantB.id, adminToken))
+      .expect(403);
+    expect(resCross.body.reportingFrequency).toBeUndefined();
+  });
+
+  it('GET /weights: MENTOR rolü sıklığı okuyamaz (403)', async () => {
+    const mentor = await createUser({ tenantId: tenant.id, role: 'MENTOR' });
+    const httpM = agent();
+    const tokensM = await loginAs(httpM, mentor.email, mentor.rawPassword);
+    const res = await httpM
+      .get(WEIGHTS_PATH)
+      .set(tenantHeaders(tenant.id, tokensM.accessToken))
+      .expect(403);
+    expect(res.body.reportingFrequency).toBeUndefined();
+  });
 });
