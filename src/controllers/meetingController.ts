@@ -773,10 +773,8 @@ export async function markMeetingNotHappened(req: RequestWithTenant, res: Respon
   const { userId, tenantId } = ctx;
 
   const meetingId = req.params['meetingId'] as string;
-  const parsed = MarkNotHappenedSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: 'VALIDATION', details: parsed.error.flatten() });
-  }
+  const parsed = validateRequest(MarkNotHappenedSchema, req.body ?? {}, res);
+  if (!parsed.success) return parsed.response;
 
   const meeting = await prisma.meeting.findFirst({
     where:  { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.COMPLETED },

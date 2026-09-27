@@ -23,6 +23,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { recalcDiscVector, invalidateDimensionalCountCache } from '../services/discVectorService.js';
 import { logger } from '../services/logger.js';
+import { validateRequest } from '../middleware/validate.js';
 import {
   buildQuestionList,
   calcAdaptiveProgress,
@@ -126,14 +127,8 @@ export async function listQuestions(req: RequestWithTenant, res: Response) {
 
 /** Admin: yeni soru oluştur. tenantScoped=true → yalnızca bu tenant'a görünür. */
 export async function createQuestion(req: RequestWithTenant, res: Response) {
-  const parsed = CreateQuestionSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: 'VALIDATION',
-      message: firstValidationMessage(parsed.error),
-      details: parsed.error.flatten(),
-    });
-  }
+  const parsed = validateRequest(CreateQuestionSchema, req.body, res, { message: firstValidationMessage });
+  if (!parsed.success) return parsed.response;
 
   // DISC soru havuzu kilidi — sadece platform seviyesinde seed script ekleyebilir
   if (parsed.data.category === 'DISC_ASSESSMENT') {
@@ -190,14 +185,8 @@ export async function updateQuestion(req: RequestWithTenant, res: Response) {
     return res.status(403).json({ error: 'YETKI_YETERSIZ' });
   }
 
-  const parsed = UpdateQuestionSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: 'VALIDATION',
-      message: firstValidationMessage(parsed.error),
-      details: parsed.error.flatten(),
-    });
-  }
+  const parsed = validateRequest(UpdateQuestionSchema, req.body, res, { message: firstValidationMessage });
+  if (!parsed.success) return parsed.response;
 
   const updated = await prisma.question.update({
     where: { id: questionId },
@@ -314,14 +303,8 @@ export async function respondToQuestion(req: RequestWithTenant, res: Response) {
   }
 
   const questionId = req.params['questionId'] as string;
-  const parsed = SingleResponseSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: 'VALIDATION',
-      message: firstValidationMessage(parsed.error),
-      details: parsed.error.flatten(),
-    });
-  }
+  const parsed = validateRequest(SingleResponseSchema, req.body, res, { message: firstValidationMessage });
+  if (!parsed.success) return parsed.response;
 
   // Soru bu tenant'a erişilebilir mi?
   const invalidIds = await validateQuestionIds([questionId], req.tenant.tenantId);
@@ -365,14 +348,8 @@ export async function submitResponses(req: RequestWithTenant, res: Response) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
 
-  const parsed = BatchResponseSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: 'VALIDATION',
-      message: firstValidationMessage(parsed.error),
-      details: parsed.error.flatten(),
-    });
-  }
+  const parsed = validateRequest(BatchResponseSchema, req.body, res, { message: firstValidationMessage });
+  if (!parsed.success) return parsed.response;
 
   const { responses } = parsed.data;
   const questionIds = responses.map((r) => r.questionId);

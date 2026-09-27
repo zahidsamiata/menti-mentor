@@ -64,4 +64,30 @@ describe('Y-03: validateRequest', () => {
     expect(body.details.formErrors.length).toBe(1);
     expect(body.details.fieldErrors).toEqual({});
   });
+
+  it('AJ-43: options.message verilirse yanıt { error, message, details } olur; details biçimi aynı kalır', () => {
+    const { res, state } = fakeRes();
+    const parsed = validateRequest(Schema, { name: 'A', age: 1 }, res, {
+      message: (err) => `Etiket: ${err.issues[0]?.message}`,
+    });
+    expect(parsed.success).toBe(false);
+    expect(state.status).toBe(400);
+    const expected = Schema.safeParse({ name: 'A', age: 1 });
+    expect(state.body).toStrictEqual({
+      error: 'VALIDATION',
+      message: 'Etiket: İsim en az 2 karakter olmalı.',
+      details: expected.error!.flatten(),
+    });
+  });
+
+  it('AJ-43 negatif: başarılı girdide message üretici hiç çağrılmaz, yanıta dokunulmaz', () => {
+    const { res, state } = fakeRes();
+    let called = 0;
+    const parsed = validateRequest(Schema, { name: 'Deneme', age: 3 }, res, {
+      message: () => { called += 1; return 'x'; },
+    });
+    expect(parsed.success).toBe(true);
+    expect(called).toBe(0);
+    expect(state.body).toBeUndefined();
+  });
 });

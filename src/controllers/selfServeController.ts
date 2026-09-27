@@ -175,10 +175,10 @@ const SlugQuerySchema = z.object({
 });
 
 export async function checkSlugAvailability(req: Request, res: Response) {
-  const parsed = SlugQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return res.status(400).json({ available: false, error: 'GECERSIZ_SLUG', message: parsed.error.flatten().fieldErrors['slug']?.[0] ?? 'Geçersiz slug.' });
-  }
+  // AJ-43: ortak hata biçimi ({ error: 'VALIDATION', details }). Ön yüz (Step1Slug) başarısız yanıtın
+  // gövdesini okumaz; format regex'i istemcide zaten kontrol edilir.
+  const parsed = validateRequest(SlugQuerySchema, req.query, res);
+  if (!parsed.success) return parsed.response;
 
   const exists = await prisma.tenant.findUnique({
     where:  { slug: parsed.data.slug },
