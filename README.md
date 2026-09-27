@@ -35,6 +35,13 @@ npm run prisma:migrate
 npm run prisma:generate
 
 # 4. Mock veri (geliştirme / yük testi)
+# ⚠️ npm run seed TEHLİKELİDİR — toplu deleteMany() çalıştırır (userResponse/feedback/
+# meeting/matchRequest/club/tenant/user siler). CANLI = LOKAL AYNI DB (bkz. CLAUDE.md) —
+# yanlış DB'de çalıştırırsan CANLI VERİYİ SİLER. Yalnız izole/geçici DB'de, bilerek çalıştır.
+# Güvenli (yalnız upsert, veri silmez) alternatifler:
+#   npm run seed:certification      # sertifika programı mock verisi
+#   npm run seed:learning-journey   # öğrenme yolculuğu mock verisi
+#   npm run seed:test-tenant        # panel görsel testi için TEST kurumu (varsayılan dry-run)
 npm run seed
 
 # 5. Geliştirme sunucusu
@@ -415,7 +422,10 @@ npm run format           # Prettier
 npm run prisma:generate  # Prisma client yenile
 npm run prisma:migrate   # Migration uygula
 npm run prisma:studio    # Prisma Studio GUI
-npm run seed             # Mock veri oluştur (3 tenant, 220 kullanıcı)
+npm run seed             # ⚠️ TEHLİKELİ — toplu deleteMany() çalıştırır (yalnız izole DB'de kullan)
+npm run seed:certification    # Güvenli (yalnız upsert) — sertifika programı mock verisi
+npm run seed:learning-journey # Güvenli (yalnız upsert) — öğrenme yolculuğu mock verisi
+npm run seed:test-tenant      # Güvenli (yalnız upsert, dry-run varsayılan) — panel test kurumu
 npm run test:scoring     # Scoring algoritması matematiksel doğrulama
 ```
 
