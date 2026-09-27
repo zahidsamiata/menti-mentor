@@ -283,6 +283,11 @@ const CompleteProfileSchema = z.object({
   // Rol-spesifik alanlar (opsiyonel — menti ve mentor akışları bu endpoint'i paylaşır)
   expectationCategories: z.array(z.enum(EXPECTATION_CATEGORIES)).max(6).optional(),
   timeCommitment:        z.enum(TIME_COMMITMENTS).optional(),
+  // @deprecated AN-12 karantina (2026-09-27) — `interactionStyle` DONDURULMUŞ alan
+  // (KARAR 2 revize, `docs/kararlar/konu/degerlendirme-sistemi-tasarim-2026-08-27.md:574-586`).
+  // Zod anahtarı kabul eder (geriye dönük tip-uyum) ama `completeProfile` aşağıda bu alanı
+  // ARTIK yazma verisine katmıyor — gönderilse bile DB'ye ulaşmaz.
+  // Bkz. `docs/arsiv/silinenler-2026-09-27.md`.
   interactionStyle:      z.enum(INTERACTION_STYLES).optional(),
   // ── UserProfile skorlama alanları için opsiyonel veri toplama (Aşama 1) ──────
   // Ham diziler kabul edilir; kalıcılaştırmadan önce sanitizeTags ile temizlenir.
@@ -304,7 +309,9 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
   if (!parsed.success) return parsed.response;
 
   const {
-    sector, skills, experienceYears, expectationCategories, timeCommitment, interactionStyle,
+    sector, skills, experienceYears, expectationCategories, timeCommitment,
+    // AN-12 karantina: `interactionStyle` bilerek okunmuyor — DONDURULMUŞ alan, yazma
+    // verisine katılmıyor. Gönderilse bile yok sayılır (bkz. şema üstündeki not).
     goals, schools, companies, communities,
   } = parsed.data;
 
@@ -332,7 +339,8 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
       // Rol-spesifik alanlar: yalnızca gönderilmişse güncelle
       ...(expectationCategories !== undefined && { expectationCategories }),
       ...(timeCommitment        !== undefined && { timeCommitment        }),
-      ...(interactionStyle      !== undefined && { interactionStyle      }),
+      // AN-12 karantina: `interactionStyle` KASITLI OLARAK BURADA YOK — DONDURULMUŞ alan,
+      // gönderilse bile yazılmaz (bkz. CompleteProfileSchema üstündeki @deprecated notu).
     },
     select: {
       id:                    true,
