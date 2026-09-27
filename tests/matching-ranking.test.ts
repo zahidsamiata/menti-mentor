@@ -164,6 +164,10 @@ describe('PS-07 · Menti → mentör uyum sıralaması', () => {
   }
 
   it('aynı sektörü paylaşan mentör, hiç paylaşmayandan önde (DISC eşit)', async () => {
+    // PS-A4: `other` sektör örtüşmesi olmadığı için kurum barajının (varsayılan 50) altında
+    // kalır (skor 34) — eşik gevşetilmezse listeden TAMAMEN düşer ve "ikisi de
+    // listede olmalı" iddiası anlamsızlaşır (bkz. withoutThreshold yorumu, dosya başı).
+    await withoutThreshold(tenant);
     const menti = await createMenti(tenant.id, { discType: 'D', sectorTags: ['teknoloji'] });
     const other = await createMentor(tenant.id, { discType: 'C', sectorTags: ['saglik'] });
     const shared = await createMentor(tenant.id, { discType: 'C', sectorTags: ['teknoloji'] });
