@@ -15,6 +15,12 @@ import { USER_CONTACT_SELECT, USER_IDENTITY_SELECT } from '../utils/userSelect.j
 const VALID_WEEKDAYS = Object.values(Weekday);
 const VALID_FORMATS  = Object.values(MeetingFormat);
 
+// K-15: mentörün bir müsaitlik bloğunda tanımlayabileceği görüşme süresi sınırları.
+// Sihirli sayı olmasın diye tek yerde — bookMeeting da AYNI sınırları dolaylı uygular
+// (blok süresi bu aralık dışında hiç kaydedilemediği için).
+const MIN_BLOCK_DURATION_MIN = 15;
+const MAX_BLOCK_DURATION_MIN = 240;
+
 // "HH:MM" → günün dakikası
 function timeToMinutes(hhmm: string): number | null {
   const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(hhmm);
@@ -358,7 +364,12 @@ export async function saveAvailability(req: RequestWithTenant, res: Response) {
   const { userId, tenantId } = ctx;
 
   const { blocks } = req.body as {
-    blocks?: Array<{ weekday: Weekday; startTime: string; endTime: string; timezone?: string }>;
+    blocks?: Array<{
+      weekday: Weekday; startTime: string; endTime: string; timezone?: string;
+      // K-15 (KARAR-1 → A): mentör slot açarken format+süreyi de belirler. Geriye dönük
+      // uyumluluk için opsiyonel — gönderilmezse şemadaki varsayılan (ONLINE/60dk) kullanılır.
+      format?: MeetingFormat; durationMin?: number;
+    }>;
   };
 
   if (!Array.isArray(blocks)) {
@@ -376,6 +387,17 @@ export async function saveAvailability(req: RequestWithTenant, res: Response) {
     }
     if (s >= e) {
       return res.status(400).json({ error: 'Başlangıç saati bitişten önce olmalı.' });
+    }
+    if (b.format !== undefined && !VALID_FORMATS.includes(b.format)) {
+      return res.status(400).json({ error: `Geçersiz format: ${b.format}` });
+    }
+    if (b.durationMin !== undefined) {
+      if (!Number.isInteger(b.durationMin) || b.durationMin < MIN_BLOCK_DURATION_MIN || b.durationMin > MAX_BLOCK_DURATION_MIN) {
+        return res.status(400).json({ error: `Süre ${MIN_BLOCK_DURATION_MIN}-${MAX_BLOCK_DURATION_MIN} dakika arasında olmalı.` });
+      }
+      if (b.durationMin > e - s) {
+        return res.status(400).json({ error: 'Süre, aralığın kendisinden uzun olamaz.' });
+      }
     }
   }
 
@@ -399,11 +421,14 @@ export async function saveAvailability(req: RequestWithTenant, res: Response) {
       data: blocks.map((b) => ({
         tenantId,
         userId,
-        weekday:   b.weekday,
-        startTime: b.startTime,
-        endTime:   b.endTime,
-        timezone:  b.timezone ?? 'Europe/Istanbul',
-        isActive:  true,
+        weekday:     b.weekday,
+        startTime:   b.startTime,
+        endTime:     b.endTime,
+        timezone:    b.timezone ?? 'Europe/Istanbul',
+        isActive:    true,
+        // K-15: gönderilmezse Prisma şema varsayılanı (ONLINE/60dk) uygulanır.
+        ...(b.format      !== undefined ? { format: b.format }           : {}),
+        ...(b.durationMin !== undefined ? { durationMin: b.durationMin } : {}),
       })),
     });
 
@@ -518,7 +543,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     where: { tenantId, userId: mentorUserId, isActive: true },
   });
 
-  const fitsAvailability = availability.some((blk) => {
+  const timeFitsBlock = (blk: (typeof availability)[number]): boolean => {
     const tz = blk.timezone || 'Europe/Istanbul';
     const s = zonedWeekdayAndMinutes(start, tz);
     const e = zonedWeekdayAndMinutes(end, tz);
@@ -529,10 +554,24 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     const blkE = timeToMinutes(blk.endTime);
     if (blkS === null || blkE === null) return false;
     return s.minutes >= blkS && e.minutes <= blkE;
-  });
+  };
 
-  if (!fitsAvailability) {
+  const requestedDurationMin = Math.round((end.getTime() - start.getTime()) / 60_000);
+  const blocksCoveringTime = availability.filter(timeFitsBlock);
+
+  if (blocksCoveringTime.length === 0) {
     return res.status(409).json({ error: "Seçilen saat mentörün müsaitlik aralığına uymuyor." });
+  }
+
+  // K-15 (KARAR-1 → A): mentörün slotu yalnız gün+saat penceresi değil, format+süreyi de
+  // dayatır. Zaman penceresine giren bir blok bulunsa bile format ya da süre uyuşmuyorsa
+  // menti kendi seçtiği format/süreyi DAYATAMAZ — bkz. negatif test.
+  const matchingBlock = blocksCoveringTime.find(
+    (blk) => blk.format === format && blk.durationMin === requestedDurationMin,
+  );
+
+  if (!matchingBlock) {
+    return res.status(409).json({ error: 'Seçilen format veya süre, mentörün bu saatteki müsaitlik tanımına uymuyor.' });
   }
 
   // Çakışma kontrolü — hem mentör hem menti
@@ -566,6 +605,10 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
       mentorUserId,
       mentiUserId:    userId,
       format,
+      // K-15: eskiden bu alan hiç set edilmiyordu, şema varsayılanı (60) her zaman yazılıyordu
+      // — 30/45/90dk'lık görüşmeler bile "60dk" görünüyordu (mentorMetrics/adminSettings
+      // toplamlarını saptırıyordu). Artık blokla eşleşen gerçek süre yazılır.
+      durationMin:    requestedDurationMin,
       status:         MeetingStatus.PENDING,
       startsAt:       start,
       endsAt:         end,
