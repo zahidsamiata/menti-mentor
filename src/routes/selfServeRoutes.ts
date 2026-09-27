@@ -12,6 +12,7 @@ import {
   saveInvitationTemplate,
 } from '../controllers/selfServeController.js';
 import { checkSlugRateLimiter, selfServeRegisterRateLimiter } from '../middleware/rateLimiter.js';
+import { requireTurnstile } from '../middleware/turnstile.js';
 
 const router = Router();
 
@@ -22,7 +23,8 @@ const router = Router();
 // checkSlugRateLimiter: IP-bazlı — slug numaralandırmasını yavaşlatır.
 router.get('/self-serve/check-slug', checkSlugRateLimiter, checkSlugAvailability as RequestHandler);
 // selfServeRegisterRateLimiter: IP-bazlı — sahte kurum başvurusu spam'ini yavaşlatır (G1-26).
-router.post('/self-serve/register',  selfServeRegisterRateLimiter, selfServeRegister as RequestHandler);
+// requireTurnstile: F-05/G1-26 — CAPTCHA anahtarı yoksa no-op (bkz. middleware/turnstile.ts).
+router.post('/self-serve/register',  selfServeRegisterRateLimiter, requireTurnstile, selfServeRegister as RequestHandler);
 // #37: düzeltme sonrası tekrar gönderim — admin JWT ile korunan (controller içinde doğrulanır)
 router.post('/self-serve/resubmit',  resubmitTenantApplication as RequestHandler);
 router.patch('/:id/onboarding',      updateOnboarding      as RequestHandler);
