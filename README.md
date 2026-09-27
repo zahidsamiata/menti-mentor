@@ -54,7 +54,13 @@ npm run prisma:generate
 #   npm run seed:test-tenant        # Panel görsel testi için TEST kurumu. Varsayılan DRY-RUN;
 #                                    # yazmak için `-- --apply` gerekir. Canlıya yazmadan önce
 #                                    # DATABASE_URL'i izole/test DB'ye yönlendirin.
-npm run seed
+#
+# ⛔ Kurulumda seed ÇALIŞTIRILMAZ — bu adım bilerek komut içermez. Geliştirme için canlı
+# DB'deki mevcut veri kullanılır. Mock veri gerekiyorsa önce DATABASE_URL'i izole/geçici bir
+# DB'ye yönlendirin (host'u doğrulayın), ancak ondan sonra yukarıdaki uyarıları okuyarak
+# ilgili komutu elle çalıştırın. Komutların tam listesi: § Geliştirme Komutları.
+# (tests/readme-seed-guard.unit.test.ts bu README'de çalıştırılabilir `npm run seed` satırı
+# olmadığını denetler.)
 
 # 5. Geliştirme sunucusu
 npm run dev
@@ -434,7 +440,8 @@ npm run format           # Prettier
 npm run prisma:generate  # Prisma client yenile
 npm run prisma:migrate   # Migration uygula
 npm run prisma:studio    # Prisma Studio GUI
-npm run seed             # ⚠️ TEHLİKELİ — toplu deleteMany() çalıştırır (yalnız izole DB'de kullan)
+# npm run seed           # ⛔ ÇALIŞTIRMA — toplu deleteMany() (veri SİLER); CANLI=LOKAL AYNI DB.
+                         # Yalnız izole/geçici DB'de, host doğrulanarak, bilerek.
 npm run seed:certification    # Silme yapmaz AMA canlı içeriği günceller: sertifikasyon soru
                                # bankası (kanonik içerik) + bankada olmayan soruları pasifleştirir.
                                # CANLI=LOKAL AYNI DB → KARAR "evet" + yedek sonrası çalıştır.
