@@ -121,6 +121,64 @@ describe('anonymizeUser → GV-08: Match arketip kopyası + UserReport.reviewNot
   });
 });
 
+// AJ-32 · GV-08: psikometrik profil (UserProfile OCEAN/arketip/DISC + bağlam etiketleri) ve
+// DISC cevapları (UserResponse) — kod gdprService.ts'te vardı ama testsizdi; satırlar geri
+// alınsa hiçbir test kırılmıyordu (bitti-dogrulama-2026-09-27 · GV-08 ⚠️).
+describe('anonymizeUser → AJ-32/GV-08: UserProfile psikometrik alanları + UserResponse', () => {
+  it('anonimleşen kişinin OCEAN/DISC/arketip/bağlam alanları temizlenir, cevapları silinir; analitik alanlar ve başkasının verisi KORUNUR', async () => {
+    await cleanDb();
+    const tenant = await createTenant();
+    const target = await createMenti(tenant.id);
+    const other = await createMenti(tenant.id);
+    const psychometric = {
+      discD: 70, discI: 10, discS: 10, discC: 10,
+      archetype: 'Kaşif', industryCode: 'TECH', yearsExp: 4,
+      skillTags: ['react'], goalTags: ['liderlik'],
+      schools: ['ornek-universite'], companies: ['ornek-sirket'], communities: ['ornek-topluluk'],
+    };
+    const ocean = { oceanO: 0.8, oceanC: 0.6, oceanE: 0.4, oceanA: 0.7, oceanN: 0.3 };
+    for (const u of [target, other]) {
+      await createUserProfile(u.id, psychometric);
+      await testPrisma.userProfile.update({ where: { userId: u.id }, data: ocean });
+    }
+    const q1 = await testPrisma.question.create({ data: { tenantId: tenant.id, text: 'AJ-32 soru 1', discDimension: 'D' } });
+    const q2 = await testPrisma.question.create({ data: { tenantId: tenant.id, text: 'AJ-32 soru 2', discDimension: 'I' } });
+    await testPrisma.userResponse.createMany({
+      data: [
+        { userId: target.id, questionId: q1.id, value: 5 },
+        { userId: target.id, questionId: q2.id, value: 1 },
+        { userId: other.id, questionId: q1.id, value: 3 },
+      ],
+    });
+
+    await anonymizeUser(target.id, tenant.id);
+
+    const p = await testPrisma.userProfile.findUnique({ where: { userId: target.id } });
+    expect(p).not.toBeNull();
+    // Kişilik verisi (hassas kategori) — temizlenir
+    expect([p!.discD, p!.discI, p!.discS, p!.discC]).toEqual([0, 0, 0, 0]);
+    expect([p!.oceanO, p!.oceanC, p!.oceanE, p!.oceanA, p!.oceanN]).toEqual([null, null, null, null, null]);
+    expect(p!.archetype).toBeNull();
+    // Kimliği geri kurduran bağlam etiketleri — temizlenir
+    expect(p!.schools).toEqual([]);
+    expect(p!.companies).toEqual([]);
+    expect(p!.communities).toEqual([]);
+    // Analitik alanlar — korunur (bilinçli, gdprService yorumu)
+    expect(p!.industryCode).toBe('TECH');
+    expect(p!.skillTags).toEqual(['react']);
+    // DISC cevapları — silinir
+    expect(await testPrisma.userResponse.count({ where: { userId: target.id } })).toBe(0);
+
+    // Negatif: başka kullanıcının profili ve cevabı DOKUNULMAZ
+    const po = await testPrisma.userProfile.findUnique({ where: { userId: other.id } });
+    expect(po!.archetype).toBe('Kaşif');
+    expect(po!.oceanO).toBe(0.8);
+    expect(po!.discD).toBe(70);
+    expect(po!.schools).toEqual(['ornek-universite']);
+    expect(await testPrisma.userResponse.count({ where: { userId: other.id } })).toBe(1);
+  });
+});
+
 describe('anonymizeUser → bağlı serbest-metin PII temizlenir (madde 93)', () => {
   let tenantId: string;
   let userA: string; // anonimleşen
