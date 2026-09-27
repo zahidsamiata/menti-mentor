@@ -8,45 +8,12 @@ import { validateRequest } from '../middleware/validate.js';
 import { maskEmail, maskName } from '../services/mask.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
+import { type BlockedPairRecord, pairKey, sanitizeBlockedPairs } from '../services/blockList.js';
 
 // Tenant ADMIN kapısı: authenticateTenantAdmin (middleware/tenantAdminAuth.ts) — GV-11.
 
 // ─── blockedPairs kayıt yapısı ────────────────────────────────────────────────
-
-interface BlockedPairRecord {
-  fromUserId: string;
-  toUserId:   string;
-  blockedAt:  string;
-  blockedBy:  string; // adminUserId
-}
-
-/**
- * DB'den okunan blockedPairs JSON blob'unu güvenli şekilde parse eder.
- * - Array değilse boş dizi döner (bozuk blob koruması)
- * - Her kaydın zorunlu alanlarını doğrular; bozuk kayıtları sessizce filtreler
- * - Kendi kendini bloke eden ve duplicate kayıtları normalleştirir
- */
-function sanitizeBlockedPairs(raw: unknown): BlockedPairRecord[] {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Set<string>();
-  return raw.filter((item): item is BlockedPairRecord => {
-    if (typeof item !== 'object' || item === null) return false;
-    const r = item as Record<string, unknown>;
-    if (
-      typeof r['fromUserId'] !== 'string' || r['fromUserId'].length === 0 ||
-      typeof r['toUserId']   !== 'string' || r['toUserId'].length   === 0 ||
-      typeof r['blockedAt']  !== 'string' ||
-      typeof r['blockedBy']  !== 'string'
-    ) return false;
-    // Self-block filtrele
-    if (r['fromUserId'] === r['toUserId']) return false;
-    // Yön-bağımsız duplicate filtrele
-    const key = [r['fromUserId'], r['toUserId']].sort().join('::');
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
+// Tip + sanitize/pairKey artık `services/blockList.ts`'te (E-3d: GET/DELETE uçları da paylaşır).
 
 // ─── PATCH /api/tenants/:id/settings ─────────────────────────────────────────
 // Sınırlar: maxMeetingsPerWeek 1-5, minMatchScoreThreshold %20-%90.
@@ -207,6 +174,121 @@ export async function blockPair(req: Request, res: Response) {
     fromUser: { id: fromUser!.id, fullName: fromUser!.fullName },
     toUser:   { id: toUser!.id,   fullName: toUser!.fullName   },
     totalBlockedPairs: Array.isArray(updated.blockedPairs) ? updated.blockedPairs.length : 0,
+  });
+}
+
+// ─── GET /api/tenants/:id/block-pairs ────────────────────────────────────────
+// E-3d: admin panelinde koyduğu engelleri GÖREBİLSİN diye — `blockPair` ile
+// aynı auth zinciri (authenticateTenantAdmin) + tenant eşleşmesi. `pairId`
+// (bkz. services/blockList.ts pairKey) DELETE ucunda kaydı bulmak için kullanılır.
+
+export async function listBlockedPairs(req: Request, res: Response) {
+  const payload = await authenticateTenantAdmin(req, res);
+  if (!payload) return;
+
+  const tenantId = req.params['id'] as string;
+
+  if (payload.tenantId !== tenantId) {
+    return res.status(403).json({
+      error:   'YETKI_YOK',
+      message: 'Başka bir kurumun engel listesini göremezsiniz.',
+    });
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { id: true, blockedPairs: true },
+  });
+  if (!tenant) {
+    return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
+  }
+
+  const pairs = sanitizeBlockedPairs(tenant.blockedPairs);
+
+  // Tek sorguda tüm taraf + engelleyen admin adlarını çek (N+1 önleme).
+  // Explicit select: yalnız id + fullName — e-posta/diğer PII asla dönmez.
+  const userIds = new Set<string>();
+  for (const p of pairs) { userIds.add(p.fromUserId); userIds.add(p.toUserId); userIds.add(p.blockedBy); }
+  const users = await prisma.user.findMany({
+    where:  { id: { in: [...userIds] } },
+    select: { id: true, fullName: true },
+  });
+  const nameById = new Map(users.map((u) => [u.id, u.fullName]));
+
+  const items = pairs.map((p) => ({
+    pairId:      pairKey(p.fromUserId, p.toUserId),
+    fromUser:    { id: p.fromUserId, fullName: nameById.get(p.fromUserId) ?? null },
+    toUser:      { id: p.toUserId,   fullName: nameById.get(p.toUserId)   ?? null },
+    blockedAt:   p.blockedAt,
+    blockedByName: nameById.get(p.blockedBy) ?? null,
+  }));
+
+  return res.json({ items, total: items.length });
+}
+
+// ─── DELETE /api/tenants/:id/block-pair/:pairId ──────────────────────────────
+// E-3d: engeli KALDIRIR — kaydı diziden ÇIKARIR (pasifleştirme değil).
+// Gerekçe: `BlockedPairRecord`'da bir `isActive`/aktif alanı hiç yok (şema/model
+// bu iş kapsamında DEĞİŞMEZ) VE KR-19'un dört yüzeyi (matching.ts, conversation/
+// meeting/agreement controller — hepsi services/blockList.ts okur) diziyi HİÇBİR
+// soft-delete farkındalığı OLMADAN ham okuyor. Soft-delete eklemek bu dört hassas
+// dosyaya da dokunmayı gerektirirdi; kaydı silmek onlarla sıfır değişiklikle
+// uyumlu (dizide yoksa zaten "engelli değil" — tüm yüzeyler bunu doğru yorumluyor).
+
+export async function unblockPair(req: Request, res: Response) {
+  const payload = await authenticateTenantAdmin(req, res);
+  if (!payload) return;
+
+  const tenantId = req.params['id']     as string;
+  const pairId   = req.params['pairId'] as string;
+
+  if (payload.tenantId !== tenantId) {
+    return res.status(403).json({
+      error:   'YETKI_YOK',
+      message: 'Başka bir kurumun engelini kaldıramazsınız.',
+    });
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { id: true, blockedPairs: true },
+  });
+  if (!tenant) {
+    return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
+  }
+
+  // Yalnız BU tenant'ın kendi blockedPairs dizisi içinde arandığı için tenant
+  // izolasyonu doğal sağlanır: başka kurumun kaydı buradan asla bulunamaz (IDOR → 404).
+  const current = sanitizeBlockedPairs(tenant.blockedPairs);
+  const target  = current.find((p) => pairKey(p.fromUserId, p.toUserId) === pairId);
+
+  if (!target) {
+    return res.status(404).json({
+      error:   'ENGEL_BULUNAMADI',
+      message: 'Belirtilen engel kaydı bu kurumda bulunamadı.',
+    });
+  }
+
+  const remaining = current.filter((p) => pairKey(p.fromUserId, p.toUserId) !== pairId);
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data:  { blockedPairs: remaining },
+  });
+
+  invalidateTenant(tenantId);
+
+  // Denetim izi — updateTenantSettings ile aynı desen (G1-14/G1-15): PII YOK,
+  // yalnız actorId + tenantId + (userId'lerden türeyen, isim İÇERMEYEN) pairId.
+  void logger.info('AUDIT', 'Çift engeli kaldırıldı', {
+    actorId: payload.sub,
+    tenantId,
+    pairId,
+  });
+
+  return res.json({
+    message: 'Engel kaldırıldı.',
+    totalBlockedPairs: remaining.length,
   });
 }
 

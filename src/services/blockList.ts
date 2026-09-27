@@ -11,6 +11,55 @@
 
 type BlockPairLike = { fromUserId?: unknown; toUserId?: unknown };
 
+// ─── Kayıt yapısı + normalize (E-3d: liste/kaldırma uçları da bunu paylaşır) ──
+
+export interface BlockedPairRecord {
+  fromUserId: string;
+  toUserId:   string;
+  blockedAt:  string;
+  blockedBy:  string; // adminUserId
+}
+
+/**
+ * Yön bağımsız çift kimliği: `POST /block-pair` (oluştur), `GET /block-pairs`
+ * (listele) ve `DELETE /block-pair/:pairId` (kaldır) AYNI algoritmayı kullanır —
+ * A→B ve B→A aynı pairId'yi üretir (fromUserId/toUserId sırası önemsiz). Ayrı
+ * bir `id` sütunu/alanı EKLENMEDİ (şema değişmez, E-3d kapsamı) — bu iki
+ * kullanıcı ID'sinden türeyen deterministik anahtar, mevcut duplicate-engelleme
+ * mantığıyla (sanitizeBlockedPairs) zaten aynı.
+ */
+export function pairKey(userIdA: string, userIdB: string): string {
+  return [userIdA, userIdB].sort().join('::');
+}
+
+/**
+ * DB'den okunan blockedPairs JSON blob'unu güvenli şekilde parse eder.
+ * - Array değilse boş dizi döner (bozuk blob koruması)
+ * - Her kaydın zorunlu alanlarını doğrular; bozuk kayıtları sessizce filtreler
+ * - Kendi kendini bloke eden ve duplicate kayıtları normalleştirir
+ */
+export function sanitizeBlockedPairs(raw: unknown): BlockedPairRecord[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  return raw.filter((item): item is BlockedPairRecord => {
+    if (typeof item !== 'object' || item === null) return false;
+    const r = item as Record<string, unknown>;
+    if (
+      typeof r['fromUserId'] !== 'string' || r['fromUserId'].length === 0 ||
+      typeof r['toUserId']   !== 'string' || r['toUserId'].length   === 0 ||
+      typeof r['blockedAt']  !== 'string' ||
+      typeof r['blockedBy']  !== 'string'
+    ) return false;
+    // Self-block filtrele
+    if (r['fromUserId'] === r['toUserId']) return false;
+    // Yön-bağımsız duplicate filtrele
+    const key = pairKey(r['fromUserId'], r['toUserId']);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /**
  * Bir kullanıcının (selfUserId) bu tenant'ta idari olarak bloklandığı KARŞI TARAF
  * ID kümesini döner. Yön farketmez: selfUserId ister fromUserId ister toUserId
