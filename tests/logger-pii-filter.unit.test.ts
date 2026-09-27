@@ -18,7 +18,7 @@ vi.mock('../src/db.js', () => ({
 
 import { logger } from '../src/services/logger.js';
 
-const RAW_EMAIL = 'ayse.yilmaz@ornek-kurum.com';
+const RAW_EMAIL = 'ornek-kullanici@ornek-kurum.com';
 
 describe('AJ-32 · GV-07 — logger kalıcı kayda ham PII yazmaz', () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -47,7 +47,7 @@ describe('AJ-32 · GV-07 — logger kalıcı kayda ham PII yazmaz', () => {
   it('meta içindeki e-posta / ad / psikometrik alanlar maskelenir, userId ve tenantId aynen kalır', async () => {
     await logger.warn('AUTH', 'başarısız giriş', {
       email: RAW_EMAIL,
-      fullName: 'Ayşe Yılmaz',
+      fullName: 'Ornek Kullanici',
       discVector: { D: 80, I: 10, S: 5, C: 5 },
       detail: `kullanıcı ${RAW_EMAIL} kilitlendi`,
       userId: 'u-123',
@@ -57,7 +57,7 @@ describe('AJ-32 · GV-07 — logger kalıcı kayda ham PII yazmaz', () => {
     const data = systemLogCreate.mock.calls[0][0].data as { meta: Record<string, unknown> };
     const written = JSON.stringify(data);
     expect(written).not.toContain(RAW_EMAIL);
-    expect(written).not.toContain('Ayşe Yılmaz');
+    expect(written).not.toContain('Ornek Kullanici');
     expect(data.meta.discVector).not.toEqual({ D: 80, I: 10, S: 5, C: 5 });
     expect(data.meta.userId).toBe('u-123');
     expect(data.meta.tenantId).toBe('t-9');
