@@ -14,7 +14,11 @@
  * riskini tek kontrolle kapatır. WHATWG URL ayrıştırıcısı gizlenmiş biçimleri (hex/oktal/tek-sayı/
  * kısaltılmış) ayrıştırırken kanonik noktalı-ondalık/IPv6 forma normalize eder — yani
  * `0x7f.0.0.1`, `0177.0.0.1`, `2130706433` gibi gizlenmiş adresler de `hostname` alanında
- * `127.0.0.1` olarak görünür ve aynı kontrolden yakalanır (regex bypass'ı yok).
+ * `127.0.0.1` olarak görünür ve aynı kontrolden yakalanır (regex bypass'ı yok). Alan adı sonundaki
+ * "kök bölge noktası" (`localhost.`, `x.local.` — DNS'te geçerli bir FQDN gösterimi, tarayıcı aynı
+ * host'u ÇÖZER) URL ayrıştırıcısı tarafından SİLİNMEZ; bu yüzden `isSafeLogoUrl` içinde hostname
+ * karşılaştırmadan ÖNCE sondaki nokta(lar) ayıklanır — aksi halde `https://localhost./logo.png`
+ * iç-host kontrolünü atlatırdı.
  *
  * Kapsam: bu kısıt yalnız YAZMA (tenant oluşturma/güncelleme, self-serve onboarding) yolunda
  * uygulanır — mevcut kayıtlı logoUrl değerleri OKUMADA hiç doğrulanmaz, geriye dönük kırılma yok.
@@ -31,7 +35,10 @@
  */
 import { z } from 'zod';
 
-export const LOGO_URL_MESSAGE = 'Logo adresi https:// ile başlayan, güvenli ve desteklenen bir görsel adresi olmalı (.png, .jpg, .jpeg, .webp).';
+export const LOGO_URL_MESSAGE =
+  'Logo adresi https:// ile başlayan, gerçek bir alan adına ait (IP adresi, localhost, port veya ' +
+  'kullanıcı bilgisi İÇERMEYEN) ve desteklenen bir uzantıyla biten (.png, .jpg, .jpeg, .webp) bir ' +
+  'görsel adresi olmalı.';
 
 /** İzin verilen logo dosya uzantıları — SVG kasıtlı olarak dışarıda (yukarıdaki gerekçe). */
 const ALLOWED_LOGO_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
@@ -88,7 +95,10 @@ export function isSafeLogoUrl(value: string): boolean {
   if (url.username !== '' || url.password !== '') return false;
   if (url.port !== '') return false;
 
-  const hostname = url.hostname;
+  // DNS'te sondaki nokta kök-bölge (FQDN) gösterimidir; tarayıcı/URL ayrıştırıcısı bunu SİLMEZ
+  // (`localhost.` != `localhost` string olarak) ama çözümlenen host AYNIDIR — normalize etmezsek
+  // `https://localhost./logo.png` gibi bir adres iç-host kontrolünü atlatır.
+  const hostname = url.hostname.replace(/\.+$/, '');
   if (isIPv4Literal(hostname) || isIPv6Literal(hostname)) return false;
   if (isLocalOrInternalHostname(hostname)) return false;
 

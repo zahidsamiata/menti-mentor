@@ -104,6 +104,21 @@ describe('F-04/AJ-05: logoUrlSchema', () => {
     }
   });
 
+  it('negatif: sondaki kök-bölge noktası (FQDN gösterimi) iç-host kontrolünü atlatamaz', () => {
+    for (const bad of [
+      'https://localhost./logo.png',
+      'https://LOCALHOST./logo.png',
+      'https://foo.localhost./logo.png',
+      'https://x.local./logo.png',
+      'https://cdn.internal./logo.png',
+      'https://nas.lan../logo.png', // birden fazla sondaki nokta
+    ]) {
+      expect(logoUrlSchema.safeParse(bad).success, bad).toBe(false);
+    }
+    // Kontrol: sondaki nokta normal (yerel olmayan) bir alan adını REDDETMEZ.
+    expect(logoUrlSchema.safeParse('https://cdn.example.com./logo.png').success).toBe(true);
+  });
+
   it('isSafeLogoUrl doğrudan çağrıldığında da aynı kuralları uygular', () => {
     expect(isSafeLogoUrl('https://cdn.example.com/logo.png')).toBe(true);
     expect(isSafeLogoUrl('https://127.0.0.1/logo.png')).toBe(false);
