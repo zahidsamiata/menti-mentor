@@ -265,6 +265,7 @@ describe('AJ18-5: POST /api/meetings/book (c)', () => {
 
     const res = await http.post('/api/meetings/book').set(authAs(mentiB)).send({
       mentorUserId: mentorA.id, format: 'ONLINE', startsAt, endsAt,
+      requestMessage: 'Bu görüşmede kariyer hedeflerim üzerine konuşmak istiyorum, teşekkürler.',
     }).expect(409);
     expect(res.body.error).toContain('müsaitlik');
 
