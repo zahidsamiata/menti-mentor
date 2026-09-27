@@ -135,3 +135,75 @@ describe('AJ-40: yönetici kullanıcı listesi — rol filtresi/toplam kurum-iç
     expect(ids).not.toContain(adminA.id);
   });
 });
+
+describe('AJ-40 (7b): konuk üyede başka kurum yöneticisinin karar alanları dönmez', () => {
+  let http: TestAgent;
+  let tenantA: Tenant;
+  let tenantB: Tenant;
+  let adminA: SeededUser;
+  let adminB: SeededUser;
+  let guest: SeededUser;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http = agent();
+    tenantA = await createTenant();
+    tenantB = await createTenant();
+    adminA = await createAdminUser(tenantA.id);
+    adminB = await createAdminUser(tenantB.id);
+    // Home A: A yöneticisi reddetmiş, gerekçe yazmış, rematch önceliği vermiş. B'de aktif MENTI üyeliği var.
+    guest = await createMenti(tenantA.id);
+    await testPrisma.user.update({
+      where: { id: guest.id },
+      data: {
+        approvalStatus: 'REJECTED',
+        rejectionReason: 'A kurumuna ait gizli red gerekçesi',
+        rejectedBy: adminA.id,
+        rejectedAt: new Date(),
+        rematchPriority: true,
+        rematchCount: 2,
+      },
+    });
+    await addMembership(guest.id, tenantB.id, 'MENTI');
+  });
+
+  async function listFor(admin: SeededUser, tenant: Tenant, query = '') {
+    const { accessToken } = await loginAs(http, admin.email, admin.rawPassword);
+    const res = await http.get(`/api/admin/users${query}`).set(tenantHeaders(tenant.id, accessToken)).expect(200);
+    return res.body as { items: Array<Record<string, unknown>>; total: number };
+  }
+
+  it('negatif: B listesinde konuk görünür ama A\'nın red gerekçesi/karar izi/rematch kararı YOK', async () => {
+    const body = await listFor(adminB, tenantB, '?role=MENTI');
+    const row = body.items.find((u) => u.id === guest.id);
+    expect(row).toBeDefined();
+    expect(row).toMatchObject({
+      rejectionReason: null,
+      rejectedBy: null,
+      rejectedAt: null,
+      rejectedByName: null,
+      approvedBy: null,
+      approvedAt: null,
+      rematchPriority: false,
+      rematchCount: 0,
+    });
+    expect(JSON.stringify(body)).not.toContain('A kurumuna ait gizli red gerekçesi');
+    expect(JSON.stringify(body)).not.toContain(adminA.id);
+  });
+
+  it('negatif: B\'nin ?rematchOnly=true filtresi A\'nın rematch kararıyla konuğu listelemez', async () => {
+    const body = await listFor(adminB, tenantB, '?rematchOnly=true');
+    expect(body.items.map((u) => u.id)).not.toContain(guest.id);
+  });
+
+  it('ev-sahibi kurum (A) listesinde davranış aynı: gerekçe ve rematch alanları görünür', async () => {
+    const body = await listFor(adminA, tenantA, '?role=MENTI');
+    const row = body.items.find((u) => u.id === guest.id);
+    expect(row).toMatchObject({
+      rejectionReason: 'A kurumuna ait gizli red gerekçesi',
+      rejectedBy: adminA.id,
+      rematchPriority: true,
+      rematchCount: 2,
+    });
+  });
+});

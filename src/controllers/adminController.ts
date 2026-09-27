@@ -197,6 +197,12 @@ const AdminUserListSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
 });
 
+/** AJ-40: konuk üyede (ev-sahibi kurumu başka) gizlenen, başka kurum yöneticisinin kararı olan alanlar. */
+const FOREIGN_MEMBER_DECISION_MASK = {
+  approvedBy: null, approvedAt: null, rejectedBy: null, rejectedAt: null, rejectionReason: null,
+  rematchPriority: false, rematchCount: 0,
+} as const;
+
 /**
  * GET /api/admin/users
  * Compliance: discVector, selfProfile, temperamentJson hariç tutulur.
@@ -219,7 +225,9 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     ...(role !== undefined && { role }),
     user: {
       ...(isActive !== undefined && { isActive }),
-      ...(rematchOnly && { rematchPriority: true }),
+      // Rematch önceliği ev-sahibi kurum yöneticisinin kararıdır (User düzeyi) — konuk üye bu
+      // filtreye girmez; aksi hâlde başka kurumun kararı filtre üzerinden sızar (aşağıda maskelenir).
+      ...(rematchOnly && { rematchPriority: true, tenantId: req.tenant.tenantId }),
       ...(approvalStatus !== undefined && { approvalStatus }),
     },
   };
@@ -231,7 +239,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
         role: true,
         user: {
           select: {
-            id: true, email: true, fullName: true, isActive: true,
+            id: true, tenantId: true, email: true, fullName: true, isActive: true,
             sectorTags: true, discType: true, skills: true,
             // #12: DISC çoklu-harf gösterimi (KARAR 1) — vektör yalnız harfi TÜRETMEK için çekilir,
             // ham vektör response'a KONMAZ (aşağıda base map'te çıkarılır). Admin havuz kartı harfi gösterir.
@@ -259,7 +267,14 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     }),
     prisma.tenantMembership.count({ where }),
   ]);
-  const rows = membershipRows.map((m) => ({ ...m.user, role: m.role }));
+  // Ev-sahibi kurumu başka olan (konuk) üyede User düzeyindeki yönetici-kararı alanları o kurumun
+  // yöneticisine aittir → bu kurumun yöneticisine DÖNMEZ (kurum izolasyonu). approvalStatus kalır:
+  // hesabın her kurumdaki erişimini belirleyen etkin durumdur (membershipAccess.ts), karar izi değildir.
+  const rows = membershipRows.map(({ role: memberRole, user: { tenantId: homeTenantId, ...user } }) => ({
+    ...user,
+    role: memberRole,
+    ...(homeTenantId !== req.tenant.tenantId && FOREIGN_MEMBER_DECISION_MASK),
+  }));
 
   // Kişi-geneli sertifika: herhangi bir kurumda sertifikalıysa true (üyelik dizisi response'a sızmaz).
   // #12: discVector'dan DISC harf dizgesi türetilir; ham vektör response'tan ÇIKARILIR (destructure ile
