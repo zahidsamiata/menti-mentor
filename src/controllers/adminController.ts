@@ -8,7 +8,6 @@
 
 import { z } from 'zod';
 import type { Response } from 'express';
-import type { UserRole } from '@prisma/client';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { computeKpiStats, buildKpiReportRows, kpiReportFileName } from '../services/kpiReport.service.js';
@@ -210,48 +209,57 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   const skip = (page - 1) * pageSize;
 
   // AJ-40: liste/filtre/toplam BU kurumun üyeliğinden (TenantMembership.role, CLAUDE.md "Veri
-  // Modeli") — User.role/home tenant değil. Rol filtresi üyelik rolüne uygulanır; kişinin başka
-  // kurumdaki rolü bu kurumun listesini etkilemez. Üyelik isActive şartı konmaz: yönetici pasife
-  // aldığında User.isActive düşer (üyelik aktif kalır) — "Pasif" filtresi User.isActive ile çalışır.
+  // Modeli") — User.role/home tenant değil. Sorgu üyelik tablosundan başlar: prisma RLS eklentisi
+  // (db.ts) üst-düzey `user` okumalarına User.tenantId (home tenant) enjekte eder, bu yüzden başka
+  // kurumda home'u olan üye `prisma.user` ile hiç bulunamaz. Rol filtresi ve gösterilen rol bu
+  // kurumdaki üyelik rolüdür. Üyelik isActive şartı konmaz: yönetici pasife aldığında User.isActive
+  // düşer (üyelik aktif kalır) — "Pasif" filtresi User.isActive ile çalışır.
   const where = {
-    memberships: {
-      some: { tenantId: req.tenant.tenantId, ...(role !== undefined && { role }) },
+    tenantId: req.tenant.tenantId,
+    ...(role !== undefined && { role }),
+    user: {
+      ...(isActive !== undefined && { isActive }),
+      ...(rematchOnly && { rematchPriority: true }),
+      ...(approvalStatus !== undefined && { approvalStatus }),
     },
-    ...(isActive !== undefined && { isActive }),
-    ...(rematchOnly && { rematchPriority: true }),
-    ...(approvalStatus !== undefined && { approvalStatus }),
   };
 
-  const [rows, total] = await Promise.all([
-    prisma.user.findMany({
+  const [membershipRows, total] = await Promise.all([
+    prisma.tenantMembership.findMany({
       where,
       select: {
-        id: true, role: true, email: true, fullName: true, isActive: true,
-        sectorTags: true, discType: true, skills: true,
-        // #12: DISC çoklu-harf gösterimi (KARAR 1) — vektör yalnız harfi TÜRETMEK için çekilir,
-        // ham vektör response'a KONMAZ (aşağıda base map'te çıkarılır). Admin havuz kartı harfi gösterir.
-        discVector: true,
-        rematchPriority: true, rematchCount: true,
-        needsOrientation: true, approvalStatus: true, createdAt: true,
-        avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
-        // İş 2/3: onay/red denetim izi + gerekçe (yalnız admin listesi; audit — meşru yönetim verisi).
-        approvedBy: true, approvedAt: true, rejectedBy: true, rejectedAt: true, rejectionReason: true,
-        // Sertifika rozeti (KARAR 4, kişi-geneli — PO kararı). Sertifika kişi bazında geneldir:
-        // kişi HERHANGİ bir kurumda sertifikalıysa sertifikalı sayılır (kurum farkı gözetilmez).
-        // isCertified yalnız TenantMembership'te tutulur (UserProfile.isCertified bakımsız), bu
-        // yüzden tüm üyelikler üzerinden türetilir. Kalite/güven göstergesi — Analytical, PII değil.
-        memberships: {
-          where: { isCertified: true },
-          select: { id: true },
-          take: 1,
+        role: true,
+        user: {
+          select: {
+            id: true, email: true, fullName: true, isActive: true,
+            sectorTags: true, discType: true, skills: true,
+            // #12: DISC çoklu-harf gösterimi (KARAR 1) — vektör yalnız harfi TÜRETMEK için çekilir,
+            // ham vektör response'a KONMAZ (aşağıda base map'te çıkarılır). Admin havuz kartı harfi gösterir.
+            discVector: true,
+            rematchPriority: true, rematchCount: true,
+            needsOrientation: true, approvalStatus: true, createdAt: true,
+            avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
+            // İş 2/3: onay/red denetim izi + gerekçe (yalnız admin listesi; audit — meşru yönetim verisi).
+            approvedBy: true, approvedAt: true, rejectedBy: true, rejectedAt: true, rejectionReason: true,
+            // Sertifika rozeti (KARAR 4, kişi-geneli — PO kararı). Sertifika kişi bazında geneldir:
+            // kişi HERHANGİ bir kurumda sertifikalıysa sertifikalı sayılır (kurum farkı gözetilmez).
+            // isCertified yalnız TenantMembership'te tutulur (UserProfile.isCertified bakımsız), bu
+            // yüzden tüm üyelikler üzerinden türetilir. Kalite/güven göstergesi — Analytical, PII değil.
+            memberships: {
+              where: { isCertified: true },
+              select: { id: true },
+              take: 1,
+            },
+          },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { user: { createdAt: 'desc' } },
       take: pageSize,
       skip,
     }),
-    prisma.user.count({ where }),
+    prisma.tenantMembership.count({ where }),
   ]);
+  const rows = membershipRows.map((m) => ({ ...m.user, role: m.role }));
 
   // Kişi-geneli sertifika: herhangi bir kurumda sertifikalıysa true (üyelik dizisi response'a sızmaz).
   // #12: discVector'dan DISC harf dizgesi türetilir; ham vektör response'tan ÇIKARILIR (destructure ile
@@ -284,16 +292,14 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   // platform admin'de zaten görünür (platformTenantController); STK yöneticisi de havuzda görsün
   // (retention göstergesi). Kaynak yine TenantMembership (rol-bazlı yolculuk anı), tenant-scoped.
   const userIds = base.map((u) => u.id);
-  const roleByUser = new Map<string, UserRole>();
   const qualityByUser = new Map<string, number>();
   const journeyByUser = new Map<string, Date>();
   if (userIds.length > 0) {
     const memberships = await prisma.tenantMembership.findMany({
       where:  { tenantId: req.tenant.tenantId, userId: { in: userIds } },
-      select: { userId: true, role: true, qualityMultiplier: true, learningJourneyCompletedAt: true },
+      select: { userId: true, qualityMultiplier: true, learningJourneyCompletedAt: true },
     });
     for (const m of memberships) {
-      roleByUser.set(m.userId, m.role);
       qualityByUser.set(m.userId, m.qualityMultiplier);
       if (m.learningJourneyCompletedAt) journeyByUser.set(m.userId, m.learningJourneyCompletedAt);
     }
@@ -301,8 +307,6 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
 
   const items = base.map((u) => ({
     ...u,
-    // AJ-40: gösterilen rol BU kurumdaki üyelik rolü (User.role home tenant'a aittir).
-    role: roleByUser.get(u.id) ?? u.role,
     approvedByName: u.approvedBy ? nameById.get(u.approvedBy) ?? null : null,
     rejectedByName: u.rejectedBy ? nameById.get(u.rejectedBy) ?? null : null,
     // Ham çarpan (0.8–1.2, nötr 1.0). FE yöneticiye anlaşılır biçime çevirir (5 üzerinden puan).
