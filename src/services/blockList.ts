@@ -94,3 +94,35 @@ export function isPairBlocked(blockedPairs: unknown, userIdA: string, userIdB: s
   }
   return false;
 }
+
+/**
+ * AJ-28 (KR-19 kalanı): aday LİSTESİ için idari blok kümesi — eylem uçlarıyla AYNI kural.
+ *
+ * Eylem anı kontrolü (KR-19b `isPairBlockedInTenants`: konuşma başlatma/mesaj, eşleşme isteği)
+ * çifti İKİ tarafın kurumunda arar: çağıranın istek kurumu + karşı tarafın kendi kurumu;
+ * herhangi birinde blok varsa eylem durur. Liste ise önceden yalnız çağıranın kurumunu
+ * okuyordu → kurumlar arası havuzda karşı kurumun yöneticisinin koyduğu blok listede
+ * görünmüyordu (eylemler engelliyken kart görünmeye devam ediyordu).
+ *
+ * Kural: aday, (a) çağıranın kurumunun listesinde ya da (b) ADAYIN KENDİ kurumunun
+ * listesinde self ile engellenmişse kümeye girer. Üçüncü bir kurumun listesi sayılmaz —
+ * eylem uçları da yalnız bu iki kurumu okur (birebir hizalı).
+ */
+export function buildListBlockedSet(
+  selfUserId: string,
+  callerTenantBlockedPairs: unknown,
+  poolTenants: ReadonlyArray<{ id: string; blockedPairs?: unknown }>,
+  candidates: ReadonlyArray<{ id: string; tenantId: string | null }>,
+): Set<string> {
+  const blocked = buildBlockedCounterpartSet(selfUserId, callerTenantBlockedPairs);
+  const byTenant = new Map<string, Set<string>>();
+  for (const t of poolTenants) {
+    const set = buildBlockedCounterpartSet(selfUserId, t.blockedPairs);
+    if (set.size > 0) byTenant.set(t.id, set);
+  }
+  if (byTenant.size === 0) return blocked;
+  for (const c of candidates) {
+    if (c.tenantId && byTenant.get(c.tenantId)?.has(c.id)) blocked.add(c.id);
+  }
+  return blocked;
+}
