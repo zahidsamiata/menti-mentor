@@ -44,11 +44,14 @@ describe('getHealthStatus — DB canlılık kontrolü', () => {
   });
 
   // V-01 / V-11: /health artık SMTP ve cron durumunu da taşır.
-  it('smtp ve cron alanlarını içerir', async () => {
+  // AJ-45: eskiden dört değerin hepsini kabul ediyordu (her koşulda geçen totoloji). Test
+  // ortamında SMTP yapılandırılmamış ve cron kapalı → değerler kesin. "failed" dalı:
+  // tests/smtp-health-probe.unit.test.ts.
+  it('smtp ve cron alanlarını içerir (test ortamı: unconfigured / disabled)', async () => {
     queryRaw.mockResolvedValueOnce([{ ok: 1 }]);
     const s = await getHealthStatus();
-    expect(['verified', 'failed', 'unconfigured', 'unknown']).toContain(s.smtp);
-    expect(['enabled', 'disabled']).toContain(s.cron);
+    expect(s.smtp).toBe('unconfigured');
+    expect(s.cron).toBe('disabled');
   });
 
   // V-16: version sabit "0.1.0" canlıdaki gerçek kodu göstermiyordu; commit alanı
