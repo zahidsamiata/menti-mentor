@@ -6,7 +6,8 @@
  *
  * Upsert stratejisi:
  *  1. E-posta + aynı provider → mevcut kullanıcıya giriş yap (profil güncellemesi yok)
- *  2. E-posta + farklı provider → 409 çakışma hatası (hesapları otomatik birleştirme güvenlik riski)
+ *  2. E-posta + farklı provider / LOCAL / pasif hesap → tek tip OAUTH_GIRIS_YAPILAMADI (AJ-30;
+ *     hesapları otomatik birleştirme güvenlik riski, durum ayırt ettirilmez)
  *  3. E-posta yok (yeni kullanıcı) → PENDING onay durumuyla kayıt yap
  *
  * Neden 2. senaryoda otomatik merge yok? Kullanıcı A, B'nin e-postasını bilerek
@@ -29,6 +30,14 @@ import type { OAuthCallbackResult, OAuthStatePayload, OAuthUserProfile } from '.
 import { USER_CONTACT_SELECT } from '../../utils/userSelect.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
+
+/**
+ * AJ-30: mevcut hesapla eşleşmeyen sosyal giriş için tek tip hata kodu + mesaj.
+ * Eski ayrı kodlar (HESAP_PASIF / PROVIDER_CATISMASI) hesabın varlığını ve durumunu
+ * ayırt ettiriyordu; sağlayıcı adı da mesajda yer almaz.
+ */
+export const OAUTH_ACCOUNT_MISMATCH_CODE = 'OAUTH_GIRIS_YAPILAMADI';
+const OAUTH_ACCOUNT_MISMATCH_MESSAGE = 'Bu yöntemle giriş yapılamadı.';
 
 /** Ana giriş noktası: profil + state → access/refresh token çifti */
 export async function handleOAuthCallback(
@@ -60,25 +69,11 @@ async function handleExistingUser(
   },
   profile: OAuthUserProfile,
 ): Promise<OAuthCallbackResult> {
-  // Hesap aktif değilse erken çık
-  if (!user.isActive) {
-    throw new OAuthConflictError('HESAP_PASIF', 'Bu hesap devre dışı bırakılmıştır.');
-  }
-
-  // LOCAL şifreli hesaba OAuth ile giriş: güvenlik riski — engelle
-  if (user.authProvider === 'LOCAL') {
-    throw new OAuthConflictError(
-      'PROVIDER_CATISMASI',
-      'Bu e-posta adresi şifre ile kayıtlıdır. Lütfen e-posta/şifre ile giriş yapın.',
-    );
-  }
-
-  // Farklı OAuth provider (ör. Google hesabına LinkedIn ile erişmeye çalışma)
-  if (user.authProvider !== profile.provider) {
-    throw new OAuthConflictError(
-      'PROVIDER_CATISMASI',
-      `Bu e-posta adresi ${user.authProvider} ile kayıtlıdır. Lütfen aynı sağlayıcıyı kullanın.`,
-    );
+  // AJ-30 (IC-06 kalanı): pasif/reddedilmiş hesap, şifreli (LOCAL) hesap ve farklı sağlayıcıyla
+  // açılmış hesap → TEK TİP kod. Dönüş adresindeki ?error= kodu hesabın durumunu/açılış yöntemini
+  // ayırt ettirmez (şifre girişindeki tek tip 401 ile aynı ilke — authController.login).
+  if (!user.isActive || user.authProvider === 'LOCAL' || user.authProvider !== profile.provider) {
+    throw new OAuthConflictError(OAUTH_ACCOUNT_MISMATCH_CODE, OAUTH_ACCOUNT_MISMATCH_MESSAGE);
   }
 
   const { accessToken, refreshToken } = await issueTokenPair(user.id, user.tenantId, user.role, user.fullName);
