@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import jwt from 'jsonwebtoken';
-import { agent, loginAs, type TestAgent } from './helpers/request.js';
+import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser } from './helpers/factories.js';
 import { config } from '../src/config.js';
@@ -277,6 +277,59 @@ describe('Auth: Logout', () => {
   it('cookie olmadan da 204 döner (idempotent)', async () => {
     const freshAgent = agent();
     await freshAgent.post('/api/auth/logout').expect(204);
+  });
+
+  // AJ-03 — çıkış yalnız refresh token'ı değil, o oturumun erişim (access) anahtarını da
+  // anında geçersiz kılar (önceden anahtar ömrü — config.jwt.expiresIn — dolana kadar geçerli
+  // kalıyordu).
+  it('AJ-03: logout sonrası aynı erişim anahtarı korumalı uçta 401 döner', async () => {
+    const user = await createUser({ tenantId: tenant.id });
+    const { accessToken } = await loginAs(http, user.email, user.rawPassword);
+
+    // Anahtar logout'tan ÖNCE geçerli.
+    await http.get('/api/auth/me').set(tenantHeaders(tenant.id, accessToken)).expect(200);
+
+    await http
+      .post('/api/auth/logout')
+      .set(tenantHeaders(tenant.id, accessToken))
+      .expect(204);
+
+    const res = await http.get('/api/auth/me').set(tenantHeaders(tenant.id, accessToken));
+    expect(res.status).toBe(401);
+  });
+
+  it('AJ-03 negatif: bir kullanıcının logout\'u başka kullanıcının erişim anahtarını etkilemez', async () => {
+    const userA = await createUser({ tenantId: tenant.id });
+    const userB = await createUser({ tenantId: tenant.id });
+
+    const httpA = agent();
+    const { accessToken: tokenA } = await loginAs(httpA, userA.email, userA.rawPassword);
+    const httpB = agent();
+    const { accessToken: tokenB } = await loginAs(httpB, userB.email, userB.rawPassword);
+
+    await httpA
+      .post('/api/auth/logout')
+      .set(tenantHeaders(tenant.id, tokenA))
+      .expect(204);
+
+    // A'nın anahtarı artık geçersiz…
+    const resA = await httpA.get('/api/auth/me').set(tenantHeaders(tenant.id, tokenA));
+    expect(resA.status).toBe(401);
+
+    // …ama B'nin anahtarı hâlâ geçerli — iptal listesi kullanıcıya özgüdür, çapraz etkilemez.
+    await httpB.get('/api/auth/me').set(tenantHeaders(tenant.id, tokenB)).expect(200);
+  });
+
+  it('AJ-03: logout sonrası yenileme (refresh) anahtarı da geçersiz kalır (mevcut davranış korunur)', async () => {
+    const user = await createUser({ tenantId: tenant.id });
+    const { accessToken } = await loginAs(http, user.email, user.rawPassword);
+
+    await http
+      .post('/api/auth/logout')
+      .set(tenantHeaders(tenant.id, accessToken))
+      .expect(204);
+
+    await http.post('/api/auth/refresh').expect(401);
   });
 });
 

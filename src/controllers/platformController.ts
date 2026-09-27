@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
-import { signToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
+import { signToken, verifyToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
+import { revokeAccessToken } from '../services/accessTokenRevocation.js';
 import { logger } from '../services/logger.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
@@ -66,8 +67,35 @@ export async function platformLogin(req: Request, res: Response) {
   return res.json({ ok: true });
 }
 
+/**
+ * AJ-03 — komşu uç `authController.logout` ile aynı davranış: platform oturumu tek bir
+ * anahtardır (ayrı access/refresh yok, bkz. platformLogin), o anahtar da logout'ta bellek-içi
+ * iptal listesine yazılır — yalnız çerezi tarayıcıdan silmek anahtarı ele geçiren biri için
+ * ömrü (PLATFORM_COOKIE_OPTS.maxAge=1h) boyunca geçerli bırakıyordu.
+ *
+ * (`platformAuth.ts`'teki `parseCookieToken` ile aynı mantık — buradan import edilmiyor çünkü
+ * o dosya zaten bu modülden `PLATFORM_COOKIE`'yi import ediyor; döngüsel import'tan kaçınmak
+ * için küçük bir tekrar tercih edildi.)
+ */
+function extractPlatformCookieToken(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(';')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = part.slice(0, eqIdx).trim();
+    if (key === PLATFORM_COOKIE) return decodeURIComponent(part.slice(eqIdx + 1).trim());
+  }
+  return null;
+}
+
 // POST /api/platform/logout
-export async function platformLogout(_req: Request, res: Response) {
+export async function platformLogout(req: Request, res: Response) {
+  const token = extractPlatformCookieToken(req.headers.cookie);
+  const payload = token ? verifyToken(token) : null;
+  if (payload?.jti && payload.exp) {
+    revokeAccessToken(payload.jti, payload.exp);
+  }
+
   res.clearCookie(PLATFORM_COOKIE, { ...PLATFORM_COOKIE_OPTS, maxAge: 0 });
   return res.json({ ok: true });
 }
