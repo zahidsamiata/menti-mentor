@@ -4,7 +4,7 @@ import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, type Di
 import { getAlgorithmWeights } from './algorithmTuner.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
 import { computeProfileCompleteness } from './profile-completeness.service.js';
-import { buildBlockedCounterpartSet } from './blockList.js';
+import { buildListBlockedSet } from './blockList.js';
 import { isTenantSuspended, type TenantStatusFields } from '../middleware/tenantSuspension.js';
 
 /** Paylaşımlı havuz kurumu — aday kurum listesi için gereken alanlar (askı durumu dahil). */
@@ -12,6 +12,9 @@ type SharedPoolTenant = { id: string } & TenantStatusFields;
 
 /** Paylaşımlı havuz kurum sorgusunun select'i — iki yön de AYNI alanları okur. */
 const SHARED_POOL_TENANT_SELECT = { id: true, isActive: true, verificationStatus: true } as const;
+// AJ-28: aday listesi havuz kurumlarının blok listesini de okur (aynı sorgu, ek sorgu yok) —
+// eylem uçlarının "iki tarafın kurumu" kuralıyla hizalı (bkz. blockList.buildListBlockedSet).
+const SHARED_POOL_TENANT_WITH_BLOCKS_SELECT = { ...SHARED_POOL_TENANT_SELECT, blockedPairs: true } as const;
 
 /**
  * Aday kurum listesi (iki yön ortak): istek kurumu + istek kurumu paylaşımlı havuzdaysa
@@ -183,14 +186,11 @@ export async function rankMentisForMentor(args: {
     (savedFilter?.blockedDiscTypes as Array<'D' | 'I' | 'S' | 'C'> | undefined) ??
     [];
 
-  // BUG FIX: Admin'in idari blok listesini motora uygula (önceden hiç okunmuyordu).
-  const blockedMentiIds = buildBlockedCounterpartSet(mentor.id, tenantConfig?.blockedPairs);
-
   // Güvenlik düzeltmesi: Cross-tenant adayları önceden filtrele.
   // Tüm shared-pool tenant ID'lerini tek sorguda çek; döngü içi N+1 sorgusunu önle.
   const sharedTenants = await prisma.tenant.findMany({
     where: { isSharedPoolActive: true },
-    select: SHARED_POOL_TENANT_SELECT,
+    select: SHARED_POOL_TENANT_WITH_BLOCKS_SELECT,
   });
 
   // Eligibil tenant ID listesi: istek tenant'ı + her ikisi de shared pool'da olan (askıda
@@ -231,6 +231,10 @@ export async function rankMentisForMentor(args: {
     orderBy: { id: 'asc' },
     take: MATCH_CANDIDATE_PAGE_SIZE,
   }));
+
+  // Admin'in idari blok listesi motora uygulanır. AJ-28: çağıranın kurumu + adayın KENDİ
+  // kurumu (kurumlar arası havuzda karşı kurumun yöneticisinin koyduğu blok da sayılır).
+  const blockedMentiIds = buildListBlockedSet(mentor.id, tenantConfig?.blockedPairs, sharedTenants, candidates);
 
   const opts = {
     mentorTimeCommitment:   mentor.timeCommitment as string | null | undefined,
@@ -438,13 +442,13 @@ export async function rankMentorsForMenti(args: {
   // tenantConfig aynı Promise.all'da okunur (N+1 yasak) — KR-19: idari blok listesi
   // (blockedPairs) daha önce bu yönde HİÇ okunmuyordu, yalnız rankMentisForMentor
   // (mentör→menti) tarafında uygulanıyordu. Hangi tenant'ın blockedPairs'ı okunacağı
-  // rankMentisForMentor ile SİMETRİK: çağıranın KENDİ tenant'ı (args.mentiTenantId) —
-  // mentörün home tenant'ı değil. Cross-tenant'ta karşı tarafın admin'inin koyduğu blok
-  // bu yönden görünmez; bu rankMentisForMentor'un da mevcut davranışıdır (tutarlılık).
+  // rankMentisForMentor ile SİMETRİK. AJ-28: çağıranın tenant'ı + mentörün KENDİ tenant'ı
+  // okunur (havuz kurumlarının blockedPairs'ı sharedTenants sorgusunda gelir) — eylem
+  // uçlarıyla (KR-19b isPairBlockedInTenants) aynı kural.
   const [sharedTenants, tenantConfig] = await Promise.all([
     prisma.tenant.findMany({
       where: { isSharedPoolActive: true },
-      select: SHARED_POOL_TENANT_SELECT,
+      select: SHARED_POOL_TENANT_WITH_BLOCKS_SELECT,
     }),
     prisma.tenant.findUnique({
       where:  { id: args.mentiTenantId },
@@ -455,10 +459,6 @@ export async function rankMentorsForMenti(args: {
   ]);
   // Y1-B9b: askıdaki kurumlar havuzdan düşer (buildEligibleTenantIds).
   const eligibleTenantIds = buildEligibleTenantIds(args.mentiTenantId, sharedTenants);
-
-  // BUG FIX (KR-19): Admin'in idari blok listesi bu yönde de uygulanır — önceden hiç
-  // okunmuyordu, engellenen mentör menti'nin listesinde görünmeye devam ediyordu.
-  const blockedMentorIds = buildBlockedCounterpartSet(menti.id, tenantConfig?.blockedPairs);
 
   // AN-07: sayfalı toplama — skorlamadan önce kesme yok (bkz. collectCandidatePages).
   // Yalnız skor + kart için gereken hafif alanlar okunur; ağır zenginleştirme (müsaitlik,
@@ -487,8 +487,11 @@ export async function rankMentorsForMenti(args: {
     take: MATCH_CANDIDATE_PAGE_SIZE,
   }));
 
+  // BUG FIX (KR-19): Admin'in idari blok listesi bu yönde de uygulanır — önceden hiç
+  // okunmuyordu. AJ-28: mentörün kendi kurumunun listesi de sayılır (kurumlar arası havuz).
   // İdari blok kontrolü — sonraki müsaitlik/tamamlanma sorgularından ÖNCE filtrelenir
   // (blocklu mentör için gereksiz sorgu yapılmaz).
+  const blockedMentorIds = buildListBlockedSet(menti.id, tenantConfig?.blockedPairs, sharedTenants, rawMentors);
   const mentors = blockedMentorIds.size > 0
     ? rawMentors.filter((m) => !blockedMentorIds.has(m.id))
     : rawMentors;
