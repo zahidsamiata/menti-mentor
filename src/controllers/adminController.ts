@@ -564,21 +564,33 @@ export async function confirmDoubleOptIn(req: RequestWithTenant, res: Response) 
 /**
  * POST /api/admin/cron/run-tuning
  * Algoritma ağırlık ayarlamasını manuel çalıştırır.
+ * AJ-17: kurum yöneticisi yalnız KENDİ kurumunu tetikleyebilir — başka kurumun ağırlıkları
+ * etkilenmez (otomatik haftalık cron platform genelinde çalışmaya devam eder, davranışı DEĞİŞMEDİ).
  */
-export async function manualRunTuning(_req: RequestWithTenant, res: Response) {
-  void logger.info('SYSTEM', 'Admin: Manuel ağırlık ayarlaması tetiklendi');
-  const results = await runWeeklyTuning();
-  return res.json({ message: 'Ağırlık ayarlaması tamamlandı.', results });
+export async function manualRunTuning(req: RequestWithTenant, res: Response) {
+  const tenantId = req.tenant.tenantId;
+  void logger.info('SYSTEM', 'Admin: Manuel ağırlık ayarlaması tetiklendi', { tenantId });
+  const results = await runWeeklyTuning({ tenantId });
+  return res.json({ message: 'Ağırlık ayarlaması tamamlandı (yalnız bu kurum).', results });
 }
 
 /**
  * POST /api/admin/cron/run-purge
  * KVKK veri temizliğini manuel çalıştırır.
+ * AJ-17: kurum yöneticisi yalnız KENDİ kurumunun süresi dolmuş verisini temizleyebilir
+ * (otomatik haftalık cron platform genelinde çalışmaya devam eder, davranışı DEĞİŞMEDİ).
+ * SystemLog platform-geneli bir tablodur (tenantId kolonu yok) — bu yüzden kurum-kapsamlı
+ * bu çağrıda SystemLog temizliği ATLANIR (bkz. gdprService.purgeExpiredData).
  */
-export async function manualRunPurge(_req: RequestWithTenant, res: Response) {
-  void logger.info('SYSTEM', 'Admin: Manuel KVKK temizliği tetiklendi');
-  const result = await runWeeklyPurge();
-  return res.json({ message: 'KVKK veri temizliği tamamlandı.', result });
+export async function manualRunPurge(req: RequestWithTenant, res: Response) {
+  const tenantId = req.tenant.tenantId;
+  void logger.info('SYSTEM', 'Admin: Manuel KVKK temizliği tetiklendi', { tenantId });
+  const result = await runWeeklyPurge({ tenantId });
+  return res.json({
+    message:
+      'KVKK veri temizliği tamamlandı (yalnız bu kurum). Sistem günlüğü (SystemLog) platform geneli olduğu için bu işlemin kapsamı dışında bırakıldı.',
+    result,
+  });
 }
 
 // ─── Kullanıcı Onay / Red ─────────────────────────────────────────────────────
