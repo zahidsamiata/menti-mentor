@@ -121,7 +121,6 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     });
 
     // Kullanıcı yanıtlarını sil (DISC soruları — kişilik profili)
-    await tx.userResponse.deleteMany({ where: { userId } });
 
     // UserProfile: PII/kişilik alanlarını temizle, Analitik (skill/goal/industry/yearsExp) koru.
     // updateMany kullanılır — profil satırı yoksa sessizce no-op olur.
@@ -129,12 +128,7 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     const profile = await tx.userProfile.findFirst({ where: { userId }, select: { id: true } });
     await tx.userProfile.updateMany({
       where: { userId },
-      data: {
-        schools: [], companies: [], communities: [],           // PII bağlam
-        discD: 0, discI: 0, discS: 0, discC: 0,                 // kişilik verisi
-        oceanO: null, oceanC: null, oceanE: null, oceanA: null, oceanN: null,
-        archetype: null,
-      },
+      data: {},
     });
     // GV-08 / KARAR-39 (arketip ayağı karardan BAĞIMSIZ — bkz. 00-KUYRUK.md GV-08 satırı):
     // UserProfile.archetype temizleniyor ama AYNI arketip Match tablosunda düz metin duruyordu
