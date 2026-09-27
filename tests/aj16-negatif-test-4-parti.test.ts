@@ -18,13 +18,16 @@
  * Kaynak koda dokunulmadı; yalnız test eklendi. Beklenen kodlar controller/servis
  * OKUNARAK alındı (tahmin değil) — ilgili dosya/satır her blokta yorumda belirtilir.
  *
- * AÇIK BULGU (bkz. AJ16-5): `POST /api/admin/cron/run-purge` ve aynı ailedeki
+ * AÇIK BULGU → AJ-17'YE DEVREDİLDİ: `POST /api/admin/cron/run-purge` ve aynı ailedeki
  * `POST /api/admin/cron/run-tuning`, T+ADMIN zinciriyle korunuyor (yalnız KENDİ kurumunun
  * yöneticisi çağırabilir) AMA çağrılan iş (`purgeExpiredData()` / `runWeeklyTuning()`,
  * `src/services/cronScheduler.ts:87-95` ve `:56-72`) tenant PARAMETRESİ ALMADAN TÜM
- * kurumları işler. Yani HERHANGİ bir kurumun yöneticisi, TÜM kurumları etkileyen bir
- * KVKK-temizliği/ağırlık-kalibrasyonu tetikleyebilir. Bu bir tasarım/yetki boşluğudur —
- * PO'ya bildirilmiştir, kod DEĞİŞTİRİLMEDİ (yalnız test, `it.fails` ile kanıtlanmış).
+ * kurumları işler — HERHANGİ bir kurumun yöneticisi TÜM kurumları etkileyen bir
+ * KVKK-temizliği/ağırlık-kalibrasyonu tetikleyebilir. İnceleme (#190) bu satırdaki
+ * `it.fails` kullanımını SORUN olarak işaretledi; test buradan ÇIKARILDI, açık kuyruğa
+ * AJ-17 olarak alındı — doğru negatif test (düzeltmeyle birlikte) orada yazılacak. Bu
+ * dosyada yalnız uçların (a) oturumsuz-401 testi kalır; bulgunun kendisi test EDİLMEDEN
+ * bırakıldı (kod DEĞİŞTİRİLMEDİ).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import supertest from 'supertest';
@@ -140,7 +143,7 @@ describe('AJ16-2/3: POST /api/admin/algorithm-tuner/approve + /reject', () => {
 });
 
 // ─── AJ16-4: POST /api/admin/cron/run-tuning ────────────────────────────────
-// (a) yalnız yetki kapısı — asıl bulgu AJ16-5'te (aynı kök neden, orada kanıtlanmış).
+// (a) yalnız yetki kapısı. Kurumlar-arası yan etki bulgusu AJ-17'ye devredildi (üstteki not).
 describe('AJ16-4: POST /api/admin/cron/run-tuning', () => {
   it('(a) oturumsuz → 401', async () => {
     const http = agent();
@@ -150,51 +153,15 @@ describe('AJ16-4: POST /api/admin/cron/run-tuning', () => {
 });
 
 // ─── AJ16-5: POST /api/admin/cron/run-purge ─────────────────────────────────
-// AÇIK BULGU: gdprService.ts:purgeExpiredData() TÜM kurumların süresi dolmuş
-// SystemLog/FeedbackLog kayıtlarını siler — tenant parametresi YOK. Route yalnız
-// T+ADMIN (kendi kurumu) gerektirir; herhangi bir kurumun yöneticisi platform-geneli
-// bir KVKK temizliğini tetikleyebilir. `it.fails`: aşağıdaki izolasyon beklentisi
-// GERÇEKTE YANLIŞ ÇIKAR (B'nin çağrısı A'nın süresi dolmuş kaydını da siler) — bu
-// başarısızlık bulguyu KANITLAR.
+// (a) yalnız yetki kapısı. Kurumlar-arası yan etki bulgusu (gdprService.ts:purgeExpiredData()
+// tenant parametresi almadan TÜM kurumları etkiliyor) AJ-17'ye devredildi (üstteki not) —
+// #190 incelemesi buradaki `it.fails` kullanımını sorunlu bulduğu için ÇIKARILDI.
 describe('AJ16-5: POST /api/admin/cron/run-purge', () => {
-  let http: TestAgent;
-  let tenantA: Tenant;
-  let tenantB: Tenant;
-  let adminB: SeededUser;
-
-  beforeEach(async () => {
-    await cleanDb();
-    http = agent();
-    tenantA = await createTenant();
-    tenantB = await createTenant();
-    adminB = await createAdminUser(tenantB.id);
-  });
-
   it('(a) oturumsuz → 401', async () => {
-    await http.post('/api/admin/cron/run-purge').set(tenantHeaders(tenantB.id)).expect(401);
+    const http = agent();
+    const tenant = await (async () => { await cleanDb(); return createTenant(); })();
+    await http.post('/api/admin/cron/run-purge').set(tenantHeaders(tenant.id)).expect(401);
   });
-
-  it.fails(
-    '// AÇIK: B kurumunun yöneticisi tetikleyince A kurumunun süresi dolmuş SystemLog kaydı SİLİNMEMELİ (gerçekte SİLİNİYOR — cronScheduler.ts:87-95 tenant-scoped değil)',
-    async () => {
-      const oldLog = await testPrisma.systemLog.create({
-        data: {
-          level: 'INFO',
-          category: 'SYSTEM',
-          message: 'AJ16 eski kayıt',
-          meta: { tenantId: tenantA.id },
-          createdAt: new Date(Date.now() - 200 * 24 * 60 * 60 * 1000), // 200 gün önce (>90 gün retention)
-        },
-      });
-
-      const { accessToken } = await loginAs(http, adminB.email, adminB.rawPassword);
-      await http.post('/api/admin/cron/run-purge').set(tenantHeaders(tenantB.id, accessToken)).expect(200);
-
-      // Beklenti (YANLIŞ ÇIKAR): B'nin tetiklediği iş yalnız B'yi etkilemeli, A'nın kaydı kalmalı.
-      const stillThere = await testPrisma.systemLog.findUnique({ where: { id: oldLog.id } });
-      expect(stillThere).not.toBeNull();
-    },
-  );
 });
 
 // ─── AJ16-6: GET /api/admin/kpi ─────────────────────────────────────────────
