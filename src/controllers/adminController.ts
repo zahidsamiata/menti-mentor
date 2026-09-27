@@ -824,23 +824,13 @@ export async function getPendingTuning(req: RequestWithTenant, res: Response) {
  *
  * `lastChange` (95): son manuel değişikliğin izi — kim (ad) / ne zaman / eski→yeni. Yoksa null.
  * Tenant-scoped (yalnız kendi kurumunun izi); e-posta DÖNMEZ (PII minimizasyonu).
- *
- * `reportingFrequency` (AJ-48): kurumun kayıtlı kalibrasyon sıklığı (WEEKLY/BIWEEKLY/MONTHLY).
  */
 export async function getAlgorithmWeightsHandler(req: RequestWithTenant, res: Response) {
-  const tenantId = req.tenant.tenantId;
-  const [weights, lastChange, tenantSettings] = await Promise.all([
-    getAlgorithmWeights(tenantId),
-    getLastWeightChange(tenantId),
-    // AJ-48: ayar ekranı kayıtlı rapor sıklığını gösterebilsin diye (yazma PATCH /tenants/:id/settings).
-    // Kurum kimliği OTURUMDAN (req.tenant) — explicit select, yalnız bu alan.
-    prisma.tenant.findUnique({ where: { id: tenantId }, select: { reportingFrequency: true } }),
+  const [weights, lastChange] = await Promise.all([
+    getAlgorithmWeights(req.tenant.tenantId),
+    getLastWeightChange(req.tenant.tenantId),
   ]);
-  return res.json({
-    weights,
-    lastChange,
-    reportingFrequency: tenantSettings?.reportingFrequency ?? 'WEEKLY',
-  });
+  return res.json({ weights, lastChange });
 }
 
 /**
