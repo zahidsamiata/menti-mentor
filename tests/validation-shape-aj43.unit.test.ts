@@ -6,6 +6,8 @@
  * (negatif: geçersiz istek hiçbir kaydı okumaz/değiştirmez).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 const prismaMock = vi.hoisted(() => ({
   question: {
@@ -36,6 +38,7 @@ import {
   submitResponses,
 } from '../src/controllers/questionController.js';
 import { checkSlugAvailability } from '../src/controllers/selfServeController.js';
+import { markMeetingNotHappened } from '../src/controllers/meetingController.js';
 
 function mockRes() {
   const res: { statusCode?: number; body?: unknown; status: (c: number) => typeof res; json: (b: unknown) => typeof res } = {
@@ -119,5 +122,46 @@ describe('AJ-43: slug müsaitlik kontrolü ortak biçimde (GECERSIZ_SLUG değil)
     await checkSlugAvailability({ query: { slug: 'ornek-kurum' } } as never, res as never);
     expect(res.statusCode).toBeUndefined();
     expect(res.body).toEqual({ available: true, slug: 'ornek-kurum' });
+  });
+});
+
+describe('AJ-43: görüşme "gerçekleşmedi" ucu ortak yardımcıdan (U-01 elle kopyası kalktı)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('POST /meetings/:id/mark-not-happened — 500+ karakter gerekçe → ortak biçim, görüşme okunmaz/değişmez', async () => {
+    const res = mockRes();
+    const req = {
+      auth: { userId: 'u-mentor', role: 'MENTOR' },
+      tenant: { tenantId: 't1' },
+      params: { meetingId: 'm1' },
+      body: { reason: 'x'.repeat(501) },
+    } as never;
+    await markMeetingNotHappened(req, res as never);
+    const body = expectCommonShape(res, false);
+    expect(body.details.fieldErrors['reason']?.length).toBeGreaterThan(0);
+    expect(prismaMock.meeting.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.meeting.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('AJ-43: kaynakta elle kopya doğrulama yanıtı kalmadı (bekçi)', () => {
+  function listTs(dir: string): string[] {
+    return readdirSync(dir).flatMap((name) => {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) return listTs(full);
+      return full.endsWith('.ts') ? [full] : [];
+    });
+  }
+
+  // Kapsam: Zod doğrulama yanıtı (details = flatten()). Zod dışı elle kontroller (ör. userController
+  // selfProfile anahtar sınırı) bu işin kapsamında değil.
+  it("src/ altında Zod hata yanıtı (details: flatten()) yalnız middleware/validate.ts'te kurulur", () => {
+    const offenders = listTs('src')
+      .filter((f) => !f.endsWith(join('middleware', 'validate.ts')))
+      .filter((f) => {
+        const code = readFileSync(f, 'utf8');
+        return /\.flatten\(\)/.test(code);
+      });
+    expect(offenders).toEqual([]);
   });
 });
