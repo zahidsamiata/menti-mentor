@@ -12,12 +12,19 @@
  *   npx tsx scripts/cleanup-disc-card-raw-keys.ts --uygula --onay="TEMIZLE <host>"
  *       → (1) tarihli yedek tablo "User_discResultCard_yedek_YYYYMMDD" (id + discResultCard)
  *         (2) UPDATE "User" SET "discResultCard" = "discResultCard" - 'discVector' - 'rawScores'
- *         Tek transaction; sayılar tutmazsa geri alınır. Hedef TEST_DATABASE_URL host'u ise --onay istenmez.
+ *         Tek transaction; sayılar tutmazsa geri alınır. --onay HER hedefte (test DB dahil) birebir istenir.
  *   DATABASE_URL env'de yoksa aynı dizindeki .env'den okunur.
  *
- * GERİ ALMA (gerekirse):
+ * GERİ ALMA (gerekirse) — YALNIZ temizlikten HEMEN sonra: yedek eski kartı tutar; arada kullanıcı
+ * testi yeniden çözdüyse bu komut onun YENİ kartını eskisiyle EZER.
  *   UPDATE "User" u SET "discResultCard" = y."discResultCard"
  *   FROM "User_discResultCard_yedek_YYYYMMDD" y WHERE u.id = y.id;
+ *
+ * ⚠️ YEDEK TABLO HAM PSİKOMETRİK VERİ İÇERİR (KVKK hassas kategori):
+ *   - Hesap silme/anonimleştirme akışı (gdprService) bu tabloyu TEMİZLEMEZ.
+ *   - Yedek, temizlikten sonra EN GEÇ 30 GÜN içinde PO onayıyla DROP edilir; tarih 02-ILERLEME'ye yazılır.
+ *   - Yedek tablo Prisma şemasında olmadığından `prisma migrate dev` onu fark (drift) olarak görür —
+ *     migrate dev zaten yasak (Neon shadow-DB kuralı); tabloyu şemaya EKLEME.
  */
 import { readFileSync } from 'node:fs';
 import { PrismaClient } from '@prisma/client';
@@ -56,6 +63,7 @@ async function main(): Promise<void> {
   if (apply) {
     const gate = checkApplyAllowed({ targetUrl: url, testUrl: process.env.TEST_DATABASE_URL, confirmation: argValue('--onay') });
     if (!gate.ok) { console.error(`${TAG} DUR: ${gate.reason}`); process.exit(1); }
+    for (const w of gate.warnings) console.warn(`${TAG} UYARI: ${w}`);
   }
 
   const prisma = new PrismaClient({ datasources: { db: { url } } });

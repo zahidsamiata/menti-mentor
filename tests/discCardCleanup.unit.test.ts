@@ -65,20 +65,37 @@ describe('yardımcılar', () => {
   });
 });
 
-describe('checkApplyAllowed (onay kapısı)', () => {
-  const real = 'postgresql://u:p@ep-real-host.neon.tech/db?sslmode=require';
-  const test = 'postgresql://u:p@localhost:5432/test';
+describe('checkApplyAllowed (onay kapısı — istisna YOK)', () => {
+  const live = 'postgresql://u:p@ep-real-host.neon.tech/db?sslmode=require';
+  const livePooler = 'postgresql://u2:p2@ep-real-host.neon.tech:5432/db';
+  const local = 'postgresql://u:p@localhost:5432/test';
 
-  it('gerçek DB: onay metni yoksa ya da yanlışsa REDDEDER', () => {
-    expect(checkApplyAllowed({ targetUrl: real, testUrl: test, confirmation: undefined }).ok).toBe(false);
-    expect(checkApplyAllowed({ targetUrl: real, testUrl: test, confirmation: 'TEMIZLE baska-host' }).ok).toBe(false);
-    expect(checkApplyAllowed({ targetUrl: real, testUrl: undefined, confirmation: 'evet' }).ok).toBe(false);
+  it('(a) TEST_DATABASE_URL canlıyla AYNI host iken onaysız --uygula REDDEDİLİR', () => {
+    const r = checkApplyAllowed({ targetUrl: live, testUrl: livePooler, confirmation: undefined });
+    expect(r.ok).toBe(false);
+    expect(r.ok ? '' : r.reason).toContain('CANLI DESENLİ');
+    expect(checkApplyAllowed({ targetUrl: live, testUrl: live, confirmation: undefined }).ok).toBe(false);
   });
-  it('gerçek DB: host\'u içeren birebir onayla izin verir', () => {
-    expect(checkApplyAllowed({ targetUrl: real, testUrl: test, confirmation: 'TEMIZLE ep-real-host.neon.tech' }).ok).toBe(true);
+
+  it('(b) canlı desenli host + yanlış/eksik/kısmi onay REDDEDİLİR', () => {
+    for (const confirmation of [undefined, 'evet', 'TEMIZLE baska-host.neon.tech', 'TEMIZLE ep-real-host', 'temizle ep-real-host.neon.tech']) {
+      expect(checkApplyAllowed({ targetUrl: live, testUrl: undefined, confirmation }).ok).toBe(false);
+    }
   });
-  it('hedef TEST_DATABASE_URL host\'u ise onay istemez', () => {
-    expect(checkApplyAllowed({ targetUrl: test, testUrl: test, confirmation: undefined }).ok).toBe(true);
+
+  it('yerel/test hedefi de onaysız REDDEDİLİR (test DB istisnası yok)', () => {
+    expect(checkApplyAllowed({ targetUrl: local, testUrl: local, confirmation: undefined }).ok).toBe(false);
+  });
+
+  it('host\'u içeren birebir onayla izin verir; canlı + test-aynı-host uyarısı döner', () => {
+    const r = checkApplyAllowed({ targetUrl: live, testUrl: livePooler, confirmation: 'TEMIZLE ep-real-host.neon.tech' });
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.warnings.join(' ')).toMatch(/CANLI.*TEST_DATABASE_URL/s);
+    expect(checkApplyAllowed({ targetUrl: local, testUrl: local, confirmation: 'TEMIZLE localhost' }).ok).toBe(true);
+  });
+
+  it('host okunamazsa REDDEDİLİR', () => {
+    expect(checkApplyAllowed({ targetUrl: 'bozuk', testUrl: undefined, confirmation: 'TEMIZLE (bilinmiyor)' }).ok).toBe(false);
   });
 });
 

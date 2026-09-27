@@ -48,32 +48,53 @@ export function maskId(id: string): string {
   return `${id.slice(0, 4)}…${id.slice(-2)}`;
 }
 
+/**
+ * Canlı/yönetilen DB sağlayıcı host deseni. Kaynak: tests/helpers/assertTestDatabase.ts
+ * (LIVE_DB_HOST_PATTERN) — src tests/ altından import etmez, desen burada aynen tutulur.
+ */
+export const LIVE_DB_HOST_PATTERN = /neon\.tech|\.rds\.amazonaws\.com|supabase\.co|\.render\.com/i;
+
+/** Hedef host (küçük harf, port/kimlik bilgisi yok). Çözümlenemezse '(bilinmiyor)'. */
 export function hostOf(url: string): string {
-  return (url.split('@')[1] || '').split('/')[0].split('?')[0] || '(bilinmiyor)';
+  try {
+    return new URL(url).hostname.toLowerCase() || '(bilinmiyor)';
+  } catch {
+    return '(bilinmiyor)';
+  }
 }
 
-/** Gerçek DB'ye yazmak için beklenen onay metni — host'u açıkça içerir. */
+export function isLiveDbHost(host: string): boolean {
+  return LIVE_DB_HOST_PATTERN.test(host);
+}
+
+/** Yazmak için beklenen onay metni — host'u açıkça içerir. */
 export function requiredConfirmation(host: string): string {
   return `TEMIZLE ${host}`;
 }
 
 /**
- * Yazmaya izin var mı? Hedef TEST_DATABASE_URL'in host'u ise onay istenmez; başka her host
- * (gerçek DB) için `--onay` metni `TEMIZLE <host>` ile birebir eşleşmeli.
+ * Yazmaya izin var mı? HER hedefte `--onay` metni `TEMIZLE <host>` ile BİREBİR eşleşmeli.
+ * TEST_DATABASE_URL için istisna YOKTUR (7b): host karşılaştırması canlıyı test sanabilir
+ * (ör. TEST_DATABASE_URL yanlışlıkla canlıyı gösteriyorsa). `testUrl` yalnız uyarı içindir.
  */
 export function checkApplyAllowed(input: {
   targetUrl: string;
   testUrl: string | undefined;
   confirmation: string | undefined;
-}): { ok: true } | { ok: false; reason: string } {
+}): { ok: true; warnings: string[] } | { ok: false; reason: string } {
   const host = hostOf(input.targetUrl);
   if (host === '(bilinmiyor)') return { ok: false, reason: 'hedef DB host okunamadı' };
-  if (input.testUrl && hostOf(input.testUrl) === host) return { ok: true };
+  const label = isLiveDbHost(host) ? 'CANLI DESENLİ DB' : 'DB';
   const expected = requiredConfirmation(host);
   if (input.confirmation !== expected) {
-    return { ok: false, reason: `gerçek DB (${host}) için onay metni gerekli: --onay="${expected}"` };
+    return { ok: false, reason: `${label} (${host}) için onay metni birebir gerekli: --onay="${expected}"` };
   }
-  return { ok: true };
+  const warnings: string[] = [];
+  if (isLiveDbHost(host)) warnings.push(`hedef CANLI desenli host: ${host}`);
+  if (input.testUrl && hostOf(input.testUrl) === host) {
+    warnings.push('TEST_DATABASE_URL de bu host\'u gösteriyor — bu hedef test DB SAYILMAZ');
+  }
+  return { ok: true, warnings };
 }
 
 /** Çalıştırıcının ihtiyaç duyduğu DB yüzeyi (PrismaClient bunu karşılar; testte mock). */
