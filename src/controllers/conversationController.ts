@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
@@ -292,9 +293,14 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
   //  1) unread — her konuşmanın KENDİ eşiğine (lastReadForSide) göre OR koşuluyla groupBy;
   //     eşik konuşmadan konuşmaya FARKLI olduğu için tek WHERE'le sayılamaz, bu yüzden her
   //     konuşma kendi koşuluyla OR'a eklenir; count tek groupBy sorgusunda toplanır.
-  //  2) son mesaj — conversationId'ye göre distinct + createdAt desc (Prisma'nın "grup başına
-  //     en son kayıt" deseni): sıra conversationId, sonra createdAt desc olduğundan distinct
-  //     her grubun EN YENİ satırını tutar.
+  //  2) son mesaj — ham SQL `DISTINCT ON` (Postgres). ⚠️ Prisma'nın `findMany({ distinct })`
+  //     API'si `nativeDistinct` preview flag'i AÇIK OLMADAN (bu şemada kapalı — previewFeatures
+  //     yok, schema.prisma'ya DOKUNULMADI) SQL'e `DISTINCT ON` olarak inmez; eşleşen TÜM satırları
+  //     (mesaj içerikleriyle) belleğe çekip uygulama katmanında filtreler — uzun sohbetlerde eski
+  //     N+1'den daha kötü sonuç verir (bağımsız inceleme, PR #174 yorumu). Bu yüzden burada
+  //     Prisma.sql + Prisma.join ile parametreli ham SQL kullanılır (string birleştirme YOK →
+  //     enjeksiyon riski yok); Postgres DISTINCT ON'u index'le (`@@index([conversationId, createdAt])`)
+  //     sunucu tarafında, satır satır belleğe çekmeden uygular.
   // Sayfa boş ise hiç sorgu atılmaz.
   const convoIds = convos.map((c) => c.id);
 
@@ -319,12 +325,14 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
 
   const lastMessages = convoIds.length === 0
     ? []
-    : await prisma.message.findMany({
-        where: { conversationId: { in: convoIds } },
-        orderBy: [{ conversationId: 'asc' }, { createdAt: 'desc' }],
-        distinct: ['conversationId'],
-        select: { conversationId: true, content: true, createdAt: true, senderUserId: true },
-      });
+    : await prisma.$queryRaw<Array<{ conversationId: string; content: string }>>(
+        Prisma.sql`
+          SELECT DISTINCT ON ("conversationId") "conversationId", "content"
+          FROM "Message"
+          WHERE "conversationId" IN (${Prisma.join(convoIds)})
+          ORDER BY "conversationId", "createdAt" DESC
+        `,
+      );
   const lastByConvo = new Map(lastMessages.map((m) => [m.conversationId, m]));
 
   const items = convos.map((c) => {
