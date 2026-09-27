@@ -275,7 +275,12 @@ describe('AJ4-6: POST /api/meetings/:meetingId/approve + /reject', () => {
     });
 
     it(`${action} (c) başka kurumun mentörü → 404; durum değişmez`, async () => {
-      await http.post(`/api/meetings/${meetingId}/${action}`).set(authAs(mentorB)).expect(404);
+      // reject controller req.body'yi doğrudan destructure eder (`const { reason } = req.body`);
+      // gövde/Content-Type hiç gönderilmezse bu tenant kontrolünden ÖNCE 500 ile patlar — gerçek
+      // istemci (frontend `meetings.ts:127`) her zaman `{ reason }` gövdesi gönderdiği için bu yol
+      // pratikte tetiklenmez. Gerçekçi istemci gövdesiyle test edilir (approve için etkisizdir,
+      // zaten `req.body ?? {}` kullanır).
+      await http.post(`/api/meetings/${meetingId}/${action}`).set(authAs(mentorB)).send({}).expect(404);
       expect((await meetingStatus())?.status).toBe('PENDING');
     });
   }
