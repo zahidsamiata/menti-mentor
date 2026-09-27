@@ -865,8 +865,10 @@ export async function listAdmins(req: RequestWithTenant, res: Response) {
   // AJ-01: kurum-içi sayım/liste TenantMembership.role üzerinden (CLAUDE.md "Veri Modeli") —
   // User.role değil. Bir kullanıcının bu kurumdaki (üyelik) rolü, home tenant'taki User.role'ünden
   // farklı olabilir; bu kurumda aktif ADMIN üyeliği olan, kendisi de aktif kişiler listelenir.
+  // approvalStatus REJECTED dışlanır — erişim kapısıyla (membershipAccess.ts decideMembershipAccess)
+  // hizalı: reddedilen kişi zaten panele giremiyor, sayıma/listeye de girmemeli.
   const adminMemberships = await prisma.tenantMembership.findMany({
-    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true } },
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true, approvalStatus: { not: 'REJECTED' } } },
     select: { user: { select: { id: true, fullName: true, email: true, createdAt: true } } },
     orderBy: { user: { createdAt: 'asc' } },
   });
@@ -887,8 +889,9 @@ export async function promoteToAdmin(req: RequestWithTenant, res: Response) {
   if (target.role === 'ADMIN') return res.status(400).json({ error: 'ZATEN_ADMIN' });
 
   // AJ-01: limit sayımı TenantMembership.role üzerinden — User.role değil (CLAUDE.md "Veri Modeli").
+  // approvalStatus REJECTED dışlanır (membershipAccess.ts erişim kapısıyla hizalı).
   const adminCount = await prisma.tenantMembership.count({
-    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true } },
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true, approvalStatus: { not: 'REJECTED' } } },
   });
   if (adminCount >= MAX_ADMINS_PER_TENANT) {
     return res.status(403).json({
@@ -919,8 +922,9 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
 
   // Son admin koruma: en az 1 admin kalmalı
   // AJ-01: sayım TenantMembership.role üzerinden — User.role değil (CLAUDE.md "Veri Modeli").
+  // approvalStatus REJECTED dışlanır (membershipAccess.ts erişim kapısıyla hizalı).
   const adminCount = await prisma.tenantMembership.count({
-    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true } },
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true, approvalStatus: { not: 'REJECTED' } } },
   });
   if (adminCount <= 1) {
     return res.status(400).json({

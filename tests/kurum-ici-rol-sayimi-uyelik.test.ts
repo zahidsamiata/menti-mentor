@@ -146,3 +146,82 @@ describe('AJ-01: yönetici (ADMIN) sayımı — kurumlar-arası konuk üyelik do
     expect(res.body.error).toBe('ADMIN_LIMITI_ASILDI');
   });
 });
+
+describe('AJ-01 (inceleme düzeltmesi): SON_ADMIN koruması — yalnız gerçek etkin admin sayılır', () => {
+  let http: TestAgent;
+  let tenantA: Tenant;
+  let adminA: SeededUser;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http = agent();
+    tenantA = await createTenant();
+    adminA = await createAdminUser(tenantA.id);
+  });
+
+  it('negatif: başka kurumun ADMIN üyeliği A\'nın son-admin sayımına girmez → 400 SON_ADMIN, rol değişmez', async () => {
+    // tenantB'nin kendi (ilgisiz) home ADMIN'i — A'nın sayımını hiç etkilememeli.
+    const tenantB = await createTenant();
+    await createAdminUser(tenantB.id);
+
+    const { accessToken } = await loginAs(http, adminA.email, adminA.rawPassword);
+    const res = await http
+      .post(`/api/admin/users/${adminA.id}/demote-admin`)
+      .set(tenantHeaders(tenantA.id, accessToken));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('SON_ADMIN');
+    const stillAdmin = await testPrisma.user.findUnique({ where: { id: adminA.id } });
+    expect(stillAdmin?.role).toBe('ADMIN');
+  });
+
+  it('negatif: A kurumunda PASİF (isActive=false) bir ADMIN üyeliği sayıma girmez → 400 SON_ADMIN, rol değişmez', async () => {
+    const stalePerson = await createMentor(tenantA.id);
+    await testPrisma.tenantMembership.update({
+      where: { userId_tenantId: { userId: stalePerson.id, tenantId: tenantA.id } },
+      data: { role: 'ADMIN', isActive: false },
+    });
+
+    const { accessToken } = await loginAs(http, adminA.email, adminA.rawPassword);
+    const res = await http
+      .post(`/api/admin/users/${adminA.id}/demote-admin`)
+      .set(tenantHeaders(tenantA.id, accessToken));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('SON_ADMIN');
+    const stillAdmin = await testPrisma.user.findUnique({ where: { id: adminA.id } });
+    expect(stillAdmin?.role).toBe('ADMIN');
+  });
+
+  it('negatif: reddedilmiş (approvalStatus=REJECTED) kullanıcının ADMIN üyeliği sayıma girmez → 400 SON_ADMIN', async () => {
+    const rejected = await createMentor(tenantA.id, { approvalStatus: 'REJECTED' });
+    await testPrisma.tenantMembership.update({
+      where: { userId_tenantId: { userId: rejected.id, tenantId: tenantA.id } },
+      data: { role: 'ADMIN' },
+    });
+
+    const { accessToken } = await loginAs(http, adminA.email, adminA.rawPassword);
+    const res = await http
+      .post(`/api/admin/users/${adminA.id}/demote-admin`)
+      .set(tenantHeaders(tenantA.id, accessToken));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('SON_ADMIN');
+    const stillAdmin = await testPrisma.user.findUnique({ where: { id: adminA.id } });
+    expect(stillAdmin?.role).toBe('ADMIN');
+  });
+
+  it('/managers listesi reddedilmiş kullanıcının ADMIN üyeliğini saymaz/listelemez', async () => {
+    const rejected = await createMentor(tenantA.id, { approvalStatus: 'REJECTED' });
+    await testPrisma.tenantMembership.update({
+      where: { userId_tenantId: { userId: rejected.id, tenantId: tenantA.id } },
+      data: { role: 'ADMIN' },
+    });
+
+    const { accessToken } = await loginAs(http, adminA.email, adminA.rawPassword);
+    const res = await http.get('/api/admin/managers').set(tenantHeaders(tenantA.id, accessToken)).expect(200);
+
+    expect(res.body.total).toBe(1);
+    expect(res.body.items.map((u: { id: string }) => u.id)).toEqual([adminA.id]);
+  });
+});
