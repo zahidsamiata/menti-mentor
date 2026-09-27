@@ -56,12 +56,14 @@ export async function computeHealthMetrics(
   const mentis = roleCounts.find((r) => r.role === 'MENTI')?._count.id ?? 0;
 
   // ── Mentörsüz menti: onaylı aktif menti, APPROVED opt-in'i olmayan ─────────
+  // AJ-40: "menti" = BU kurumda aktif MENTI üyeliği olan kişi (TenantMembership.role, CLAUDE.md
+  // "Veri Modeli") — User.role/home tenant değil. Opt-in de BU kuruma scoped: başka kurumdaki
+  // mentörü, bu kurumda mentörü olduğu anlamına gelmez.
   const mentorlessWhere = {
-    tenantId,
-    role: 'MENTI' as const,
     isActive: true,
     approvalStatus: 'APPROVED' as const,
-    mentiOptIns: { none: { status: 'APPROVED' as const } },
+    memberships: { some: { tenantId, role: 'MENTI' as const, isActive: true } },
+    mentiOptIns: { none: { tenantId, status: 'APPROVED' as const } },
   };
 
   // ── Pasif üye: onaylı aktif, X gündür giriş yok. Hiç giriş yapmamış (null) ise
