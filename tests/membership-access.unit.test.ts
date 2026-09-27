@@ -40,4 +40,31 @@ describe('decideMembershipAccess (GV-10)', () => {
   it('onay bekleyen (PENDING) hesap engellenmez — bekleme ekranı uçları çalışmaya devam eder', () => {
     expect(decideMembershipAccess(row({ role: 'MENTI', user: { approvalStatus: 'PENDING' } }))).toEqual({ ok: true, role: 'MENTI' });
   });
+
+  // AJ-31 — anahtarın oturumu (sid → RefreshToken.id). Çıkış kaydı siler → yeniden başlatmadan
+  // bağımsız olarak reddedilir.
+  it('AJ-31 negatif: sid verilmiş ama oturum kaydı yok (çıkış yapılmış) → SESSION_REVOKED', () => {
+    expect(decideMembershipAccess(row({ user: { refreshTokens: [] } }), 'sess-1'))
+      .toEqual({ ok: false, reason: 'SESSION_REVOKED' });
+    expect(decideMembershipAccess(row(), 'sess-1')).toEqual({ ok: false, reason: 'SESSION_REVOKED' });
+  });
+
+  it('AJ-31 negatif: başka oturumun kaydı bu anahtarı geçerli kılmaz', () => {
+    expect(decideMembershipAccess(row({ user: { refreshTokens: [{ id: 'sess-2' }] } }), 'sess-1'))
+      .toEqual({ ok: false, reason: 'SESSION_REVOKED' });
+  });
+
+  it('AJ-31: oturum kaydı duruyorsa erişim (rol üyelikten)', () => {
+    expect(decideMembershipAccess(row({ role: 'MENTI', user: { refreshTokens: [{ id: 'sess-1' }] } }), 'sess-1'))
+      .toEqual({ ok: true, role: 'MENTI' });
+  });
+
+  it('AJ-31: sid taşımayan (eski) anahtar oturum kontrolüne girmez — geçiş penceresi', () => {
+    expect(decideMembershipAccess(row({ user: { refreshTokens: [] } }))).toEqual({ ok: true, role: 'MENTOR' });
+  });
+
+  it('AJ-31: hesap pasifse oturum kaydından önce ACCOUNT_INACTIVE döner (mevcut 401 gövdesi korunur)', () => {
+    expect(decideMembershipAccess(row({ user: { isActive: false, refreshTokens: [] } }), 'sess-1'))
+      .toEqual({ ok: false, reason: 'ACCOUNT_INACTIVE' });
+  });
 });

@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { logger } from '../services/logger.js';
 import { extractBearerToken, verifyToken, type JwtPayload } from './jwtAuth.js';
-import { ACCOUNT_INACTIVE_BODY, resolveMembershipAccess } from './membershipAccess.js';
+import { ACCOUNT_INACTIVE_BODY, SESSION_REVOKED_BODY, resolveMembershipAccess } from './membershipAccess.js';
 import { isTenantSuspended, TENANT_SUSPENDED_BODY } from './tenantSuspension.js';
 import { getCachedTenant } from '../services/tenantCache.js';
 
@@ -18,6 +18,7 @@ import { getCachedTenant } from '../services/tenantCache.js';
  *  - kurum-içi rol/erişim kaynağı `TenantMembership` (userId + tokenın tenantId'si) — `User.role` değil;
  *  - üyelik aktif DEĞİLSE veya üyelik rolü ADMIN DEĞİLSE 403;
  *  - hesap pasif / reddedilmişse 401 (GV-10; kural `membershipAccess.ts`'te, iki kapı ortak kullanır);
+ *  - anahtarın oturumu (sid → RefreshToken) çıkışla kapatıldıysa 401 (AJ-31, aynı ortak kural);
  *  - platform token'ı (aud:'platform') tenant yönetici ucunda geçmez (domain ayrımı, platformAuth ile simetrik);
  *  - kurum askıdaysa (platform dondurdu / başvuru reddedildi) 403 KURUM_ASKIDA (Y1-B9, requireTenant 4b ile aynı).
  *
@@ -39,7 +40,13 @@ export async function authenticateTenantAdmin(
     return null;
   }
 
-  const access = await resolveMembershipAccess(payload.sub, payload.tenantId);
+  // AJ-31: requireTenant ile aynı — anahtarın oturumu (sid) kapatıldıysa 401.
+  const access = await resolveMembershipAccess(payload.sub, payload.tenantId, payload.sid);
+
+  if (!access.ok && access.reason === 'SESSION_REVOKED') {
+    res.status(401).json(SESSION_REVOKED_BODY);
+    return null;
+  }
 
   if (!access.ok && access.reason === 'ACCOUNT_INACTIVE') {
     void logger.warn('AUTH', 'Pasif veya reddedilmiş hesapla kurum-yönetici ucu denemesi', {

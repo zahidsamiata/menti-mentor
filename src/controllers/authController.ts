@@ -365,20 +365,23 @@ export async function login(req: Request, res: Response) {
 
   const tenant = await loadSessionTenant(user.tenantId);
 
-  const accessToken = signToken({
-    sub: user.id,
-    tenantId: user.tenantId,
-    role: user.role,
-    fullName: user.fullName,
-  });
-
+  // AJ-31: önce oturum (RefreshToken) kaydı, sonra o kaydın id'sini `sid` olarak taşıyan anahtar.
   const refreshTokenValue = generateRefreshToken();
-  await prisma.refreshToken.create({
+  const session = await prisma.refreshToken.create({
     data: {
       token: hashRefreshToken(refreshTokenValue),
       userId: user.id,
       expiresAt: refreshTokenExpiresAt(),
     },
+    select: { id: true },
+  });
+
+  const accessToken = signToken({
+    sub: user.id,
+    tenantId: user.tenantId,
+    role: user.role,
+    fullName: user.fullName,
+    sid: session.id,
   });
 
   setRefreshCookie(res, refreshTokenValue);
@@ -500,24 +503,33 @@ export async function refresh(req: Request, res: Response) {
     return res.status(401).json({ error: 'HESAP_PASIF', message: 'Hesabınız aktif değil.' });
   }
 
-  // Token rotasyonu: eski token silinir, yeni token verilir (replay attack önlemi).
+  // Token rotasyonu: eski token değeri geçersiz olur, yeni değer verilir (replay attack önlemi).
   // Eski kayıt açık metinse bu adım onu özetli kayda dönüştürmüş olur (GV-13 geçişi).
-  await prisma.refreshToken.delete({ where: { id: stored.id } });
-
+  // AJ-31: kayıt silinip yeniden yaratılmaz, YERİNDE güncellenir — id (= oturum kimliği, anahtarın
+  // `sid`'i) sabit kalır; böylece bu oturumun önceki erişim anahtarları yenilemeden sonra da oturum
+  // kaydına bağlı kalır ve çıkışta hep birlikte düşer. `token` koşulu iyimser kilittir: aynı eski
+  // değerle eşzamanlı ikinci yenileme 0 satır günceller ve (eski silme davranışı gibi) reddedilir.
   const newRefreshTokenValue = generateRefreshToken();
-  await prisma.refreshToken.create({
+  const rotated = await prisma.refreshToken.updateMany({
+    where: { id: stored.id, token: stored.token },
     data: {
       token: hashRefreshToken(newRefreshTokenValue),
-      userId: stored.user.id,
       expiresAt: refreshTokenExpiresAt(),
     },
   });
+  if (rotated.count !== 1) {
+    return res.status(401).json({
+      error: 'REFRESH_TOKEN_GECERSIZ',
+      message: 'Oturum süresi doldu. Lütfen tekrar giriş yapın.',
+    });
+  }
 
   const accessToken = signToken({
     sub: stored.user.id,
     tenantId: stored.user.tenantId,
     role: stored.user.role,
     fullName: stored.user.fullName,
+    sid: stored.id,
   });
 
   // Retention: token yenileme de aktif oturum sinyalidir → son aktiviteyi tazele.
@@ -551,6 +563,11 @@ export async function logout(req: Request, res: Response) {
   const payload = bearerToken ? verifyToken(bearerToken) : null;
   if (payload?.jti && payload.exp) {
     revokeAccessToken(payload.jti, payload.exp);
+  }
+  // AJ-31: bellek-içi liste yeniden başlatmada sıfırlanır → kalıcı iptal, anahtarın oturum
+  // kaydını (sid) silmektir (çerez gelmediyse bile). Sahiplik: yalnız anahtar sahibinin kaydı.
+  if (payload?.sid) {
+    await prisma.refreshToken.deleteMany({ where: { id: payload.sid, userId: payload.sub } });
   }
 
   clearRefreshCookie(res);

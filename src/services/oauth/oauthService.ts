@@ -172,15 +172,17 @@ async function issueTokenPair(
   role: 'ADMIN' | 'MENTOR' | 'MENTI',
   fullName: string,
 ): Promise<{ accessToken: string; refreshToken: string }> {
-  const accessToken = signToken({ sub: userId, tenantId, role, fullName });
-
   const refreshTokenValue = crypto.randomBytes(64).toString('hex');
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
 
-  await prisma.refreshToken.create({
+  // AJ-31: önce oturum kaydı, sonra id'sini `sid` olarak taşıyan anahtar (bkz. jwtAuth.ts).
+  const session = await prisma.refreshToken.create({
     data: { token: hashRefreshToken(refreshTokenValue), userId, expiresAt },
+    select: { id: true },
   });
+
+  const accessToken = signToken({ sub: userId, tenantId, role, fullName, sid: session.id });
 
   // Retention: OAuth girişi de bir kimlik-doğrulama aktivitesidir → son aktiviteyi kaydet.
   void recordUserActivity(userId);

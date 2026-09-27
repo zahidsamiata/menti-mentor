@@ -5,7 +5,7 @@ import { extractBearerToken, verifyToken } from './jwtAuth.js';
 import { logger } from '../services/logger.js';
 import { getCachedTenant } from '../services/tenantCache.js';
 import { runWithTenant } from '../db.js';
-import { ACCOUNT_INACTIVE_BODY, resolveMembershipAccess } from './membershipAccess.js';
+import { ACCOUNT_INACTIVE_BODY, SESSION_REVOKED_BODY, resolveMembershipAccess } from './membershipAccess.js';
 import { isSuspensionExemptRequest, isTenantSuspended, TENANT_SUSPENDED_BODY } from './tenantSuspension.js';
 
 /**
@@ -84,7 +84,14 @@ export async function requireTenant(
   }
 
   // ── 4. Aktif üyelik + açık hesap doğrulama (tek sorgu; bkz. membershipAccess.ts) ──
-  const access = await resolveMembershipAccess(payload.sub, tenantId);
+  // AJ-31: anahtarın oturumu (sid → RefreshToken) aynı sorguda kontrol edilir.
+  const access = await resolveMembershipAccess(payload.sub, tenantId, payload.sid);
+
+  if (!access.ok && access.reason === 'SESSION_REVOKED') {
+    // Çıkış yapılmış oturumun anahtarı — olağan durum (sekmede kalmış eski anahtar), loglanmaz.
+    res.status(401).json(SESSION_REVOKED_BODY);
+    return;
+  }
 
   if (!access.ok && access.reason === 'ACCOUNT_INACTIVE') {
     // Reddedilen / pasife alınan kullanıcı: elindeki access token süresi dolmadan kesilir.

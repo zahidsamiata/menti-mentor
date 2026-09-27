@@ -314,20 +314,23 @@ export async function selfServeRegister(req: Request, res: Response) {
     return { tenant, user };
   });
 
-  const accessToken = signToken({
-    sub:      user.id,
-    tenantId: tenant.id,
-    role:     'ADMIN',
-    fullName: user.fullName,
-  });
-
+  // AJ-31: önce oturum kaydı, sonra id'sini `sid` olarak taşıyan anahtar (bkz. jwtAuth.ts).
   const rawRefresh = generateRefreshToken();
-  await prisma.refreshToken.create({
+  const session = await prisma.refreshToken.create({
     data: {
       token:     hashRefreshToken(rawRefresh),
       userId:    user.id,
       expiresAt: refreshTokenExpiresAt(),
     },
+    select: { id: true },
+  });
+
+  const accessToken = signToken({
+    sub:      user.id,
+    tenantId: tenant.id,
+    role:     'ADMIN',
+    fullName: user.fullName,
+    sid:      session.id,
   });
 
   setRefreshCookie(res, rawRefresh);

@@ -35,7 +35,7 @@ describe('GV-10 — oturum ve rol her istekte güncel durumdan okunur', () => {
     await http.post('/api/auth/refresh').expect(200);
   });
 
-  it('negatif: rolü MENTOR\'a düşürülen eski yönetici aynı access token\'la yönetici ucuna erişemez (403) ve oturumu yenileyemez', async () => {
+  it('negatif: rolü MENTOR\'a düşürülen eski yönetici aynı access token\'la yönetici ucuna erişemez (401, AJ-31) ve oturumu yenileyemez', async () => {
     const second = await createAdminUser(tenantId);
     const http = agent();
     const { accessToken } = await loginAs(http, second.email, second.rawPassword);
@@ -46,8 +46,11 @@ describe('GV-10 — oturum ve rol her istekte güncel durumdan okunur', () => {
       .set(tenantHeaders(tenantId, actorToken))
       .expect(200);
 
+    // AJ-31: düşürme oturum kayıtlarını siler → anahtarın oturumu (sid) kapanır: yönetici ucu
+    // artık 403 değil 401 OTURUM_SONLANDI (daha sıkı — yeniden girişte MENTOR rolüyle devam eder).
     const res = await http.get('/api/admin/managers').set(tenantHeaders(tenantId, accessToken));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('OTURUM_SONLANDI');
 
     expect(await testPrisma.refreshToken.count({ where: { userId: second.id } })).toBe(0);
     await http.post('/api/auth/refresh').expect(401);

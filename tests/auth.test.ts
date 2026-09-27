@@ -11,6 +11,7 @@ import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser } from './helpers/factories.js';
 import { config } from '../src/config.js';
+import { __resetAccessTokenRevocationForTests } from '../src/services/accessTokenRevocation.js';
 import type { Tenant } from '@prisma/client';
 
 /** Geçerli davet token'ı üret (createInvitation ile BİREBİR aynı imza: type='invitation'). */
@@ -330,6 +331,74 @@ describe('Auth: Logout', () => {
       .expect(204);
 
     await http.post('/api/auth/refresh').expect(401);
+  });
+
+  // AJ-31 — AJ-03'ün bellek-içi iptal listesi sunucu yeniden başlayınca sıfırlanıyordu; çıkış yapılmış
+  // anahtar süresi dolana kadar yeniden geçerli oluyordu. Artık anahtar oturum kaydına (sid →
+  // RefreshToken.id) bağlı; kayıt çıkışta silinir. `__resetAccessTokenRevocationForTests` =
+  // yeniden başlatma benzetimi (bellek listesi boşalır, DB kalır).
+  it('AJ-31 negatif: logout + yeniden başlatma (bellek listesi sıfır) → eski erişim anahtarı yine 401', async () => {
+    const user = await createUser({ tenantId: tenant.id });
+    const { accessToken } = await loginAs(http, user.email, user.rawPassword);
+    await http.get('/api/auth/me').set(tenantHeaders(tenant.id, accessToken)).expect(200);
+
+    await http.post('/api/auth/logout').set(tenantHeaders(tenant.id, accessToken)).expect(204);
+    __resetAccessTokenRevocationForTests();
+
+    const res = await http.get('/api/auth/me').set(tenantHeaders(tenant.id, accessToken));
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('OTURUM_SONLANDI');
+  });
+
+  it('AJ-31: yenileme oturum kimliğini korur — yenileme öncesi ve sonrası anahtarlar çıkışta birlikte düşer', async () => {
+    const user = await createUser({ tenantId: tenant.id });
+    const { accessToken: beforeRefresh } = await loginAs(http, user.email, user.rawPassword);
+    const rowBefore = await testPrisma.refreshToken.findFirstOrThrow({ where: { userId: user.id } });
+
+    const refreshed = await http.post('/api/auth/refresh').expect(200);
+    const afterRefresh = (refreshed.body as { accessToken: string }).accessToken;
+    const rowsAfter = await testPrisma.refreshToken.findMany({ where: { userId: user.id } });
+    expect(rowsAfter).toHaveLength(1);
+    expect(rowsAfter[0].id).toBe(rowBefore.id);          // oturum kimliği sabit
+    expect(rowsAfter[0].token).not.toBe(rowBefore.token); // değer döndü (replay önlemi korunur)
+
+    // Yenileme öncesi anahtar hâlâ geçerli (ömrü dolana kadar) — rotasyon oturumu kapatmaz.
+    await http.get('/api/auth/me').set(tenantHeaders(tenant.id, beforeRefresh)).expect(200);
+
+    await http.post('/api/auth/logout').set(tenantHeaders(tenant.id, afterRefresh)).expect(204);
+    __resetAccessTokenRevocationForTests();
+
+    expect((await http.get('/api/auth/me').set(tenantHeaders(tenant.id, beforeRefresh))).status).toBe(401);
+    expect((await http.get('/api/auth/me').set(tenantHeaders(tenant.id, afterRefresh))).status).toBe(401);
+  });
+
+  it('AJ-31: çerezsiz (yalnız Authorization) çıkış da oturumu kalıcı kapatır', async () => {
+    const user = await createUser({ tenantId: tenant.id });
+    const { accessToken } = await loginAs(http, user.email, user.rawPassword);
+
+    await agent().post('/api/auth/logout').set(tenantHeaders(tenant.id, accessToken)).expect(204);
+    expect(await testPrisma.refreshToken.count({ where: { userId: user.id } })).toBe(0);
+    __resetAccessTokenRevocationForTests();
+
+    expect((await http.get('/api/auth/me').set(tenantHeaders(tenant.id, accessToken))).status).toBe(401);
+  });
+
+  it('AJ-31 negatif: bir oturumun çıkışı aynı kullanıcının diğer cihazını ve başka kullanıcıyı etkilemez', async () => {
+    const userA = await createUser({ tenantId: tenant.id });
+    const userB = await createUser({ tenantId: tenant.id });
+    const phone = agent();
+    const laptop = agent();
+    const httpB = agent();
+    const { accessToken: phoneToken } = await loginAs(phone, userA.email, userA.rawPassword);
+    const { accessToken: laptopToken } = await loginAs(laptop, userA.email, userA.rawPassword);
+    const { accessToken: tokenB } = await loginAs(httpB, userB.email, userB.rawPassword);
+
+    await phone.post('/api/auth/logout').set(tenantHeaders(tenant.id, phoneToken)).expect(204);
+    __resetAccessTokenRevocationForTests();
+
+    expect((await phone.get('/api/auth/me').set(tenantHeaders(tenant.id, phoneToken))).status).toBe(401);
+    await laptop.get('/api/auth/me').set(tenantHeaders(tenant.id, laptopToken)).expect(200);
+    await httpB.get('/api/auth/me').set(tenantHeaders(tenant.id, tokenB)).expect(200);
   });
 });
 

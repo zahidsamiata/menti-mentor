@@ -19,6 +19,12 @@ export interface JwtPayload {
   // iptal listesine yazar (bkz. services/accessTokenRevocation.ts). Bu alandan ÖNCE
   // imzalanmış anahtarlarda jti YOKTUR (geriye uyumluluk — bkz. o dosyanın başlık yorumu).
   jti?: string;
+  // AJ-31: anahtarın ait olduğu oturum = o oturumun RefreshToken kaydının id'si. Yenilemede kayıt
+  // YERİNDE güncellenir (id sabit kalır), çıkışta silinir → requireTenant / authenticateTenantAdmin
+  // kayıt yoksa anahtarı reddeder (bkz. membershipAccess.ts). Bellek-içi jti listesinden farkı:
+  // DB'de durduğu için sunucu yeniden başlasa da geçerli. Platform anahtarında YOKTUR (oturum
+  // kaydı yok). Bu alandan önce imzalanmış anahtarlarda da yoktur (geçiş: ≤ bir anahtar ömrü).
+  sid?: string;
 }
 
 export const PLATFORM_AUDIENCE = 'platform';

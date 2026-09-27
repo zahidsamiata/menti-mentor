@@ -30,6 +30,11 @@
  *   - Süreç yeniden başlarsa (deploy/crash): liste sıfırlanır — o ana kadar iptal edilmiş ama
  *     süresi dolmamış eski anahtarlar yeniden geçerli sayılır. Kabul edilen risk: deploy seyrek,
  *     access token ömrü kısa (varsayılan 1h) → pencere küçük.
+ *   - ⚠️ AJ-31 (2026-09-27): KULLANICI anahtarları için bu iki boşluk kapatıldı — anahtar artık
+ *     oturum kaydına (`sid` → RefreshToken.id) bağlı, logout kaydı siler, `requireTenant` /
+ *     `authenticateTenantAdmin` kayıt yoksa reddeder (bkz. middleware/membershipAccess.ts). Bu liste
+ *     yine de tutulur: (a) `sid`'siz eski anahtarlar, (b) oturum kaydı olmayan PLATFORM anahtarı
+ *     için tek iptal yolu budur — platform anahtarında yeniden başlatma boşluğu sürer.
  *
  * GERİYE UYUMLULUK: bu değişiklikten ÖNCE imzalanmış anahtarlarda `jti` YOKTUR. Böyle bir
  * anahtar logout'ta iptal listesine hiç GİRMEZ (revokeAccessToken jti'siz çağrılmaz) —
