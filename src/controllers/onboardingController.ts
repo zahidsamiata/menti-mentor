@@ -485,6 +485,8 @@ export async function submitDiscTest(req: RequestWithTenant, res: Response) {
   const discResultCard = {
     ...resultCard,
     dominant:    result.dominant,
+    discVector:  persistedDiscVector,
+    rawScores:   result.scores,
     completedAt: new Date().toISOString(),
   };
 

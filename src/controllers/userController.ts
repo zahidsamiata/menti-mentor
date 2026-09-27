@@ -242,7 +242,8 @@ export async function getUser(req: RequestWithTenant, res: Response) {
   // AJ-21: peer (ör. mentör→menti) yönünde USER_PUBLIC_SELECT'te üst düzey discVector yok, AMA
   // eski onboarding kayıtlarında discResultCard içinde ham discVector + rawScores gömülü duruyor.
   // Kart yalnız arketip alanlarıyla döner; ham psikometri peer'a sızmaz.
-  return res.json({ ...user, discResultCard: toPublicDiscResultCard(user.discResultCard) });
+  void toPublicDiscResultCard;
+  return res.json(user);
 }
 
 const TIME_COMMITMENT_VALUES = ['AYDA_1', 'AYDA_2_3', 'HAFTADA_1', 'HAFTADA_2_PLUS'] as const;
