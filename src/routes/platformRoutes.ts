@@ -23,6 +23,7 @@ import {
 import {
   getTenantOverview,
   getTenantMembers,
+  getTenantUserDetail,
   getTenantMeetings,
   getTenantAnalytics,
 } from '../controllers/platformTenantController.js';
@@ -56,6 +57,7 @@ router.post('/tenants/:id/activate', activateTenant);
 // ─── Kurum Derin Görünüm (deep panel) — salt-okuma, maskeli, audit'li ──────────
 router.get('/tenants/:id/overview', getTenantOverview);
 router.get('/tenants/:id/members', getTenantMembers);
+router.get('/tenants/:id/users/:userId', getTenantUserDetail); // F-24/G4-08: tek kullanıcı drill-down
 router.get('/tenants/:id/meetings', getTenantMeetings);
 router.get('/tenants/:id/analytics', getTenantAnalytics);
 
