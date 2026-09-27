@@ -96,6 +96,37 @@ describe('YÜKSEK-1: Platform admin cookie auth', () => {
 
     expect(res.status).toBe(401);
   });
+
+  // AJ-03: komşu uç `POST /api/auth/logout` ile aynı davranış — platform oturumu tek bir
+  // anahtardır (ayrı access/refresh yok); logout yalnız çerezi tarayıcıdan silmekle kalmayıp
+  // o anahtarı da sunucu tarafında anında geçersiz kılar. Normal akışta tarayıcı zaten
+  // temizlenen çerezi bir daha göndermez — sunucu-taraflı iptalin gerçek değeri, ham anahtar
+  // değerini (ör. XSS/log sızıntısıyla) ele geçirip TEKRAR OYNATAN (replay) biri içindir. Bunu
+  // test etmek için ham çerez değerini yakalayıp logout SONRASI elle tekrar gönderiyoruz —
+  // agent'ın kendi çerez kavanozuna güvenmiyoruz (o zaten Set-Cookie ile temizlenmiş olurdu).
+  it('AJ-03: platformLogout sonrası aynı ham platform anahtarı (tekrar oynatılsa bile) reddedilir', async () => {
+    const plain = supertest(createPlatformTestApp());
+    const loginRes = await plain
+      .post('/api/platform/auth')
+      .send({ email: ADMIN_EMAIL, password: ADMIN_KEY })
+      .expect(200);
+
+    const rawCookie: unknown = loginRes.headers['set-cookie'];
+    const setCookie = Array.isArray(rawCookie) ? (rawCookie as string[]) : [];
+    const tokenCookie = setCookie.find((c) => c.startsWith('platform_token='));
+    expect(tokenCookie).toBeDefined();
+    const cookieHeader = tokenCookie!.split(';')[0]!; // "platform_token=<değer>"
+
+    // Anahtar logout'tan ÖNCE geçerli.
+    await plain.get('/api/platform/stats').set('Cookie', cookieHeader).expect(200);
+
+    await plain.post('/api/platform/logout').set('Cookie', cookieHeader).expect(200);
+
+    // Aynı ham değer elle tekrar gönderilse bile (agent'ın çerez kavanozunu atlayarak) artık geçersiz.
+    const res = await plain.get('/api/platform/stats').set('Cookie', cookieHeader);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('YETKISIZ');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

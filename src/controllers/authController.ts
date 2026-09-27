@@ -3,7 +3,8 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
-import { signToken } from '../middleware/jwtAuth.js';
+import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAuth.js';
+import { revokeAccessToken } from '../services/accessTokenRevocation.js';
 import type { RequestWithTenant } from '../types.js';
 import { sendAdminNewUserNotification, sendPasswordResetEmail, sendAlreadyRegisteredEmail } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
@@ -569,6 +570,16 @@ export async function logout(req: Request, res: Response) {
 
   if (refreshToken) {
     await prisma.refreshToken.deleteMany({ where: refreshTokenWhere(refreshToken) });
+  }
+
+  // AJ-03: yalnız refresh token'ı silmek erişim (access) anahtarını ömrü dolana kadar geçerli
+  // bırakıyordu. FE zaten Authorization header'ında erişim anahtarını gönderiyor (bkz.
+  // frontend lib/api/auth.ts logout) — anahtar burada verifyToken ile çözülüp (imza + iptal
+  // kontrolüyle) jti'si bellek-içi listeye yazılır. bkz. services/accessTokenRevocation.ts.
+  const bearerToken = extractBearerToken(req.header('Authorization'));
+  const payload = bearerToken ? verifyToken(bearerToken) : null;
+  if (payload?.jti && payload.exp) {
+    revokeAccessToken(payload.jti, payload.exp);
   }
 
   clearRefreshCookie(res);
