@@ -177,6 +177,68 @@ describe('Chat v1 — konuşma + mesajlaşma + ownership', () => {
     await http.post(`/api/conversations/${convId}/messages`).set(h).send({ message: 'admin yazamaz' }).expect(404);
   });
 
+  // AJ-06: N+1'i sabit-sorguya indiren groupBy/distinct değişikliğinin doğruluk kanıtı —
+  // birden çok konuşmada her birinin unread/last-message değeri KENDİ verisini yansıtmalı
+  // (bir konuşmanın eşiği/son mesajı diğerine sızmamalı), ve başka çiftin konuşması listede
+  // hiç görünmemeli.
+  it('birden çok konuşmada unread ve son mesaj konuşma başına doğru gelir; başka çiftin konuşması listede yok', async () => {
+    const convo1 = await startConversation('Merhaba birinci konuşma.');
+
+    const menti2 = await createMenti(tenantId);
+    const convo2Res = await http
+      .post('/api/conversations')
+      .set(tenantHeaders(tenantId, tokenFor(menti2)))
+      .send({ mentorUserId: mentor.id, message: 'Merhaba ikinci konuşma açılışı.' })
+      .expect(201);
+    const convo2 = convo2Res.body.conversation.id as string;
+
+    // convo2: mentor cevaplar (okunmamış sıfırlanır), sonra menti2 tekrar yazar (mentor için 1 okunmamış kalır).
+    await http
+      .post(`/api/conversations/${convo2}/messages`)
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .send({ message: 'Mentörden cevap.' })
+      .expect(201);
+    await http
+      .post(`/api/conversations/${convo2}/messages`)
+      .set(tenantHeaders(tenantId, tokenFor(menti2)))
+      .send({ message: 'Menti2 ikinci mesajı — son mesaj bu olmalı.' })
+      .expect(201);
+
+    // Alakasız kurum + çift: mentörün konuşma listesinde ASLA görünmemeli.
+    const otherTenant = await createTenant();
+    const otherMentor = await createMentor(otherTenant.id);
+    const otherMenti = await createMenti(otherTenant.id);
+    await http
+      .post('/api/conversations')
+      .set(tenantHeaders(otherTenant.id, tokenFor(otherMenti)))
+      .send({ mentorUserId: otherMentor.id, message: 'Alakasız kurumun kendi konuşması.' })
+      .expect(201);
+
+    const list = await http
+      .get('/api/conversations')
+      .set(tenantHeaders(tenantId, tokenFor(mentor)))
+      .expect(200);
+
+    expect(list.body.total).toBe(2);
+    expect(list.body.items).toHaveLength(2);
+
+    const byId = new Map(list.body.items.map((i: { id: string }) => [i.id, i]));
+    const item1 = byId.get(convo1) as { unread: number; lastMessagePreview: string | null };
+    const item2 = byId.get(convo2) as { unread: number; lastMessagePreview: string | null };
+
+    // convo1: menti'nin ilk mesajı mentör tarafından hiç okunmadı → unread=1, son mesaj o.
+    expect(item1.unread).toBe(1);
+    expect(item1.lastMessagePreview).toContain('birinci konuşma');
+
+    // convo2: mentör kendi cevabından SONRA gelen menti2 mesajını okumadı → unread=1,
+    // son mesaj menti2'nin EN SON attığı mesaj olmalı (mentörün arasındaki cevabı değil).
+    expect(item2.unread).toBe(1);
+    expect(item2.lastMessagePreview).toContain('ikinci mesajı — son mesaj bu olmalı');
+
+    // Negatif: alakasız kurumun konuşması listede yok.
+    expect(list.body.items.some((i: { id: string }) => i.id !== convo1 && i.id !== convo2)).toBe(false);
+  });
+
   it('tekrar başlatma konuşmayı çoğaltmaz — mevcut konuşmaya mesaj ekler', async () => {
     const first = await startConversation('İlk.');
     const second = await startConversation('İkinci.');
