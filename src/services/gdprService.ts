@@ -387,22 +387,43 @@ export type PurgeResult = {
   purgedAt: string;
   systemLogsDeleted: number;
   feedbackLogsDeleted: number;
+  /** AJ-17: kurum-kapsamlı (elle) çağrıda true — SystemLog platform geneli olduğu için atlandı. */
+  systemLogsSkipped?: boolean;
 };
 
-export async function purgeExpiredData(): Promise<PurgeResult> {
+/**
+ * AJ-17: `opts.tenantId` verilirse yalnız o kurumun verisi işlenir (elle tetikleme —
+ * kurum yöneticisi başka kurumun kaydını silemesin/etkilemesin). Argümansız çağrı (otomatik
+ * haftalık cron) davranışı DEĞİŞMEDİ — platform genelinde çalışmaya devam eder.
+ *
+ * SystemLog'da `tenantId` kolonu YOK (platform-geneli log; kurum bilgisi yalnız `meta` JSON
+ * içinde, güvenilir filtre değil) — bu yüzden kurum-kapsamlı çağrıda SystemLog temizliği
+ * ATLANIR (platform logu kurum yöneticisinin yetki alanı değil). Şema DEĞİŞMEDİ.
+ */
+export async function purgeExpiredData(opts?: { tenantId?: string }): Promise<PurgeResult> {
+  const tenantId = opts?.tenantId;
+
   const systemLogCutoff = new Date();
   systemLogCutoff.setDate(systemLogCutoff.getDate() - SYSTEM_LOG_RETENTION_DAYS);
 
   const feedbackLogCutoff = new Date();
   feedbackLogCutoff.setFullYear(feedbackLogCutoff.getFullYear() - FEEDBACK_LOG_RETENTION_YEARS);
 
-  const systemLogs = await prisma.systemLog.deleteMany({
-    where: { createdAt: { lt: systemLogCutoff } },
-  });
+  let systemLogsDeleted = 0;
+  if (!tenantId) {
+    const systemLogs = await prisma.systemLog.deleteMany({
+      where: { createdAt: { lt: systemLogCutoff } },
+    });
+    systemLogsDeleted = systemLogs.count;
+  }
 
   // FeedbackLog: 3 yıllık yasal saklama dolduğunda imha (createdAt bazlı; şema değişikliği yok).
+  // tenantId verilirse yalnız o kurumun kayıtları hedeflenir.
   const feedbackLogs = await prisma.feedbackLog.deleteMany({
-    where: { createdAt: { lt: feedbackLogCutoff } },
+    where: {
+      createdAt: { lt: feedbackLogCutoff },
+      ...(tenantId ? { tenantId } : {}),
+    },
   });
 
   // TODO(G1-10): Message saklama süresi avukat aydınlatma metniyle belirlenecek.
@@ -410,13 +431,15 @@ export async function purgeExpiredData(): Promise<PurgeResult> {
   // süre uygularsak yayınlanacak aydınlatma metniyle çelişir (metin ↔ kod tutarlılığı).
 
   void logger.info('SYSTEM', 'KVKK: Süresi dolan veriler temizlendi', {
-    systemLogsDeleted: systemLogs.count,
+    systemLogsDeleted,
     feedbackLogsDeleted: feedbackLogs.count,
+    ...(tenantId ? { tenantId, systemLogsSkipped: true } : {}),
   });
 
   return {
     purgedAt: new Date().toISOString(),
-    systemLogsDeleted: systemLogs.count,
+    systemLogsDeleted,
     feedbackLogsDeleted: feedbackLogs.count,
+    ...(tenantId ? { systemLogsSkipped: true } : {}),
   };
 }

@@ -15,7 +15,7 @@ import type { Checkpoint } from '@prisma/client';
 import { prisma } from '../db.js';
 import { tuneScoringWeights } from './algorithmTuner.js';
 import { findMatchesDueForCheckpoint } from './feedback.service.js';
-import { purgeExpiredData } from './gdprService.js';
+import { purgeExpiredData, type PurgeResult } from './gdprService.js';
 import { sendDraftTenantReminderEmail, sendFeedbackReminderEmail } from './emailService.js';
 import { notifyAdminsMentorCertLapsed } from './notificationService.js';
 import { CERT_CONFIG } from './certification.service.js';
@@ -52,20 +52,26 @@ export function shouldRunTuningThisWeek(reportingFrequency: string | null | unde
   }
 }
 
-/** Her tenant'ın reportingFrequency ayarına göre yalnız sırası gelenler için tuning çalıştırır. */
-async function runWeeklyTuning(): Promise<void> {
-  void logger.info('SYSTEM', 'Cron: Algoritma ağırlık ayarlaması başladı');
+/**
+ * Her tenant'ın reportingFrequency ayarına göre yalnız sırası gelenler için tuning çalıştırır.
+ *
+ * AJ-17: `opts.tenantId` verilirse yalnız o kurum işlenir (elle tetikleme — kurum yöneticisi
+ * başka kurumun ağırlıklarını etkilemesin). Argümansız çağrı (otomatik haftalık cron) davranışı
+ * DEĞİŞMEDİ — tüm aktif kurumlar için döngü aynen çalışmaya devam eder.
+ */
+async function runWeeklyTuning(opts?: { tenantId?: string }): Promise<{ processed: number; skipped: number }> {
+  const tenantId = opts?.tenantId;
+  void logger.info('SYSTEM', 'Cron: Algoritma ağırlık ayarlaması başladı', tenantId ? { tenantId } : undefined);
+  let processed = 0;
+  let skipped = 0;
   try {
     const now = new Date();
 
     // KR-21: reportingFrequency önceden SEÇİLMİYORDU (tip dönüşümüyle gizleniyordu) → her kurum haftalık çalışıyordu.
     const tenants = await prisma.tenant.findMany({
-      where: { isActive: true },
+      where: { isActive: true, ...(tenantId ? { id: tenantId } : {}) },
       select: { id: true, name: true, reportingFrequency: true },
     });
-
-    let processed = 0;
-    let skipped = 0;
 
     for (const tenant of tenants) {
       if (!shouldRunTuningThisWeek(tenant.reportingFrequency, now)) { skipped++; continue; }
@@ -82,20 +88,28 @@ async function runWeeklyTuning(): Promise<void> {
   } catch (err) {
     void logger.error('SYSTEM', 'Cron: Ağırlık ayarlaması başarısız', { error: String(err) });
   }
+  return { processed, skipped };
 }
 
 // ─── Görev: Süresi Dolan Veri Temizliği ──────────────────────────────────────
 
-async function runWeeklyPurge(): Promise<void> {
-  void logger.info('SYSTEM', 'Cron: KVKK veri temizliği başladı');
+/**
+ * AJ-17: `opts.tenantId` verilirse yalnız o kurumun süresi dolmuş verisi temizlenir (elle
+ * tetikleme). Argümansız çağrı (otomatik haftalık cron) davranışı DEĞİŞMEDİ.
+ */
+async function runWeeklyPurge(opts?: { tenantId?: string }): Promise<PurgeResult | undefined> {
+  const tenantId = opts?.tenantId;
+  void logger.info('SYSTEM', 'Cron: KVKK veri temizliği başladı', tenantId ? { tenantId } : undefined);
   try {
-    const result = await purgeExpiredData();
+    const result = await purgeExpiredData(opts);
     void logger.info('SYSTEM', `Cron: KVKK temizliği tamamlandı`, {
       systemLogsDeleted: result.systemLogsDeleted,
       feedbackLogsDeleted: result.feedbackLogsDeleted,
     });
+    return result;
   } catch (err) {
     void logger.error('SYSTEM', 'Cron: KVKK veri temizliği başarısız', { error: String(err) });
+    return undefined;
   }
 }
 
