@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
-import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
+import { authenticateTenantAdminForParam } from '../middleware/tenantAdminAuth.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
@@ -10,7 +10,8 @@ import { auditPlatformAction } from '../services/platformAudit.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 import { type BlockedPairRecord, pairKey, sanitizeBlockedPairs } from '../services/blockList.js';
 
-// Tenant ADMIN kapısı: authenticateTenantAdmin (middleware/tenantAdminAuth.ts) — GV-11.
+// Tenant ADMIN kapısı + URL `:id` = oturum kurumu eşleşmesi: authenticateTenantAdminForParam
+// (middleware/tenantAdminAuth.ts) — GV-11 + AJ-44. Elle `payload.tenantId !== tenantId` YAZILMAZ.
 
 // ─── blockedPairs kayıt yapısı ────────────────────────────────────────────────
 // Tip + sanitize/pairKey artık `services/blockList.ts`'te (E-3d: GET/DELETE uçları da paylaşır).
@@ -32,17 +33,9 @@ const UpdateSettingsSchema = z
   );
 
 export async function updateTenantSettings(req: Request, res: Response) {
-  const payload = await authenticateTenantAdmin(req, res);
-  if (!payload) return;
-
-  const tenantId = req.params['id'] as string;
-
-  if (payload.tenantId !== tenantId) {
-    return res.status(403).json({
-      error:   'YETKI_YOK',
-      message: 'Başka bir kurumun ayarlarını güncelleyemezsiniz.',
-    });
-  }
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun ayarlarını güncelleyemezsiniz.');
+  if (!ctx) return;
+  const { payload, tenantId } = ctx;
 
   const parsed = validateRequest(UpdateSettingsSchema, req.body, res);
   if (!parsed.success) return parsed.response;
@@ -89,17 +82,9 @@ const BlockPairSchema = z.object({
 });
 
 export async function blockPair(req: Request, res: Response) {
-  const payload = await authenticateTenantAdmin(req, res);
-  if (!payload) return;
-
-  const tenantId = req.params['id'] as string;
-
-  if (payload.tenantId !== tenantId) {
-    return res.status(403).json({
-      error:   'YETKI_YOK',
-      message: 'Başka bir kurumda kullanıcı engelleyemezsiniz.',
-    });
-  }
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumda kullanıcı engelleyemezsiniz.');
+  if (!ctx) return;
+  const { payload, tenantId } = ctx;
 
   const parsed = validateRequest(BlockPairSchema, req.body, res);
   if (!parsed.success) return parsed.response;
@@ -183,17 +168,9 @@ export async function blockPair(req: Request, res: Response) {
 // (bkz. services/blockList.ts pairKey) DELETE ucunda kaydı bulmak için kullanılır.
 
 export async function listBlockedPairs(req: Request, res: Response) {
-  const payload = await authenticateTenantAdmin(req, res);
-  if (!payload) return;
-
-  const tenantId = req.params['id'] as string;
-
-  if (payload.tenantId !== tenantId) {
-    return res.status(403).json({
-      error:   'YETKI_YOK',
-      message: 'Başka bir kurumun engel listesini göremezsiniz.',
-    });
-  }
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun engel listesini göremezsiniz.');
+  if (!ctx) return;
+  const { tenantId } = ctx;
 
   const tenant = await prisma.tenant.findUnique({
     where:  { id: tenantId },
@@ -236,18 +213,10 @@ export async function listBlockedPairs(req: Request, res: Response) {
 // uyumlu (dizide yoksa zaten "engelli değil" — tüm yüzeyler bunu doğru yorumluyor).
 
 export async function unblockPair(req: Request, res: Response) {
-  const payload = await authenticateTenantAdmin(req, res);
-  if (!payload) return;
-
-  const tenantId = req.params['id']     as string;
-  const pairId   = req.params['pairId'] as string;
-
-  if (payload.tenantId !== tenantId) {
-    return res.status(403).json({
-      error:   'YETKI_YOK',
-      message: 'Başka bir kurumun engelini kaldıramazsınız.',
-    });
-  }
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun engelini kaldıramazsınız.');
+  if (!ctx) return;
+  const { payload, tenantId } = ctx;
+  const pairId = req.params['pairId'] as string;
 
   const tenant = await prisma.tenant.findUnique({
     where:  { id: tenantId },
