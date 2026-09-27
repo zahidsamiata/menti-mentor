@@ -42,13 +42,17 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
     rematchUsers,
     activeJobListings,
   ] = await Promise.all([
-    // Toplam kullanıcı
-    prisma.user.count({ where: { tenantId, isActive: true } }),
+    // AJ-01: kurum-içi sayım TenantMembership.role üzerinden (CLAUDE.md "Veri Modeli") —
+    // User.role değil. Bir kullanıcı bu kurumda farklı, başka kurumda farklı rolde olabilir.
+    // Toplam kullanıcı — bu kurumda aktif üyeliği olan, kendisi de aktif kişiler.
+    prisma.tenantMembership.count({
+      where: { tenantId, isActive: true, user: { isActive: true } },
+    }),
 
     // Rol bazında dağılım (Analytical)
-    prisma.user.groupBy({
+    prisma.tenantMembership.groupBy({
       by: ['role'],
-      where: { tenantId, isActive: true },
+      where: { tenantId, isActive: true, user: { isActive: true } },
       _count: { id: true },
     }),
 
