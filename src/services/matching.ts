@@ -448,7 +448,9 @@ export async function rankMentorsForMenti(args: {
     }),
     prisma.tenant.findUnique({
       where:  { id: args.mentiTenantId },
-      select: { blockedPairs: true },
+      // PS-A4 (KARAR-6 ek(1)): minMatchScoreThreshold burada da okunur — rankMentisForMentor
+      // (mentör→menti) ile SİMETRİK taban baraj. Sabit sayı YOK; kurumun kendi ayarı kullanılır.
+      select: { blockedPairs: true, minMatchScoreThreshold: true },
     }),
   ]);
   // Y1-B9b: askıdaki kurumlar havuzdan düşer (buildEligibleTenantIds).
@@ -512,8 +514,25 @@ export async function rankMentorsForMenti(args: {
     return { mentor: m, breakdown, totalScore: breakdown.totalScore };
   });
   scored.sort(byScoreDescThenId((s) => s.mentor.id));
+
+  // PS-A4 (KARAR-6 ek(1)): menti kendisine UYGUN OLMAYAN mentörü listede görmesin — kurumun
+  // kendi barajı (rankMentisForMentor'daki tenant barajı ile SİMETRİK, bkz. :178). Sabit sayı
+  // YOK; taban tenant'ın minMatchScoreThreshold'udur ve yalnız SUNUCUDA okunur — istemciden
+  // eşik parametresi GÖNDERİLEMEZ (route'ta böyle bir query yok), menti kendi eşiğini
+  // gevşetemez. Bu, KARAR-80/M3/M7'deki "kart HER ZAMAN kalır, yalnız soluklaşır" davranışını
+  // BOZMAZ: isFaded/isBookable meşguliyet/profil eksikliği içindir, eşik altı mentör ise
+  // fading değil TAM ÇIKARMA'dır — farklı bir eksen.
+  const threshold = tenantConfig?.minMatchScoreThreshold;
+  const aboveThreshold =
+    threshold !== undefined ? scored.filter((s) => s.totalScore >= threshold) : scored;
+
+  // Deadlock önleme: rankMentisForMentor'daki level-3 kaçışıyla SİMETRİK (bkz. :278-280) —
+  // küçük/yeni kurumda eşiği geçen HİÇ mentör yoksa eşik atlanır; menti "hiç mentör yok"
+  // durumuna (PS-10 boş-liste mesajı) yalnız GERÇEKTEN mentör yokken düşer, baraj yüzünden değil.
+  const withinThreshold = aboveThreshold.length > 0 ? aboveThreshold : scored;
+
   // limit verilmezse eski üst sınır (500) korunur — ağır zenginleştirme sınırsız büyümesin.
-  const top = scored.slice(0, args.limit || MATCH_CANDIDATE_PAGE_SIZE);
+  const top = withinThreshold.slice(0, args.limit || MATCH_CANDIDATE_PAGE_SIZE);
 
   // AN-28: "randevu alınabilir mi" — en az bir aktif müsaitlik bloğu var mı, TEK toplu sorguyla
   // (N+1 yasak, CLAUDE.md "Koşullu Paralellik"). groupBy, mentör başına ayrı sorgu yerine tüm
