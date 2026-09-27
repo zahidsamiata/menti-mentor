@@ -6,7 +6,7 @@ import { socialUrlSchema } from '../services/socialUrl.js';
 import { sendAdminNewUserNotification } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { ensureMembershipSafe } from '../services/membership.js';
-import { canViewerSeeDiscType } from '../services/discVisibility.js';
+import { canViewerSeeDiscType, toPublicDiscResultCard } from '../services/discVisibility.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { applyKAnonymity } from '../services/mask.js';
 import { validateRequest } from '../middleware/validate.js';
@@ -158,7 +158,7 @@ const USER_PUBLIC_SELECT = {
   isActive: true,
   sectorTags: true,
   discType: true,            // gösterilebilir DISC tipi (rozet) — ham vektör değil
-  discResultCard: true,      // "Aha Anı" kartı (arketip) — public gösterim için tasarlandı
+  discResultCard: true,      // "Aha Anı" kartı (arketip) — peer yanıtında toPublicDiscResultCard ile ham alanlar süzülür (AJ-21)
   skills: true,
   bioSummary: true,
   expertiseDetails: true,
@@ -235,12 +235,14 @@ export async function getUser(req: RequestWithTenant, res: Response) {
   }
 
   // #12: self/admin (fullAccess) → DISC çoklu-harf türetilir (USER_FULL_SELECT'te discVector var).
-  // Peer (mentör→menti) yönünde USER_PUBLIC_SELECT'te vektör yok → discLetters bu turda eklenmez (kapsam dışı).
   if ('discVector' in user) {
     return res.json({ ...user, discLetters: discLettersFromVector(user.discVector) });
   }
 
-  return res.json(user);
+  // AJ-21: peer (ör. mentör→menti) yönünde USER_PUBLIC_SELECT'te üst düzey discVector yok, AMA
+  // eski onboarding kayıtlarında discResultCard içinde ham discVector + rawScores gömülü duruyor.
+  // Kart yalnız arketip alanlarıyla döner; ham psikometri peer'a sızmaz.
+  return res.json({ ...user, discResultCard: toPublicDiscResultCard(user.discResultCard) });
 }
 
 const TIME_COMMITMENT_VALUES = ['AYDA_1', 'AYDA_2_3', 'HAFTADA_1', 'HAFTADA_2_PLUS'] as const;

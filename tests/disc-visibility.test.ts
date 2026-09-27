@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
-import { cleanDb } from './helpers/db.js';
+import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createMentor, createMenti, createAdminUser } from './helpers/factories.js';
 import type { Tenant } from '@prisma/client';
 
@@ -104,5 +104,72 @@ describe('DISC görünürlük — menti mentörün DISC tipini görmez (KARAR 5)
       .expect(200);
 
     expect(res.body).toHaveProperty('discType', 'D');
+  });
+
+  // ─── AJ-21: discResultCard içinde ham psikometri (discVector + rawScores) ────────────
+  // Eski onboarding kayıtları karta ham vektör/puan gömüyordu; peer bakışında sızmamalı,
+  // kişinin kendi bakışı ve ADMIN (fullAccess) davranışı korunmalı.
+
+  const LEGACY_CARD = {
+    archetype: 'Lider', icon: 'x', superPower: 'Karar', description: 'd',
+    strengths: ['a'], growthArea: 'g', compatibleWith: ['S'], dominant: 'D',
+    completedAt: '2026-09-01T00:00:00.000Z',
+    discVector: { D: 0.7, I: 0.1, S: 0.1, C: 0.1, confidence: 0.8 },
+    rawScores:  { D: 5, I: 1, S: 1, C: 1 },
+  };
+
+  it('AJ-21: mentör menti detayında discResultCard ham discVector/rawScores TAŞIMAZ (kart alanları var)', async () => {
+    const mentor = await createMentor(tenant.id);
+    const menti  = await createMenti(tenant.id, { discType: 'D' });
+    await testPrisma.user.update({ where: { id: menti.id }, data: { discResultCard: LEGACY_CARD } });
+    const tokens = await loginAs(http, mentor.email, mentor.rawPassword);
+
+    const res = await http
+      .get(`/api/users/${menti.id}`)
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .expect(200);
+
+    const card = (res.body as { discResultCard: Record<string, unknown> }).discResultCard;
+    expect(card).toMatchObject({ archetype: 'Lider', dominant: 'D' });
+    expect(card).not.toHaveProperty('discVector');
+    expect(card).not.toHaveProperty('rawScores');
+    expect(res.body).not.toHaveProperty('discVector');
+  });
+
+  it('AJ-21: kişi KENDİ profilinde (fullAccess) kartı saklandığı gibi alır', async () => {
+    const menti = await createMenti(tenant.id, { discType: 'D' });
+    await testPrisma.user.update({ where: { id: menti.id }, data: { discResultCard: LEGACY_CARD } });
+    const tokens = await loginAs(http, menti.email, menti.rawPassword);
+
+    const res = await http
+      .get(`/api/users/${menti.id}`)
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .expect(200);
+
+    expect((res.body as { discResultCard: unknown }).discResultCard).toEqual(LEGACY_CARD);
+  });
+
+  it('AJ-21: onboarding DISC gönderimi karta ham vektör/puan GÖMMEZ; self yanıtı vektörü taşır', async () => {
+    const menti  = await createMenti(tenant.id);
+    const tokens = await loginAs(http, menti.email, menti.rawPassword);
+    const answers = [1, 2, 3, 4, 5, 6].map((id) => ({ questionId: id, selectedOption: 'A' }));
+
+    const res = await http
+      .post('/api/users/disc/submit')
+      .set(tenantHeaders(tenant.id, tokens.accessToken))
+      .send({ answers })
+      .expect(200);
+
+    // Kendi sonuç ekranı ("Uyum %") için self yanıtı korunur.
+    expect((res.body as { resultCard: Record<string, unknown> }).resultCard).toHaveProperty('discVector');
+
+    const stored = await testPrisma.user.findUnique({
+      where: { id: menti.id }, select: { discResultCard: true, discVector: true },
+    });
+    const storedCard = stored!.discResultCard as Record<string, unknown>;
+    expect(storedCard).toHaveProperty('archetype');
+    expect(storedCard).not.toHaveProperty('discVector');
+    expect(storedCard).not.toHaveProperty('rawScores');
+    expect(stored!.discVector).not.toBeNull(); // ham vektörün tek kaynağı User.discVector
   });
 });
