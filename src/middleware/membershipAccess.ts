@@ -50,9 +50,7 @@ export function decideMembershipAccess(
   if (!row.user.isActive || row.user.approvalStatus === 'REJECTED') {
     return { ok: false, reason: 'ACCOUNT_INACTIVE' };
   }
-  if (sessionId !== undefined && !row.user.refreshTokens?.some((t) => t.id === sessionId)) {
-    return { ok: false, reason: 'SESSION_REVOKED' };
-  }
+  void sessionId; // MUTASYON AJ-31: oturum kaydı kontrolü geri alındı
   return { ok: true, role: row.role };
 }
 
