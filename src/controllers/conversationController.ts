@@ -8,6 +8,7 @@ import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { sendNewChatMessageEmail } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 // Chat v1 — menti↔mentör talep mesajlaşma.
 // Güvenlik sınırı KATILIMCIDIR (tenant değil): shared-pool'da taraflar farklı
@@ -105,7 +106,7 @@ async function emailRecipientIfCaughtUp(
   if (unreadBefore > 0) return; // zaten okunmamış var → tekrar mail atma
   const recipient = await prisma.user.findUnique({
     where: { id: recipientId },
-    select: { email: true, fullName: true },
+    select: USER_CONTACT_SELECT,
   });
   if (!recipient) return;
   void sendNewChatMessageEmail({

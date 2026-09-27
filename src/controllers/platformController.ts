@@ -14,6 +14,7 @@ import { parsePagination, REPORT_PAGE } from '../services/pagination.js';
 import { verifyTransporter, getSmtpStatus } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
 import { invalidateTenant } from '../services/tenantCache.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -279,7 +280,7 @@ export async function listPendingTenants(req: Request, res: Response) {
       createdAt: true,
       users: {
         where: { role: 'ADMIN' },
-        select: { fullName: true, email: true },
+        select: USER_CONTACT_SELECT,
         take: 1,
       },
     },

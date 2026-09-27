@@ -33,6 +33,7 @@ import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { wasRecentlyNudged, sendNudge, NUDGE_COOLDOWN_HOURS } from '../services/nudgeService.js';
 import { validateRequest } from '../middleware/validate.js';
+import { USER_APPROVAL_SELECT } from '../utils/userSelect.js';
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────
 
@@ -595,7 +596,7 @@ export async function approveUser(req: RequestWithTenant, res: Response) {
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },
-    select: { id: true, email: true, fullName: true, approvalStatus: true },
+    select: USER_APPROVAL_SELECT,
   });
   if (!user) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
@@ -643,7 +644,7 @@ export async function requestCorrection(req: RequestWithTenant, res: Response) {
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },
-    select: { id: true, email: true, fullName: true, approvalStatus: true },
+    select: USER_APPROVAL_SELECT,
   });
 
   if (!user) return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
@@ -698,7 +699,7 @@ export async function rejectUser(req: RequestWithTenant, res: Response) {
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId },
-    select: { id: true, email: true, fullName: true, approvalStatus: true },
+    select: USER_APPROVAL_SELECT,
   });
   if (!user) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });

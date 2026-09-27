@@ -26,6 +26,7 @@ import { recordUserActivity } from '../activityService.js';
 import { recordSignupConsent } from '../consentService.js';
 import { hashRefreshToken } from '../refreshToken.js';
 import type { OAuthCallbackResult, OAuthStatePayload, OAuthUserProfile } from './oauthTypes.js';
+import { USER_CONTACT_SELECT } from '../../utils/userSelect.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 
@@ -195,7 +196,7 @@ async function notifyAdmins(
 ): Promise<void> {
   const admins = await prisma.user.findMany({
     where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
-    select: { email: true, fullName: true },
+    select: USER_CONTACT_SELECT,
   });
 
   for (const admin of admins) {

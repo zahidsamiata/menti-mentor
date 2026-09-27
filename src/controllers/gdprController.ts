@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
-import { clearRefreshCookie } from './authController.js';
+import { clearRefreshCookie } from '../utils/authCookies.js';
 import {
   anonymizeUser,
   hardDeleteUser,

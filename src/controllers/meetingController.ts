@@ -8,6 +8,7 @@ import { sendMeetingRequestEmail, sendMeetingApprovalEmail, sendMeetingRejectedE
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isPairBlocked } from '../services/blockList.js';
+import { USER_CONTACT_SELECT, USER_IDENTITY_SELECT } from '../utils/userSelect.js';
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
@@ -204,11 +205,11 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
   const [mentor, menti] = await Promise.all([
     prisma.user.findFirst({
       where:  { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR', isActive: true },
-      select: { id: true, fullName: true, email: true },
+      select: USER_IDENTITY_SELECT,
     }),
     prisma.user.findFirst({
       where:  { id: mentiId, tenantId: req.tenant.tenantId, role: 'MENTI', isActive: true },
-      select: { id: true, fullName: true, email: true },
+      select: USER_IDENTITY_SELECT,
     }),
   ]);
 
@@ -313,7 +314,7 @@ export async function updateMeetingStatus(req: RequestWithTenant, res: Response)
   const existing = await prisma.meeting.findFirst({
     where:   { id: meetingId, tenantId: req.tenant.tenantId },
     include: {
-      mentor: { select: { fullName: true, email: true } },
+      mentor: { select: USER_CONTACT_SELECT },
       menti:  { select: { fullName: true, email: true, needsOrientation: true } },
     },
   });
@@ -587,7 +588,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   const [mentorUser, mentiUser] = await Promise.all([
     prisma.user.findFirst({
       where:  { id: mentorUserId, tenantId },
-      select: { email: true, fullName: true },
+      select: USER_CONTACT_SELECT,
     }),
     prisma.user.findFirst({
       where:  { id: userId, tenantId },
@@ -722,7 +723,7 @@ export async function rejectMeetingByMentor(req: RequestWithTenant, res: Respons
     where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },
     select: {
       id: true, mentiUserId: true, startsAt: true,
-      menti: { select: { fullName: true, email: true } },
+      menti: { select: USER_CONTACT_SELECT },
     },
   });
   if (!meeting) {

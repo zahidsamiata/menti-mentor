@@ -32,6 +32,7 @@ import {
 } from '../services/questionService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { sendAdminTestCompletedNotification } from '../services/emailService.js';
+import { USER_IDENTITY_SELECT } from '../utils/userSelect.js';
 
 // ─── Validasyon şemaları ──────────────────────────────────────────────────────
 
@@ -441,7 +442,7 @@ async function triggerWaitingRoomNotificationIfNeeded(
   // Tenant admin'lerini bul
   const admins = await prisma.user.findMany({
     where: { tenantId, role: 'ADMIN', isActive: true },
-    select: { id: true, fullName: true, email: true },
+    select: USER_IDENTITY_SELECT,
   });
 
   const tenant = await prisma.tenant.findUnique({

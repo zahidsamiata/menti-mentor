@@ -7,6 +7,7 @@ import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 import { maskEmail, maskName } from '../services/mask.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 // Tenant ADMIN kapısı: authenticateTenantAdmin (middleware/tenantAdminAuth.ts) — GV-11.
 
@@ -343,7 +344,7 @@ export async function listPendingTenants(req: Request, res: Response) {
       createdAt:          true,
       users: {
         where: { role: 'ADMIN' },
-        select: { fullName: true, email: true },
+        select: USER_CONTACT_SELECT,
         take: 1,
       },
     },

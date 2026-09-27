@@ -14,6 +14,7 @@
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from './logger.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 import { send as sendEmail } from './emailService.js';
 import { escapeHtml } from './htmlEscape.js';
 
@@ -91,7 +92,7 @@ export async function notifyTenantVerification(args: TenantNotificationArgs): Pr
         displayName: true,
         users: {
           where: { role: 'ADMIN', isActive: true },
-          select: { email: true, fullName: true },
+          select: USER_CONTACT_SELECT,
           orderBy: { createdAt: 'asc' },
           take: 1,
         },
