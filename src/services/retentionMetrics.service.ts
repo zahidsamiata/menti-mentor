@@ -56,12 +56,19 @@ export async function computeHealthMetrics(
   const mentis = roleCounts.find((r) => r.role === 'MENTI')?._count.id ?? 0;
 
   // ── Mentörsüz menti: onaylı aktif menti, APPROVED opt-in'i olmayan ─────────
+  // AJ-40: "menti" = BU kurumda aktif MENTI üyeliği olan kişi (TenantMembership.role, CLAUDE.md
+  // "Veri Modeli") — User.role/home tenant değil. Sorgu üyelik tablosundan başlar: prisma RLS
+  // eklentisi (db.ts) üst-düzey `user` okumalarına User.tenantId (home tenant) enjekte eder.
+  // Opt-in de BU kuruma scoped: başka kurumdaki mentörü, bu kurumda mentörü olduğu anlamına gelmez.
   const mentorlessWhere = {
     tenantId,
     role: 'MENTI' as const,
     isActive: true,
-    approvalStatus: 'APPROVED' as const,
-    mentiOptIns: { none: { status: 'APPROVED' as const } },
+    user: {
+      isActive: true,
+      approvalStatus: 'APPROVED' as const,
+      mentiOptIns: { none: { tenantId, status: 'APPROVED' as const } },
+    },
   };
 
   // ── Pasif üye: onaylı aktif, X gündür giriş yok. Hiç giriş yapmamış (null) ise
@@ -84,11 +91,11 @@ export async function computeHealthMetrics(
     approvedOptIns,
     meetingPairs,
   ] = await Promise.all([
-    prisma.user.count({ where: mentorlessWhere }),
-    prisma.user.findMany({
+    prisma.tenantMembership.count({ where: mentorlessWhere }),
+    prisma.tenantMembership.findMany({
       where: mentorlessWhere,
-      select: { id: true, fullName: true, avatarUrl: true, createdAt: true },
-      orderBy: { createdAt: 'asc' }, // en uzun bekleyen üstte
+      select: { user: { select: { id: true, fullName: true, avatarUrl: true, createdAt: true } } },
+      orderBy: { user: { createdAt: 'asc' } }, // en uzun bekleyen üstte
       take: DRILLDOWN_CAP,
     }),
     prisma.user.count({ where: passiveWhere }),
@@ -135,7 +142,7 @@ export async function computeHealthMetrics(
       mentis,
       ratio: mentis > 0 ? Math.round((mentors / mentis) * 100) / 100 : null,
     },
-    mentorlessMenti: { count: mentorlessCount, items: mentorlessItems },
+    mentorlessMenti: { count: mentorlessCount, items: mentorlessItems.map((m) => m.user) },
     deadMatches: { count: deadAll.length, items: deadItems },
     passiveMembers: { count: passiveCount, items: passiveItems },
   };

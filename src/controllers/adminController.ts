@@ -197,6 +197,12 @@ const AdminUserListSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
 });
 
+/** AJ-40: konuk üyede (ev-sahibi kurumu başka) gizlenen, başka kurum yöneticisinin kararı olan alanlar. */
+const FOREIGN_MEMBER_DECISION_MASK = {
+  approvedBy: null, approvedAt: null, rejectedBy: null, rejectedAt: null, rejectionReason: null,
+  rematchPriority: false, rematchCount: 0,
+} as const;
+
 /**
  * GET /api/admin/users
  * Compliance: discVector, selfProfile, temperamentJson hariç tutulur.
@@ -208,44 +214,67 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   const { role, isActive, rematchOnly, approvalStatus, page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
 
+  // AJ-40: liste/filtre/toplam BU kurumun üyeliğinden (TenantMembership.role, CLAUDE.md "Veri
+  // Modeli") — User.role/home tenant değil. Sorgu üyelik tablosundan başlar: prisma RLS eklentisi
+  // (db.ts) üst-düzey `user` okumalarına User.tenantId (home tenant) enjekte eder, bu yüzden başka
+  // kurumda home'u olan üye `prisma.user` ile hiç bulunamaz. Rol filtresi ve gösterilen rol bu
+  // kurumdaki üyelik rolüdür. Üyelik isActive şartı konmaz: yönetici pasife aldığında User.isActive
+  // düşer (üyelik aktif kalır) — "Pasif" filtresi User.isActive ile çalışır.
   const where = {
     tenantId: req.tenant.tenantId,
     ...(role !== undefined && { role }),
-    ...(isActive !== undefined && { isActive }),
-    ...(rematchOnly && { rematchPriority: true }),
-    ...(approvalStatus !== undefined && { approvalStatus }),
+    user: {
+      ...(isActive !== undefined && { isActive }),
+      // Rematch önceliği ev-sahibi kurum yöneticisinin kararıdır (User düzeyi) — konuk üye bu
+      // filtreye girmez; aksi hâlde başka kurumun kararı filtre üzerinden sızar (aşağıda maskelenir).
+      ...(rematchOnly && { rematchPriority: true, tenantId: req.tenant.tenantId }),
+      ...(approvalStatus !== undefined && { approvalStatus }),
+    },
   };
 
-  const [rows, total] = await Promise.all([
-    prisma.user.findMany({
+  const [membershipRows, total] = await Promise.all([
+    prisma.tenantMembership.findMany({
       where,
       select: {
-        id: true, role: true, email: true, fullName: true, isActive: true,
-        sectorTags: true, discType: true, skills: true,
-        // #12: DISC çoklu-harf gösterimi (KARAR 1) — vektör yalnız harfi TÜRETMEK için çekilir,
-        // ham vektör response'a KONMAZ (aşağıda base map'te çıkarılır). Admin havuz kartı harfi gösterir.
-        discVector: true,
-        rematchPriority: true, rematchCount: true,
-        needsOrientation: true, approvalStatus: true, createdAt: true,
-        avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
-        // İş 2/3: onay/red denetim izi + gerekçe (yalnız admin listesi; audit — meşru yönetim verisi).
-        approvedBy: true, approvedAt: true, rejectedBy: true, rejectedAt: true, rejectionReason: true,
-        // Sertifika rozeti (KARAR 4, kişi-geneli — PO kararı). Sertifika kişi bazında geneldir:
-        // kişi HERHANGİ bir kurumda sertifikalıysa sertifikalı sayılır (kurum farkı gözetilmez).
-        // isCertified yalnız TenantMembership'te tutulur (UserProfile.isCertified bakımsız), bu
-        // yüzden tüm üyelikler üzerinden türetilir. Kalite/güven göstergesi — Analytical, PII değil.
-        memberships: {
-          where: { isCertified: true },
-          select: { id: true },
-          take: 1,
+        role: true,
+        user: {
+          select: {
+            id: true, tenantId: true, email: true, fullName: true, isActive: true,
+            sectorTags: true, discType: true, skills: true,
+            // #12: DISC çoklu-harf gösterimi (KARAR 1) — vektör yalnız harfi TÜRETMEK için çekilir,
+            // ham vektör response'a KONMAZ (aşağıda base map'te çıkarılır). Admin havuz kartı harfi gösterir.
+            discVector: true,
+            rematchPriority: true, rematchCount: true,
+            needsOrientation: true, approvalStatus: true, createdAt: true,
+            avatarUrl: true, // Kart/havuz gösterimi — public profil görseli (PII değil)
+            // İş 2/3: onay/red denetim izi + gerekçe (yalnız admin listesi; audit — meşru yönetim verisi).
+            approvedBy: true, approvedAt: true, rejectedBy: true, rejectedAt: true, rejectionReason: true,
+            // Sertifika rozeti (KARAR 4, kişi-geneli — PO kararı). Sertifika kişi bazında geneldir:
+            // kişi HERHANGİ bir kurumda sertifikalıysa sertifikalı sayılır (kurum farkı gözetilmez).
+            // isCertified yalnız TenantMembership'te tutulur (UserProfile.isCertified bakımsız), bu
+            // yüzden tüm üyelikler üzerinden türetilir. Kalite/güven göstergesi — Analytical, PII değil.
+            memberships: {
+              where: { isCertified: true },
+              select: { id: true },
+              take: 1,
+            },
+          },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { user: { createdAt: 'desc' } },
       take: pageSize,
       skip,
     }),
-    prisma.user.count({ where }),
+    prisma.tenantMembership.count({ where }),
   ]);
+  // Ev-sahibi kurumu başka olan (konuk) üyede User düzeyindeki yönetici-kararı alanları o kurumun
+  // yöneticisine aittir → bu kurumun yöneticisine DÖNMEZ (kurum izolasyonu). approvalStatus kalır:
+  // hesabın her kurumdaki erişimini belirleyen etkin durumdur (membershipAccess.ts), karar izi değildir.
+  const rows = membershipRows.map(({ role: memberRole, user: { tenantId: homeTenantId, ...user } }) => ({
+    ...user,
+    role: memberRole,
+    ...(homeTenantId !== req.tenant.tenantId && FOREIGN_MEMBER_DECISION_MASK),
+  }));
 
   // Kişi-geneli sertifika: herhangi bir kurumda sertifikalıysa true (üyelik dizisi response'a sızmaz).
   // #12: discVector'dan DISC harf dizgesi türetilir; ham vektör response'tan ÇIKARILIR (destructure ile
