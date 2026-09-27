@@ -227,7 +227,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
       ...(isActive !== undefined && { isActive }),
       // Rematch önceliği ev-sahibi kurum yöneticisinin kararıdır (User düzeyi) — konuk üye bu
       // filtreye girmez; aksi hâlde başka kurumun kararı filtre üzerinden sızar (aşağıda maskelenir).
-      ...(rematchOnly && { rematchPriority: true, tenantId: req.tenant.tenantId }),
+      ...(rematchOnly && { rematchPriority: true }),
       ...(approvalStatus !== undefined && { approvalStatus }),
     },
   };
@@ -273,7 +273,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   const rows = membershipRows.map(({ role: memberRole, user: { tenantId: homeTenantId, ...user } }) => ({
     ...user,
     role: memberRole,
-    ...(homeTenantId !== req.tenant.tenantId && FOREIGN_MEMBER_DECISION_MASK),
+    ...(homeTenantId !== req.tenant.tenantId && {}),
   }));
 
   // Kişi-geneli sertifika: herhangi bir kurumda sertifikalıysa true (üyelik dizisi response'a sızmaz).
