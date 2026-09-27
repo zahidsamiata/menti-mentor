@@ -68,6 +68,21 @@ export async function notifyVisibilityApproved(
   });
 }
 
+/**
+ * P-05 / KARAR-22 (B): mentör görüşme talebini reddettiğinde mentiye jenerik, nazik bildirim.
+ * Ret gerekçesi içeriğe KONMAZ.
+ */
+export async function notifyMeetingRequestDeclined(
+  mentiId: string,
+  tenantId: string,
+): Promise<NotificationResult> {
+  return sendPushNotification(mentiId, {
+    title: 'Görüşme Talebiniz Hakkında',
+    body: 'Mentörünüz şu an yeni görüşme alamıyor. Bu durum sizinle ilgili bir değerlendirme değildir.',
+    data: { action: 'OPEN_MEETINGS', tenantId },
+  });
+}
+
 /** Mentor, menti'nin görünürlük talebini aldığında gönderilir (Akış B). */
 export async function notifyPendingVisibilityRequest(
   mentorId: string,

@@ -127,6 +127,25 @@ export async function sendMeetingApprovalEmail(args: {
   );
 }
 
+// P-05 / KARAR-22 (B): mentör görüşme talebini reddettiğinde mentiye nazik, jenerik bilgi.
+// Mentörün yazdığı ret gerekçesi (Meeting.notes) BİLİNÇLİ olarak parametre bile değildir —
+// menti "hayır"ı "ben yetersizim" diye okumasın; alternatif mentör önerisi de yoktur (KARAR-22 B).
+export async function sendMeetingRejectedEmail(args: {
+  toEmail: string;
+  mentiName: string;
+  scheduledAt: Date;
+}): Promise<boolean> {
+  const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
+  return send(
+    args.toEmail,
+    'Görüşme Talebiniz Hakkında',
+    `<p>Merhaba ${escapeHtml(args.mentiName)},</p>
+     <p><strong>${tarih}</strong> tarihli görüşme talebiniz bu sefer gerçekleşemiyor: mentörünüz şu an yeni görüşme alamıyor.</p>
+     <p>Bu durum sizinle ya da profilinizle ilgili bir değerlendirme değildir.</p>
+     <p>Gelişim yolculuğunuza devam etmek için dilediğiniz zaman sisteme giriş yapabilirsiniz.</p>`,
+  );
+}
+
 export async function sendNewChatMessageEmail(args: {
   toEmail: string;
   recipientName: string;
