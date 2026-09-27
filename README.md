@@ -34,14 +34,26 @@ cp .env.example .env
 npm run prisma:migrate
 npm run prisma:generate
 
-# 4. Mock veri (geliştirme / yük testi)
+# 4. Kanonik/mock veri (geliştirme / yük testi)
 # ⚠️ npm run seed TEHLİKELİDİR — toplu deleteMany() çalıştırır (userResponse/feedback/
 # meeting/matchRequest/club/tenant/user siler). CANLI = LOKAL AYNI DB (bkz. CLAUDE.md) —
 # yanlış DB'de çalıştırırsan CANLI VERİYİ SİLER. Yalnız izole/geçici DB'de, bilerek çalıştır.
-# Güvenli (yalnız upsert, veri silmez) alternatifler:
-#   npm run seed:certification      # sertifika programı mock verisi
-#   npm run seed:learning-journey   # öğrenme yolculuğu mock verisi
-#   npm run seed:test-tenant        # panel görsel testi için TEST kurumu (varsayılan dry-run)
+#
+# ⚠️ Aşağıdakiler toplu SİLME yapmaz ama CANLI İÇERİĞİ GÜNCELLER/DEĞİŞTİRİR — "güvenli/serbest"
+# DEĞİL. CANLI = LOKAL AYNI DB olduğundan hepsi de ancak ilgili KARAR "evet" + tarihli yedek
+# sonrası çalıştırılır (CLAUDE.md seed kuralı, § CANLI = LOKAL AYNI DB). Tek fark, `npm run seed`
+# gibi toplu deleteMany() yapmamaları — "serbestçe koş" anlamına gelmez.
+#   npm run seed:certification      # Sertifikasyon soru bankası (KANONİK İÇERİK, mock değil).
+#                                    # upsert update kolu soru/şık metnini, puanı, aktifliği EZER;
+#                                    # ayrıca bankada olmayan aktif soruları PASİFLEŞTİRİR
+#                                    # (prisma/seed-certification.ts:307) → canlı sertifika
+#                                    # havuzunun anlamını değiştirir.
+#   npm run seed:learning-journey   # Global öğrenme aşamaları (KANONİK İÇERİK, mock değil).
+#                                    # upsert update kolu global aşama içeriğini kanonik hâle
+#                                    # geri yazar (mevcut satırı ezer).
+#   npm run seed:test-tenant        # Panel görsel testi için TEST kurumu. Varsayılan DRY-RUN;
+#                                    # yazmak için `-- --apply` gerekir. Canlıya yazmadan önce
+#                                    # DATABASE_URL'i izole/test DB'ye yönlendirin.
 npm run seed
 
 # 5. Geliştirme sunucusu
@@ -423,9 +435,15 @@ npm run prisma:generate  # Prisma client yenile
 npm run prisma:migrate   # Migration uygula
 npm run prisma:studio    # Prisma Studio GUI
 npm run seed             # ⚠️ TEHLİKELİ — toplu deleteMany() çalıştırır (yalnız izole DB'de kullan)
-npm run seed:certification    # Güvenli (yalnız upsert) — sertifika programı mock verisi
-npm run seed:learning-journey # Güvenli (yalnız upsert) — öğrenme yolculuğu mock verisi
-npm run seed:test-tenant      # Güvenli (yalnız upsert, dry-run varsayılan) — panel test kurumu
+npm run seed:certification    # Silme yapmaz AMA canlı içeriği günceller: sertifikasyon soru
+                               # bankası (kanonik içerik) + bankada olmayan soruları pasifleştirir.
+                               # CANLI=LOKAL AYNI DB → KARAR "evet" + yedek sonrası çalıştır.
+npm run seed:learning-journey  # Silme yapmaz AMA canlı içeriği günceller: global öğrenme
+                               # aşamalarını (kanonik içerik) kanonik hâle geri yazar.
+                               # CANLI=LOKAL AYNI DB → KARAR "evet" + yedek sonrası çalıştır.
+npm run seed:test-tenant       # Varsayılan DRY-RUN; `-- --apply` olmadan yazmaz. Apply
+                               # edilirse CANLI=LOKAL AYNI DB → izole DB'ye yönlendirmeden
+                               # canlıya yazmayın.
 npm run test:scoring     # Scoring algoritması matematiksel doğrulama
 ```
 
