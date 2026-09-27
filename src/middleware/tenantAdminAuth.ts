@@ -22,7 +22,8 @@ import { getCachedTenant } from '../services/tenantCache.js';
  *  - platform token'ı (aud:'platform') tenant yönetici ucunda geçmez (domain ayrımı, platformAuth ile simetrik);
  *  - kurum askıdaysa (platform dondurdu / başvuru reddedildi) 403 KURUM_ASKIDA (Y1-B9, requireTenant 4b ile aynı).
  *
- * Kurum eşleşmesi (URL `:id` = token tenantId) çağıran controller'da kalır; hata mesajı uca özeldir.
+ * Kurum eşleşmesi (URL `:id` = token tenantId) GEREKEN uçlar bunu DOĞRUDAN çağırmaz:
+ * `authenticateTenantAdminForParam` kullanır (AJ-44) — eşleşme tek yerde, yeni uçta unutulamaz.
  */
 export async function authenticateTenantAdmin(
   req: Request,
@@ -76,4 +77,39 @@ export async function authenticateTenantAdmin(
   }
 
   return payload;
+}
+
+/** `authenticateTenantAdminForParam` başarı sonucu: doğrulanmış kimlik + URL'deki (= oturumdaki) kurum. */
+export interface TenantAdminParamContext {
+  payload:  JwtPayload;
+  tenantId: string;
+}
+
+/**
+ * AJ-44 (F-23 kalanı): URL'de kurum kimliği taşıyan (`/api/tenants/:id/...`) kurum-yönetici uçlarının
+ * TEK kapısı — `authenticateTenantAdmin` + URL `:paramName` ile oturumdaki (token) kurumun eşleşmesi.
+ *
+ * Neden: eşleşme eskiden her controller'da elle yazılıydı (`payload.tenantId !== tenantId`); bugün
+ * hepsinde var ama yeni bir uçta unutulursa bir kurumun yöneticisi başka kurumun `:id`'siyle o
+ * kurumun kaynağına yazabilirdi. Kimlik oturumdan gelir, URL yalnız eşleştirilir.
+ *
+ * Davranış eski elle kontrolle AYNI: eşleşmezse 403 `YETKI_YOK` + uca özel `mismatchMessage`
+ * (mesaj uca özeldir, o yüzden parametre). Yanıt yazıldıysa `null` döner — çağıran yalnız `return` eder.
+ */
+export async function authenticateTenantAdminForParam(
+  req: Request,
+  res: Response,
+  mismatchMessage: string,
+  paramName = 'id',
+): Promise<TenantAdminParamContext | null> {
+  const payload = await authenticateTenantAdmin(req, res);
+  if (!payload) return null;
+
+  const tenantId = req.params[paramName];
+  if (typeof tenantId !== 'string' || payload.tenantId !== tenantId) {
+    res.status(403).json({ error: 'YETKI_YOK', message: mismatchMessage });
+    return null;
+  }
+
+  return { payload, tenantId };
 }
