@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
-import { loginRateLimiter, passwordResetRateLimiter, registerRateLimiter } from '../middleware/rateLimiter.js';
+import { loginRateLimiter, passwordChangeRateLimiter, passwordResetRateLimiter, registerRateLimiter } from '../middleware/rateLimiter.js';
+import { requireTurnstile } from '../middleware/turnstile.js';
 import {
   register,
   login,
@@ -13,13 +14,15 @@ import {
   getMe,
   reapply,
   reconsent,
+  changePassword,
 } from '../controllers/authController.js';
 
 const router = Router();
 
 // POST /api/auth/register — yeni kullanıcı kaydı (tenant gerektirmez)
 // registerRateLimiter: IP-bazlı — sahte/spam kayıt koruması (generalRateLimiter'a ek).
-router.post('/register', registerRateLimiter, register as unknown as RequestHandler);
+// requireTurnstile: F-05/G1-26 — CAPTCHA anahtarı yoksa no-op (bkz. middleware/turnstile.ts).
+router.post('/register', registerRateLimiter, requireTurnstile, register as unknown as RequestHandler);
 
 // POST /api/auth/login — e-posta + şifre ile giriş.
 // loginRateLimiter: IP-bazlı brute-force koruması (generalRateLimiter'a ek).
@@ -33,18 +36,36 @@ router.post('/logout', logout as unknown as RequestHandler);
 
 // POST /api/auth/forgot-password — şifre sıfırlama e-postası gönder.
 // passwordResetRateLimiter: IP-bazlı — kullanıcı-tarama + mail-DoS koruması.
-router.post('/forgot-password', passwordResetRateLimiter, forgotPassword as unknown as RequestHandler);
+// requireTurnstile: F-05/G1-26 — CAPTCHA anahtarı yoksa no-op (bkz. middleware/turnstile.ts).
+router.post(
+  '/forgot-password',
+  passwordResetRateLimiter,
+  requireTurnstile,
+  forgotPassword as unknown as RequestHandler,
+);
 
 // POST /api/auth/reset-password — token + yeni şifre ile şifre güncelle.
 // passwordResetRateLimiter: IP-bazlı — token brute-force koruması.
 router.post('/reset-password', passwordResetRateLimiter, resetPassword as unknown as RequestHandler);
 
-// GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir)
+// GET /api/auth/me — mevcut token sahibinin profilini döndürür (tenant gerektirir).
+// Y1-B9: askıdaki kurumda da açık (askı kapısı izin listesi: middleware/tenantSuspension.ts) —
+// reddedilen kurumun yöneticisi ret bilgisini, askıdaki üye askı durumunu (`tenant.isSuspended`) okur.
 router.get('/me', requireTenant as unknown as RequestHandler, getMe as unknown as RequestHandler);
 
 // POST /api/auth/reconsent — GV-18: rıza metni sürümü güncellenince kullanıcı yeniden onaylar.
 // Kimlik oturumdan (req.auth) alınır, gövdeden DEĞİL — komşu uç `getMe` ile aynı desen.
 router.post('/reconsent', requireTenant as unknown as RequestHandler, reconsent as unknown as RequestHandler);
+
+// POST /api/auth/change-password — GV-19: oturum içi şifre değiştirme (mevcut şifre zorunlu).
+// Kimlik oturumdan (req.auth) — komşu uçlar getMe/reconsent ile aynı desen. passwordChangeRateLimiter:
+// mevcut şifre doğrulaması içerdiğinden kullanıcı + IP başına brute-force koruması.
+router.post(
+  '/change-password',
+  passwordChangeRateLimiter,
+  requireTenant as unknown as RequestHandler,
+  changePassword as unknown as RequestHandler,
+);
 
 // POST /api/auth/reapply — reddedilen kullanıcı tekrar başvurur (İş 3 P3).
 // loginRateLimiter: şifre doğrulaması içerdiğinden IP-bazlı brute-force koruması.

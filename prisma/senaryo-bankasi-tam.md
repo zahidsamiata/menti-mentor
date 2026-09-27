@@ -1,7 +1,10 @@
 # Mentör Sertifika Senaryo Bankası — Tam Sürüm (v2)
 
-> Durum: TAM TASLAK — kullanıcı onayı bekliyor. Onaylanınca Claude Code bu içeriği koda (seed)
-> yerleştirecek. Kurum bu konulardan seçebilir/kaldırabilir; DÜZENLEYEMEZ, YENİ EKLEYEMEZ (puanlama
+> ~~[ESKİ · 2026-09-26] Durum: TAM TASLAK — kullanıcı onayı bekliyor. Onaylanınca Claude Code bu içeriği koda (seed)
+> yerleştirecek.~~
+> ⚠️ GÜNCELLEME 2026-09-26 (IC-12): bu içerik canlı sertifika seed'inin KAYNAĞIDIR (`prisma/seed-certification.ts:7`,
+> commit `1f98b2d` "Paket B — 20 senaryo seed") — "taslak / onay bekliyor" durumu bayat. Güncel iş durumu: çatı reposunda
+> `docs/otonom/00-KUYRUK.md`; güncel sertifika içerik serisi `docs/raporlar/icerik/sertifika-oturum*-2026-09-08.md`. Kurum bu konulardan seçebilir/kaldırabilir; DÜZENLEYEMEZ, YENİ EKLEYEMEZ (puanlama
 > uzmanlık gerektirdiği için kapalı). Canlı üründe AI/token kullanımı YOK — tüm içerik statiktir.
 
 ## Puanlama ve eşik mantığı (öneri — proje için en iyisi)

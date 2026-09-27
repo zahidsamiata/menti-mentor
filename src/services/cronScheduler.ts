@@ -20,6 +20,7 @@ import { sendDraftTenantReminderEmail, sendFeedbackReminderEmail } from './email
 import { notifyAdminsMentorCertLapsed } from './notificationService.js';
 import { CERT_CONFIG } from './certification.service.js';
 import { logger } from './logger.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 /**
  * Cron etkinleştirme koşulları (AND mantığı):
@@ -38,34 +39,36 @@ export function isCronEnabled(): boolean {
 // ─── Görev: Algoritma Ağırlık Ayarlaması ─────────────────────────────────────
 
 /**
- * Her tenant'ın reportingFrequency ayarını kontrol ederek sadece
- * uygun olanlar için tuning çalıştırır.
- * WEEKLY: her Pazar çalışır
- * BIWEEKLY: 1. ve 3. Pazar çalışır
- * MONTHLY: sadece ayın 1. Pazar'ı çalışır
+ * Kurumun rapor sıklığına göre bu Pazar ağırlık ayarı çalışmalı mı?
+ * WEEKLY: her Pazar · BIWEEKLY: ayın 1. ve 3. Pazarı · MONTHLY: ayın 1. Pazarı.
+ * Bilinmeyen/boş değer şema varsayılanı gibi WEEKLY sayılır.
  */
+export function shouldRunTuningThisWeek(reportingFrequency: string | null | undefined, now: Date): boolean {
+  const weekOfMonth = Math.ceil(now.getUTCDate() / 7); // 1-5 (cron UTC'de çalışır)
+  switch (reportingFrequency) {
+    case 'BIWEEKLY': return weekOfMonth === 1 || weekOfMonth === 3;
+    case 'MONTHLY':  return weekOfMonth === 1;
+    default:         return true;
+  }
+}
+
+/** Her tenant'ın reportingFrequency ayarına göre yalnız sırası gelenler için tuning çalıştırır. */
 async function runWeeklyTuning(): Promise<void> {
   void logger.info('SYSTEM', 'Cron: Algoritma ağırlık ayarlaması başladı');
   try {
     const now = new Date();
-    const weekOfMonth = Math.ceil(now.getDate() / 7); // 1-5
 
-    const tenants = (await prisma.tenant.findMany({
+    // KR-21: reportingFrequency önceden SEÇİLMİYORDU (tip dönüşümüyle gizleniyordu) → her kurum haftalık çalışıyordu.
+    const tenants = await prisma.tenant.findMany({
       where: { isActive: true },
-      select: { id: true, name: true },
-    })) as Array<{ id: string; name: string; reportingFrequency?: string }>;
+      select: { id: true, name: true, reportingFrequency: true },
+    });
 
     let processed = 0;
     let skipped = 0;
 
     for (const tenant of tenants) {
-      const freq = tenant.reportingFrequency ?? 'WEEKLY';
-      const shouldRun =
-        freq === 'WEEKLY' ||
-        (freq === 'BIWEEKLY' && (weekOfMonth === 1 || weekOfMonth === 3)) ||
-        (freq === 'MONTHLY'  && weekOfMonth === 1);
-
-      if (!shouldRun) { skipped++; continue; }
+      if (!shouldRunTuningThisWeek(tenant.reportingFrequency, now)) { skipped++; continue; }
 
       try {
         await tuneScoringWeights(tenant.id);
@@ -133,7 +136,7 @@ async function runDraftTenantReminder(): Promise<void> {
       drafts.map(async (t) => {
         const admin = await prisma.user.findFirst({
           where:  { tenantId: t.id, role: 'ADMIN', isActive: true },
-          select: { email: true, fullName: true },
+          select: USER_CONTACT_SELECT,
         });
         return { ...t, admin };
       }),
@@ -244,8 +247,8 @@ export async function runFeedbackReminderCron(): Promise<{ sent: number }> {
         endsAt: { lt: minAgo, gt: maxAgo },
       },
       include: {
-        mentor: { select: { fullName: true, email: true } },
-        menti:  { select: { fullName: true, email: true } },
+        mentor: { select: USER_CONTACT_SELECT },
+        menti:  { select: USER_CONTACT_SELECT },
       },
     });
 
@@ -309,8 +312,8 @@ export async function runAgreementRenewalCron(): Promise<{ prompted: number }> {
         expiresAt: { not: null, lte: warnThreshold },
       },
       include: {
-        mentor: { select: { email: true, fullName: true } },
-        menti:  { select: { email: true, fullName: true } },
+        mentor: { select: USER_CONTACT_SELECT },
+        menti:  { select: USER_CONTACT_SELECT },
       },
     });
 

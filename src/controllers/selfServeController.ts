@@ -5,8 +5,10 @@ import jwt from 'jsonwebtoken';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { logoUrlSchema } from '../services/logoUrl.js';
+import { passwordSchema } from '../services/passwordPolicy.js';
 import { signToken } from '../middleware/jwtAuth.js';
 import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
+import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { ensureMembership } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
@@ -14,31 +16,14 @@ import { hashRefreshToken } from '../services/refreshToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
 import { sendAlreadyRegisteredEmail } from '../services/emailService.js';
+import { setRefreshCookie, refreshTokenExpiresAt } from '../utils/authCookies.js';
 
 const BCRYPT_ROUNDS = 12;
-const REFRESH_TOKEN_EXPIRY_DAYS = 7;
-const REFRESH_COOKIE_NAME = 'mm_refresh';
-const isProd = process.env.NODE_ENV === 'production';
 
 // ─── Yardımcılar ──────────────────────────────────────────────────────────────
 
 function generateRefreshToken(): string {
   return crypto.randomBytes(64).toString('hex');
-}
-
-function refreshTokenExpiresAt(): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
-  return d;
-}
-
-function setRefreshCookie(res: Response, token: string): void {
-  res.cookie(REFRESH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'strict',
-    maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
-  });
 }
 
 const GENERIC_EMAIL_DOMAINS = new Set([
@@ -207,7 +192,7 @@ export async function checkSlugAvailability(req: Request, res: Response) {
 
 const SelfServeRegisterSchema = z.object({
   email:            z.string().email('Geçerli bir e-posta adresi girin'),
-  password:         z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  password:         passwordSchema,
   name:             z.string().min(2, 'Ad soyad zorunlu').max(120),
   tenantName:       z.string().min(2, 'Kurum adı zorunlu').max(120),
   slug:             z
@@ -665,6 +650,8 @@ export async function joinViaInvitation(req: Request, res: Response) {
       primaryColor:    true,
       programTemplate: true,
       plan:            true,
+      isActive:           true,
+      verificationStatus: true,
     },
   });
 
@@ -674,6 +661,12 @@ export async function joinViaInvitation(req: Request, res: Response) {
       message: 'Bu davet linki artık geçerli bir kuruma ait değil.',
       valid:   false,
     });
+  }
+
+  // Y1-B9: dondurulmuş / reddedilmiş kurumun davet linki kayda götürmez (kayıt ucu da kapalı;
+  // burada kapatmak kullanıcıyı boşuna form doldurtmaz). Token imzalı → numaralandırma yok.
+  if (isTenantSuspended(tenant)) {
+    return res.status(403).json({ ...TENANT_CLOSED_FOR_SIGNUP_BODY, valid: false });
   }
 
   return res.json({

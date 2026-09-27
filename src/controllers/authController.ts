@@ -3,7 +3,8 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
-import { signToken } from '../middleware/jwtAuth.js';
+import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAuth.js';
+import { revokeAccessToken } from '../services/accessTokenRevocation.js';
 import type { RequestWithTenant } from '../types.js';
 import { sendAdminNewUserNotification, sendPasswordResetEmail, sendAlreadyRegisteredEmail } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
@@ -16,17 +17,25 @@ import { ensureMembershipSafe } from '../services/membership.js';
 import { recordSignupConsent, hasCurrentSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
-import { hashRefreshToken, refreshTokenWhere } from '../services/refreshToken.js';
+import { hashRefreshToken, refreshTokenLookupKeys, refreshTokenWhere } from '../services/refreshToken.js';
 import { verifyInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
-
+import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
+import { passwordSchema } from '../services/passwordPolicy.js';
+import {
+  setRefreshCookie,
+  clearRefreshCookie,
+  getRefreshTokenFromCookie,
+  refreshTokenExpiresAt,
+} from '../utils/authCookies.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 // ─── Validation şemaları ──────────────────────────────────────────────────────
 
 const RegisterSchema = z.object({
   email: z.string().email('Geçerli bir e-posta adresi girin'),
-  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  password: passwordSchema,
   fullName: z.string().min(2, 'Ad soyad zorunlu').max(120),
   role: z.enum(['MENTOR', 'MENTI'], { error: 'Rol mentör ya da menti olmalı.' }),
   tenantSlug: z.string().min(1, 'Kuruluş kodu zorunlu'),
@@ -51,45 +60,20 @@ const ForgotPasswordSchema = z.object({
 
 const ResetPasswordSchema = z.object({
   token: z.string().min(1, 'Token zorunlu'),
-  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  password: passwordSchema,
+});
+
+// GV-19: oturum içi şifre değiştirme. Mevcut şifre yalnız "boş değil" kontrolünden geçer —
+// eski kurala göre belirlenmiş şifreler de doğrulanabilmeli (LoginSchema ile aynı).
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Mevcut şifre zorunlu').max(1024),
+  newPassword: passwordSchema,
 });
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
-const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 const RESET_TOKEN_EXPIRY_MINUTES = 60;
 const BCRYPT_ROUNDS = 12;
-const REFRESH_COOKIE_NAME = 'mm_refresh';
-
-const isProd = process.env.NODE_ENV === 'production';
-
-function setRefreshCookie(res: Response, token: string): void {
-  res.cookie(REFRESH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'strict',
-    maxAge: REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
-  });
-}
-
-// Oturum çerezini temizleyen tek yol: seçenekler set ile birebir aynı olmalı, yoksa tarayıcı
-// çerezi silmeyebilir (GV-23 — hesap kapatma da bunu kullanır).
-export function clearRefreshCookie(res: Response): void {
-  res.clearCookie(REFRESH_COOKIE_NAME, { httpOnly: true, secure: isProd, sameSite: 'strict' });
-}
-
-function getRefreshTokenFromCookie(req: Request): string | undefined {
-  const cookieHeader = req.headers['cookie'];
-  if (!cookieHeader) return undefined;
-  for (const part of cookieHeader.split(';')) {
-    const eqIdx = part.indexOf('=');
-    if (eqIdx === -1) continue;
-    const key = part.slice(0, eqIdx).trim();
-    const val = part.slice(eqIdx + 1).trim();
-    if (key === REFRESH_COOKIE_NAME) return decodeURIComponent(val);
-  }
-  return undefined;
-}
 
 /**
  * Token güvenlik modeli:
@@ -101,12 +85,6 @@ function getRefreshTokenFromCookie(req: Request): string | undefined {
  */
 function generateRefreshToken(): string {
   return crypto.randomBytes(64).toString('hex');
-}
-
-function refreshTokenExpiresAt(): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
-  return d;
 }
 
 function resetTokenExpiresAt(): Date {
@@ -141,10 +119,16 @@ export async function register(req: Request, res: Response) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
-    select: { id: true, name: true, displayName: true, verificationStatus: true },
+    select: { id: true, name: true, displayName: true, verificationStatus: true, isActive: true },
   });
   if (!tenant) {
     return res.status(400).json({ error: 'TENANT_BULUNAMADI', message: REGISTER_MESSAGES.TENANT_NOT_FOUND });
+  }
+
+  // Y1-B9: dondurulmuş / reddedilmiş kuruma yeni üye alınmaz (komşu kapı TENANT_ONAY_BEKLENIYOR ile
+  // aynı düzey: e-posta kontrolünden ÖNCE → e-posta numaralandırması açılmaz).
+  if (isTenantSuspended(tenant)) {
+    return res.status(403).json(TENANT_CLOSED_FOR_SIGNUP_BODY);
   }
 
   if (tenant.verificationStatus === 'PENDING_REVIEW') {
@@ -226,7 +210,7 @@ export async function register(req: Request, res: Response) {
     // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
     const tenantAdmins = await prisma.user.findMany({
       where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
-      select: { email: true, fullName: true },
+      select: USER_CONTACT_SELECT,
     });
 
     for (const admin of tenantAdmins) {
@@ -419,6 +403,7 @@ export async function login(req: Request, res: Response) {
  *  - Kimlik doğrulama e-posta+ŞİFRE ile (enumeration-safe: yanlış şifre → generic 401).
  *  - IDOR: yalnızca kimliği doğrulanan KENDİ hesabını etkiler (param yok, token yok).
  *  - Yalnızca REJECTED → PENDING geçişine izin verir; başka durum → 409.
+ *  - Kurum askıdaysa (Y1-B9b) → 403 KURUM_KAYDA_KAPALI (kayıt kapısıyla aynı; şifre doğrulamasından sonra).
  *  - Geçmiş KORUNUR: rejectionReason/rejectedBy/rejectedAt SİLİNMEZ (çok-yönetici: yeni bakan
  *    yönetici en son red gerekçesini görebilmeli). Test/DISC/profil verisine DOKUNULMAZ.
  */
@@ -429,7 +414,10 @@ export async function reapply(req: Request, res: Response) {
 
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, password: true, authProvider: true, approvalStatus: true, fullName: true },
+    select: {
+      id: true, password: true, authProvider: true, approvalStatus: true, fullName: true,
+      tenant: { select: { isActive: true, verificationStatus: true } },
+    },
   });
 
   // Enumeration koruması: kullanıcı yok / OAuth / şifre yanlış → hepsi aynı generic 401.
@@ -439,6 +427,12 @@ export async function reapply(req: Request, res: Response) {
   const passwordMatch = await bcrypt.compare(password, user.password);
   if (!passwordMatch) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'E-posta veya şifre hatalı.' });
+  }
+
+  // Y1-B9b: askıdaki (dondurulmuş / reddedilmiş) kuruma yeniden başvuru = yeni üye kaydı → kayıttaki
+  // KURUM_KAYDA_KAPALI kapısıyla AYNI yanıt. Şifre doğrulandıktan SONRA → e-posta numaralandırması açılmaz.
+  if (isTenantSuspended(user.tenant)) {
+    return res.status(403).json(TENANT_CLOSED_FOR_SIGNUP_BODY);
   }
 
   // Yalnızca reddedilmiş başvuru tekrar gönderilebilir (şifre doğrulandı → durum açıklanabilir).
@@ -549,6 +543,16 @@ export async function logout(req: Request, res: Response) {
     await prisma.refreshToken.deleteMany({ where: refreshTokenWhere(refreshToken) });
   }
 
+  // AJ-03: yalnız refresh token'ı silmek erişim (access) anahtarını ömrü dolana kadar geçerli
+  // bırakıyordu. FE zaten Authorization header'ında erişim anahtarını gönderiyor (bkz.
+  // frontend lib/api/auth.ts logout) — anahtar burada verifyToken ile çözülüp (imza + iptal
+  // kontrolüyle) jti'si bellek-içi listeye yazılır. bkz. services/accessTokenRevocation.ts.
+  const bearerToken = extractBearerToken(req.header('Authorization'));
+  const payload = bearerToken ? verifyToken(bearerToken) : null;
+  if (payload?.jti && payload.exp) {
+    revokeAccessToken(payload.jti, payload.exp);
+  }
+
   clearRefreshCookie(res);
   return res.status(204).send();
 }
@@ -624,6 +628,80 @@ export async function resetPassword(req: Request, res: Response) {
   ]);
 
   return res.json({ message: 'Şifreniz başarıyla güncellendi. Lütfen tekrar giriş yapın.' });
+}
+
+// ─── POST /api/auth/change-password — GV-19: oturum içi şifre değiştirme ─────
+/**
+ * Kimlik OTURUMDAN (req.auth) alınır, gövdeden DEĞİL — komşu uçlar getMe/reconsent ile aynı desen.
+ * Hash ve oturum düşürme resetPassword ile aynı: BCRYPT_ROUNDS + refresh token silme. Fark:
+ * isteği yapan oturum (refresh çerezi) KORUNUR, kullanıcı bu cihazda çıkışa zorlanmaz; diğer tüm
+ * cihazlardaki oturumlar düşer. Çerez yoksa hepsi silinir ve yanıtta belirtilir.
+ */
+export async function changePassword(req: RequestWithTenant, res: Response) {
+  if (!req.auth) {
+    return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Oturum açılmamış.' });
+  }
+
+  const parsed = validateRequest(ChangePasswordSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
+  const { currentPassword, newPassword } = parsed.data;
+
+  const user = await prisma.user.findFirst({
+    where: { id: req.auth.userId, tenantId: req.tenant.tenantId, isActive: true },
+    select: { id: true, password: true, authProvider: true },
+  });
+  if (!user) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+  }
+
+  // OAuth (Google/LinkedIn) hesabının uygulamada şifresi yoktur; şifre o sağlayıcıda yönetilir.
+  if (user.authProvider !== 'LOCAL' || !user.password) {
+    return res.status(409).json({
+      error: 'SIFRE_DEGISTIRILEMEZ',
+      message: 'Hesabınız Google veya LinkedIn ile açıldığı için şifre bu sağlayıcı üzerinden yönetilir.',
+    });
+  }
+
+  const currentMatches = await bcrypt.compare(currentPassword, user.password);
+  if (!currentMatches) {
+    return res.status(400).json({
+      error: 'MEVCUT_SIFRE_HATALI',
+      message: 'Mevcut şifre hatalı.',
+    });
+  }
+
+  if (await bcrypt.compare(newPassword, user.password)) {
+    return res.status(400).json({
+      error: 'SIFRE_AYNI',
+      message: 'Yeni şifre mevcut şifrenizden farklı olmalı.',
+    });
+  }
+
+  const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+
+  // Bu isteği yapan oturumun refresh kaydı korunur (yalnız bu kullanıcıya aitse eşleşir);
+  // diğer tüm oturumlar düşer. Şifre güncelleme + oturum düşürme tek transaction.
+  const currentRefreshToken = getRefreshTokenFromCookie(req);
+  const keepKeys = currentRefreshToken ? refreshTokenLookupKeys(currentRefreshToken) : [];
+  const [, revoked] = await prisma.$transaction([
+    prisma.user.update({ where: { id: user.id }, data: { password: hashedPassword } }),
+    prisma.refreshToken.deleteMany({
+      where: keepKeys.length > 0
+        ? { userId: user.id, token: { notIn: keepKeys } }
+        : { userId: user.id },
+    }),
+  ]);
+
+  const currentSessionKept = keepKeys.length > 0
+    && (await prisma.refreshToken.count({ where: { userId: user.id, token: { in: keepKeys } } })) > 0;
+
+  return res.json({
+    message: currentSessionKept
+      ? 'Şifreniz güncellendi. Diğer cihazlardaki oturumlarınız kapatıldı.'
+      : 'Şifreniz güncellendi. Tüm oturumlarınız kapatıldı; bir sonraki yenilemede tekrar giriş yapmanız gerekebilir.',
+    currentSessionKept,
+    revokedSessions: revoked.count,
+  });
 }
 
 // ─── OAuth: provider başlatma + callback ─────────────────────────────────────
@@ -782,7 +860,7 @@ export async function getMe(req: RequestWithTenant, res: Response) {
     where: { id: req.tenant.tenantId },
     select: {
       id: true, name: true, displayName: true, slug: true, logoUrl: true, primaryColor: true,
-      verificationStatus: true, correctionNote: true,
+      verificationStatus: true, correctionNote: true, isActive: true,
     },
   });
 
@@ -803,6 +881,8 @@ export async function getMe(req: RequestWithTenant, res: Response) {
           logoUrl: tenant.logoUrl,
           primaryColor: tenant.primaryColor,
           verificationStatus: tenant.verificationStatus,
+          // Y1-B9: kurum askıda mı (dondurma/ret) — istemci askı bilgisini gösterebilsin.
+          isSuspended: isTenantSuspended(tenant),
           correctionNote: user.role === 'ADMIN' ? (tenant.correctionNote ?? null) : null,
         }
       : null,

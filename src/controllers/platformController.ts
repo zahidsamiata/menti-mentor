@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
-import { signToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
+import { signToken, verifyToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
+import { revokeAccessToken } from '../services/accessTokenRevocation.js';
 import { logger } from '../services/logger.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
@@ -12,6 +13,8 @@ import { maskName, maskContact, maskEmail } from '../services/mask.js';
 import { parsePagination, REPORT_PAGE } from '../services/pagination.js';
 import { verifyTransporter, getSmtpStatus } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
+import { invalidateTenant } from '../services/tenantCache.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -65,8 +68,35 @@ export async function platformLogin(req: Request, res: Response) {
   return res.json({ ok: true });
 }
 
+/**
+ * AJ-03 — komşu uç `authController.logout` ile aynı davranış: platform oturumu tek bir
+ * anahtardır (ayrı access/refresh yok, bkz. platformLogin), o anahtar da logout'ta bellek-içi
+ * iptal listesine yazılır — yalnız çerezi tarayıcıdan silmek anahtarı ele geçiren biri için
+ * ömrü (PLATFORM_COOKIE_OPTS.maxAge=1h) boyunca geçerli bırakıyordu.
+ *
+ * (`platformAuth.ts`'teki `parseCookieToken` ile aynı mantık — buradan import edilmiyor çünkü
+ * o dosya zaten bu modülden `PLATFORM_COOKIE`'yi import ediyor; döngüsel import'tan kaçınmak
+ * için küçük bir tekrar tercih edildi.)
+ */
+function extractPlatformCookieToken(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(';')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = part.slice(0, eqIdx).trim();
+    if (key === PLATFORM_COOKIE) return decodeURIComponent(part.slice(eqIdx + 1).trim());
+  }
+  return null;
+}
+
 // POST /api/platform/logout
-export async function platformLogout(_req: Request, res: Response) {
+export async function platformLogout(req: Request, res: Response) {
+  const token = extractPlatformCookieToken(req.headers.cookie);
+  const payload = token ? verifyToken(token) : null;
+  if (payload?.jti && payload.exp) {
+    revokeAccessToken(payload.jti, payload.exp);
+  }
+
   res.clearCookie(PLATFORM_COOKIE, { ...PLATFORM_COOKIE_OPTS, maxAge: 0 });
   return res.json({ ok: true });
 }
@@ -199,6 +229,8 @@ export async function getPlatformLogs(req: Request, res: Response) {
     prisma.systemLog.count({ where }),
   ]);
 
+  // Y-02 (KVKK Md.12): platform okuma uçları da iz bırakır — kim, ne zaman, hangi filtreyle (PII yok).
+  await auditPlatformAction('VIEW_PLATFORM_LOGS', req, { count: logs.length, level, category });
   return res.json({ items: logs, total });
 }
 
@@ -234,7 +266,7 @@ export function maskPendingTenantRow(t: PendingTenantRow) {
 }
 
 // GET /api/platform/tenants/pending
-export async function listPendingTenants(_req: Request, res: Response) {
+export async function listPendingTenants(req: Request, res: Response) {
   const tenants = await prisma.tenant.findMany({
     where: { verificationStatus: 'PENDING_REVIEW' },
     select: {
@@ -248,7 +280,7 @@ export async function listPendingTenants(_req: Request, res: Response) {
       createdAt: true,
       users: {
         where: { role: 'ADMIN' },
-        select: { fullName: true, email: true },
+        select: USER_CONTACT_SELECT,
         take: 1,
       },
     },
@@ -256,6 +288,7 @@ export async function listPendingTenants(_req: Request, res: Response) {
   });
 
   const items = tenants.map(maskPendingTenantRow);
+  await auditPlatformAction('VIEW_PENDING_TENANTS', req, { count: items.length });
   return res.json({ items, total: items.length });
 }
 
@@ -285,6 +318,7 @@ export async function listAllTenants(req: Request, res: Response) {
     prisma.tenant.count(),
   ]);
 
+  await auditPlatformAction('VIEW_ALL_TENANTS', req, { count: items.length, page });
   return res.json({ items, total, page, limit });
 }
 
@@ -298,6 +332,7 @@ export async function approveTenant(req: Request, res: Response) {
     data: { verificationStatus: 'APPROVED', verifiedAt: new Date() },
   });
 
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('APPROVE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
 
   // FAZ 3 (#37): onay bildirimi — gönderim bayrak arkasında KAPALI (TENANT_NOTIFICATIONS_ENABLED).
@@ -325,6 +360,7 @@ export async function rejectTenant(req: Request, res: Response) {
     },
   });
 
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('REJECT_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
 
   // FAZ 3 (#37): red bildirimi (destekleyici dil) — gönderim bayrak arkasında KAPALI.
@@ -369,6 +405,7 @@ export async function requestTenantCorrection(req: Request, res: Response) {
     },
   });
 
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('REQUEST_TENANT_CORRECTION', req, { targetType: 'TENANT', targetTenantId: tenant.id });
 
   // FAZ 3: bildirim altyapısı — gönderim bayrak arkasında (TENANT_NOTIFICATIONS_ENABLED, varsayılan kapalı).
@@ -383,6 +420,7 @@ export async function freezeTenant(req: Request, res: Response) {
   if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
 
   await prisma.tenant.update({ where: { id: tenant.id }, data: { isActive: false } });
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('FREEZE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
@@ -393,6 +431,7 @@ export async function activateTenant(req: Request, res: Response) {
   if (!tenant) return res.status(404).json({ error: 'NOT_FOUND' });
 
   await prisma.tenant.update({ where: { id: tenant.id }, data: { isActive: true } });
+  invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('ACTIVATE_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
   return res.json({ ok: true });
 }
@@ -427,6 +466,7 @@ export async function listSuspicionReports(req: Request, res: Response) {
     contact: maskContact(contact),
   }));
 
+  await auditPlatformAction('VIEW_SUSPICION_REPORTS', req, { count: items.length });
   return res.json({ items, total: items.length });
 }
 

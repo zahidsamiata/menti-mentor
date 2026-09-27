@@ -18,6 +18,7 @@ import crypto from 'node:crypto';
 import { prisma } from '../../db.js';
 import { verifyInvitationToken } from '../invitationToken.js';
 import { signToken } from '../../middleware/jwtAuth.js';
+import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../../middleware/tenantSuspension.js';
 import { sendAdminNewUserNotification } from '../emailService.js';
 import { notifyAdminsPendingUser } from '../notificationService.js';
 import { ensureMembershipSafe } from '../membership.js';
@@ -25,6 +26,7 @@ import { recordUserActivity } from '../activityService.js';
 import { recordSignupConsent } from '../consentService.js';
 import { hashRefreshToken } from '../refreshToken.js';
 import type { OAuthCallbackResult, OAuthStatePayload, OAuthUserProfile } from './oauthTypes.js';
+import { USER_CONTACT_SELECT } from '../../utils/userSelect.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 
@@ -91,11 +93,17 @@ async function handleNewUser(
 ): Promise<OAuthCallbackResult> {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: state.tenantSlug },
-    select: { id: true, name: true, displayName: true, verificationStatus: true },
+    select: { id: true, name: true, displayName: true, verificationStatus: true, isActive: true },
   });
 
   if (!tenant) {
     throw new OAuthConflictError('TENANT_BULUNAMADI', 'Kuruluş bulunamadı. Lütfen geçerli bir bağlantı kullanın.');
+  }
+
+  // Y1-B9: form kaydıyla (authController.register) aynı kapı — dondurulmuş / reddedilmiş kuruma
+  // yeni üye alınmaz.
+  if (isTenantSuspended(tenant)) {
+    throw new OAuthConflictError(TENANT_CLOSED_FOR_SIGNUP_BODY.error, TENANT_CLOSED_FOR_SIGNUP_BODY.message);
   }
 
   // Form kaydıyla (authController.register) aynı kapı: incelemedeki kuruma yeni üye kaydı yok.
@@ -188,7 +196,7 @@ async function notifyAdmins(
 ): Promise<void> {
   const admins = await prisma.user.findMany({
     where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
-    select: { email: true, fullName: true },
+    select: USER_CONTACT_SELECT,
   });
 
   for (const admin of admins) {

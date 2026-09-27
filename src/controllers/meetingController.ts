@@ -4,10 +4,11 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { isHttpUrl } from '../services/safeUrl.js';
 import { UserRole, MeetingFormat, MeetingStatus, Weekday } from '@prisma/client';
-import { sendMeetingRequestEmail, sendMeetingApprovalEmail } from '../services/emailService.js';
+import { sendMeetingRequestEmail, sendMeetingApprovalEmail, sendMeetingRejectedEmail } from '../services/emailService.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isPairBlocked } from '../services/blockList.js';
+import { USER_CONTACT_SELECT, USER_IDENTITY_SELECT } from '../utils/userSelect.js';
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
@@ -179,7 +180,7 @@ async function checkOrientationLock(mentiId: string, res: Response): Promise<boo
   if (menti?.needsOrientation) {
     res.status(403).json({
       error:   'ORYANTASYON_KILIDI',
-      message: 'Bu menti oryantasyon kilidi nedeniyle yeni toplantı oluşturamaz.',
+      message: 'Bu menti oryantasyon kilidi nedeniyle yeni görüşme oluşturamaz.',
     });
     return true;
   }
@@ -204,11 +205,11 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
   const [mentor, menti] = await Promise.all([
     prisma.user.findFirst({
       where:  { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR', isActive: true },
-      select: { id: true, fullName: true, email: true },
+      select: USER_IDENTITY_SELECT,
     }),
     prisma.user.findFirst({
       where:  { id: mentiId, tenantId: req.tenant.tenantId, role: 'MENTI', isActive: true },
-      select: { id: true, fullName: true, email: true },
+      select: USER_IDENTITY_SELECT,
     }),
   ]);
 
@@ -292,7 +293,13 @@ export async function listMeetings(req: RequestWithTenant, res: Response) {
     },
   });
 
-  return res.json({ items: meetings, total: meetings.length });
+  // P-05 / KARAR-22 (B): `notes` mentörün iç notudur (ret gerekçesi, "gerçekleşmedi" nedeni) —
+  // menti bu gerekçeyi ASLA görmez. Yalnız görüşmenin mentörü ve ADMIN görür.
+  const items = meetings.map((m) =>
+    isAdmin || m.mentorUserId === meId ? m : { ...m, notes: null },
+  );
+
+  return res.json({ items, total: items.length });
 }
 
 const UpdateMeetingSchema = z.object({
@@ -307,11 +314,11 @@ export async function updateMeetingStatus(req: RequestWithTenant, res: Response)
   const existing = await prisma.meeting.findFirst({
     where:   { id: meetingId, tenantId: req.tenant.tenantId },
     include: {
-      mentor: { select: { fullName: true, email: true } },
+      mentor: { select: USER_CONTACT_SELECT },
       menti:  { select: { fullName: true, email: true, needsOrientation: true } },
     },
   });
-  if (!existing) return res.status(404).json({ error: 'NOT_FOUND', message: 'Toplantı bulunamadı.' });
+  if (!existing) return res.status(404).json({ error: 'NOT_FOUND', message: 'Görüşme bulunamadı.' });
 
   // Yetki (IDOR): route ADMIN|MENTOR'a açık ama bir MENTÖR yalnızca KENDİ görüşmesinin
   // statüsünü değiştirebilmeli. Aksi hâlde başka bir mentör, meetingId tahmin ederek
@@ -581,7 +588,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   const [mentorUser, mentiUser] = await Promise.all([
     prisma.user.findFirst({
       where:  { id: mentorUserId, tenantId },
-      select: { email: true, fullName: true },
+      select: USER_CONTACT_SELECT,
     }),
     prisma.user.findFirst({
       where:  { id: userId, tenantId },
@@ -672,10 +679,10 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
   }
 
   if (outcome.kind === 'not_found') {
-    return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+    return res.status(404).json({ error: 'Bekleyen görüşme bulunamadı veya yetkiniz yok.' });
   }
   if (outcome.kind === 'missing_link') {
-    return res.status(400).json({ error: 'Online görüşmeyi onaylamak için toplantı bağlantısı girmelisiniz.' });
+    return res.status(400).json({ error: 'Online görüşmeyi onaylamak için görüşme bağlantısı girmelisiniz.' });
   }
   if (outcome.kind === 'conflict') {
     return res.status(409).json({ error: 'Bu saatte sizin ya da mentinin onaylanmış başka bir görüşmesi var.' });
@@ -690,6 +697,16 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
   return res.json({ meeting: updated });
 }
 
+// AJ-12: mentörün ret gerekçesi — approveMeetingByMentor (:626 ApproveMeetingSchema) ile aynı
+// desen. Gövdesiz istekte (req.body undefined — Content-Type eksik/boş POST) eski kod
+// `req.body as { reason?: string }` ile doğrudan destructure ediyordu → TypeError → 500.
+// `validateRequest(RejectMeetingSchema, req.body ?? {}, res)` komşu uçla simetrik: 500 yerine
+// ya 400 (reason 500 karakteri aşarsa) ya da başarılı ret (reason yoksa, MarkNotHappenedSchema'daki
+// gibi opsiyonel).
+const RejectMeetingSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
 // 4-b) rejectMeetingByMentor — Mentor görüşme talebini reddeder
 export async function rejectMeetingByMentor(req: RequestWithTenant, res: Response) {
   const ctx = getCtx(req);
@@ -697,20 +714,41 @@ export async function rejectMeetingByMentor(req: RequestWithTenant, res: Respons
   const { userId, tenantId } = ctx;
 
   const meetingId = req.params['meetingId'] as string;
-  const { reason } = req.body as { reason?: string };
+
+  const parsedBody = validateRequest(RejectMeetingSchema, req.body ?? {}, res);
+  if (!parsedBody.success) return parsedBody.response;
+  const { reason } = parsedBody.data;
 
   const meeting = await prisma.meeting.findFirst({
     where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },
-    select: { id: true },
+    select: {
+      id: true, mentiUserId: true, startsAt: true,
+      menti: { select: USER_CONTACT_SELECT },
+    },
   });
   if (!meeting) {
-    return res.status(404).json({ error: 'Bekleyen toplantı bulunamadı veya yetkiniz yok.' });
+    return res.status(404).json({ error: 'Bekleyen görüşme bulunamadı veya yetkiniz yok.' });
   }
 
   const updated = await prisma.meeting.update({
     where: { id: meetingId },
     data:  { status: MeetingStatus.CANCELLED, notes: reason ?? null },
   });
+
+  // P-05 / KARAR-22 (B): onay yoluyla simetri — reddedilen menti sessiz kalmasın.
+  // Jenerik nazik metin; mentörün gerekçesi (reason) e-postaya/bildirime KONMAZ.
+  // Yanıtı bekletmez, başarısızlık reddi bozmaz; log PII'siz.
+  const { notifyMeetingRequestDeclined } = await import('../services/notificationService.js');
+  void notifyMeetingRequestDeclined(meeting.mentiUserId, tenantId);
+  void sendMeetingRejectedEmail({
+    toEmail:     meeting.menti.email,
+    mentiName:   meeting.menti.fullName,
+    scheduledAt: meeting.startsAt,
+  }).catch((err: unknown) =>
+    logger.warn('EMAIL', 'Ret bildirimi gönderilemedi', {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  );
 
   return res.json({ meeting: updated });
 }
@@ -747,7 +785,7 @@ export async function markMeetingNotHappened(req: RequestWithTenant, res: Respon
   if (!meeting) {
     return res.status(404).json({
       error:   'NOT_FOUND',
-      message: 'Tamamlanmış toplantı bulunamadı veya yetkiniz yok.',
+      message: 'Tamamlanmış görüşme bulunamadı veya yetkiniz yok.',
     });
   }
 

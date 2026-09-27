@@ -11,6 +11,7 @@
  * Tenant güncelleme işlemlerinde `invalidateTenant` çağrılmalıdır.
  */
 
+import type { TenantVerificationStatus } from '@prisma/client';
 import { prisma } from '../db.js';
 
 const TTL_MS = Number(process.env.TENANT_CACHE_TTL_MS ?? 300_000);
@@ -24,6 +25,10 @@ type CachedTenant = {
   displayName: string | null;
   logoUrl: string | null;
   primaryColor: string | null;
+  // Y1-B9: kurum askı kapısı (middleware/tenantSuspension.ts) bu iki alanı okur.
+  // Durumu değiştiren her yazımdan sonra `invalidateTenant` çağrılmalıdır.
+  isActive: boolean;
+  verificationStatus: TenantVerificationStatus;
 };
 
 type CacheEntry = {
@@ -46,6 +51,7 @@ export async function getCachedTenant(tenantId: string): Promise<CachedTenant | 
       id: true, name: true, slug: true,
       isSharedPoolActive: true, tenantVocabulary: true,
       displayName: true, logoUrl: true, primaryColor: true,
+      isActive: true, verificationStatus: true,
     },
   });
 

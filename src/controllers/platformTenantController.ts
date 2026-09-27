@@ -209,6 +209,60 @@ export async function getTenantMembers(req: Request, res: Response) {
   return res.json({ total, page, members });
 }
 
+// GET /api/platform/tenants/:id/users/:userId — tek kullanıcı drill-down (F-24/G4-08).
+// Alan kümesi BİLEREK getTenantMembers ile AYNIDIR — platform panelinin bugün zaten üye
+// listesinde gösterdiği kategori dışına çıkılmaz (ör. ham DISC vektörü, mesaj/geri bildirim
+// metni, telefon burada da YOK). Yeni bir PII kategorisi eklenmez.
+export async function getTenantUserDetail(req: Request, res: Response) {
+  const tenantId = req.params['id'] as string;
+  const userId = req.params['userId'] as string;
+  if (!(await requireTenant(tenantId, res))) return;
+
+  // Üyelik tenantId+userId ile filtrelenir: başka kurumun kullanıcısı bu yoldan asla
+  // dönmez (IDOR/kurum sızıntısı yok) — 404, kurum var/yok ile aynı mesaj (enumeration-safe).
+  const membership = await prisma.tenantMembership.findFirst({
+    where: { tenantId, userId, isActive: true },
+    select: {
+      role: true,
+      isActive: true,
+      createdAt: true,
+      certificationStatus: true,
+      isCertified: true,
+      learningJourneyCompletedAt: true,
+      // Yalnızca kimlik + kategorik DISC + KVKK rıza durumu. Ham profil alanları SEÇİLMEZ.
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          discType: true,
+          kvkkConsentAt: true,
+        },
+      },
+    },
+  });
+
+  if (!membership) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bu kurumda bulunamadı.' });
+  }
+
+  await audit('VIEW_TENANT_USER', tenantId, req, { userId });
+
+  return res.json({
+    id: membership.user.id,
+    fullName: membership.user.fullName,
+    role: membership.role,
+    isActive: membership.isActive,
+    joinedAt: membership.createdAt,
+    emailMasked: maskEmail(membership.user.email), // KVKK: ham e-posta response'a girmez
+    discType: membership.user.discType,
+    certificationStatus: membership.certificationStatus,
+    isCertified: membership.isCertified,
+    learningJourneyCompletedAt: membership.learningJourneyCompletedAt,
+    hasKvkkConsent: membership.user.kvkkConsentAt != null,
+  });
+}
+
 // GET /api/platform/tenants/:id/meetings?status=&page=
 export async function getTenantMeetings(req: Request, res: Response) {
   const tenantId = req.params['id'] as string;

@@ -104,9 +104,9 @@ export async function sendMeetingRequestEmail(args: {
   const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   await send(
     args.toEmail,
-    'Yeni Toplantı Talebi',
+    'Yeni Görüşme Talebi',
     `<p>Merhaba ${escapeHtml(args.mentorName)},</p>
-     <p><strong>${escapeHtml(args.mentiName)}</strong> sizinle <strong>${tarih}</strong> tarihinde bir toplantı talep etti.</p>
+     <p><strong>${escapeHtml(args.mentiName)}</strong> sizinle <strong>${tarih}</strong> tarihinde bir görüşme talep etti.</p>
      <p>Lütfen sisteme giriş yaparak talebi onaylayın veya reddedin.</p>`,
   );
 }
@@ -120,10 +120,29 @@ export async function sendMeetingApprovalEmail(args: {
   const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   await send(
     args.toEmail,
-    'Toplantı Talebiniz Onaylandı',
+    'Görüşme Talebiniz Onaylandı',
     `<p>Merhaba ${escapeHtml(args.mentiName)},</p>
-     <p><strong>${escapeHtml(args.mentorName)}</strong>, <strong>${tarih}</strong> tarihli toplantı talebinizi onayladı.</p>
-     <p>Toplantıya hazırlıklı gelmeyi unutmayın!</p>`,
+     <p><strong>${escapeHtml(args.mentorName)}</strong>, <strong>${tarih}</strong> tarihli görüşme talebinizi onayladı.</p>
+     <p>Görüşmeye hazırlıklı gelmeyi unutmayın!</p>`,
+  );
+}
+
+// P-05 / KARAR-22 (B): mentör görüşme talebini reddettiğinde mentiye nazik, jenerik bilgi.
+// Mentörün yazdığı ret gerekçesi (Meeting.notes) BİLİNÇLİ olarak parametre bile değildir —
+// menti "hayır"ı "ben yetersizim" diye okumasın; alternatif mentör önerisi de yoktur (KARAR-22 B).
+export async function sendMeetingRejectedEmail(args: {
+  toEmail: string;
+  mentiName: string;
+  scheduledAt: Date;
+}): Promise<boolean> {
+  const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
+  return send(
+    args.toEmail,
+    'Görüşme Talebiniz Hakkında',
+    `<p>Merhaba ${escapeHtml(args.mentiName)},</p>
+     <p><strong>${tarih}</strong> tarihli görüşme talebiniz bu sefer gerçekleşemiyor: mentörünüz şu an yeni görüşme alamıyor.</p>
+     <p>Bu durum sizinle ya da profilinizle ilgili bir değerlendirme değildir.</p>
+     <p>Gelişim yolculuğunuza devam etmek için dilediğiniz zaman sisteme giriş yapabilirsiniz.</p>`,
   );
 }
 
@@ -340,9 +359,22 @@ export async function sendFeedbackReminderEmail(args: {
   const tarih = escapeHtml(args.scheduledAt.toLocaleString('tr-TR'));
   return send(
     args.toEmail,
-    'Toplantı Geri Bildiriminizi Bekliyoruz',
+    'Görüşme Geri Bildiriminizi Bekliyoruz',
     `<p>Merhaba ${escapeHtml(args.recipientName)},</p>
-     <p>${tarih} tarihli toplantı için henüz geri bildirim vermediniz.</p>
+     <p>${tarih} tarihli görüşme için henüz geri bildirim vermediniz.</p>
      <p>Birkaç dakikanızı ayırarak değerlendirmenizi tamamlamanız, eşleşme kalitesini artırmaktadır.</p>`,
+  );
+}
+
+// AN-09: public şüphe formundan yeni kayıt geldiğinde platform yöneticisine haber verir.
+// Bilinçli olarak YALNIZ kayıt no gider — bildirenin adı/iletişimi/açıklaması e-postaya (ve SMTP sağlayıcısına)
+// konmaz; içerik platform panelinde okunur.
+export async function sendSuspicionReportAlert(args: { toEmail: string; reportId: string }): Promise<boolean> {
+  return send(
+    args.toEmail,
+    'Yeni şüphe bildirimi',
+    `<p>Platforma yeni bir şüphe bildirimi geldi (kayıt no: <strong>${escapeHtml(args.reportId)}</strong>).</p>
+     <p>Kişisel verilerin korunması için bildirimin içeriği bu e-postaya eklenmedi.
+     Lütfen platform panelindeki şüphe bildirimleri bölümünden inceleyin.</p>`,
   );
 }

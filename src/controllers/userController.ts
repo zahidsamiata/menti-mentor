@@ -10,6 +10,7 @@ import { canViewerSeeDiscType } from '../services/discVisibility.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { applyKAnonymity } from '../services/mask.js';
 import { validateRequest } from '../middleware/validate.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 // ─── Security: Tag Poisoning Prevention ───────────────────────────────────────
 // Etiketlerdeki XSS, injection ve kimlik gizleme girişimlerini önler.
@@ -530,7 +531,7 @@ export async function createUser(req: RequestWithTenant, res: Response) {
     const [admins, tenantRecord] = await Promise.all([
       prisma.user.findMany({
         where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
-        select: { email: true, fullName: true },
+        select: USER_CONTACT_SELECT,
       }),
       prisma.tenant.findUnique({
         where: { id: req.tenant.tenantId },

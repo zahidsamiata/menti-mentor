@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { parsePagination, LIST_PAGE } from '../services/pagination.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
+import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { validateRequest } from '../middleware/validate.js';
 
 // Not: requesterUserId body'de ALINMAZ — talep sahibi kimliği doğrulanmış kullanıcıdır
@@ -53,6 +54,15 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
       return res.status(403).json({
         error: 'SHARED_POOL_KAPALI',
         message: 'Bu mentorun tenant havuzu kapalı olduğu için talep gönderilemez.',
+      });
+    }
+    // KR-19b: idari blok eşleşme isteğini de durdurur (önceden yalnız startConversation
+    // kontrol ediyordu — K5-Y2 denetimi). startConversation ile AYNI kural: iki tarafın
+    // tenant'ı, yön bağımsız. Varlık ifşası yok: jenerik 403, blok bilgisi sızdırılmaz.
+    if (await isPairBlockedInTenants([req.tenant.tenantId, target.tenantId], requester.id, target.id)) {
+      return res.status(403).json({
+        error: 'ISLEM_YAPILAMIYOR',
+        message: 'Bu işlem şu anda gerçekleştirilemiyor.',
       });
     }
   }

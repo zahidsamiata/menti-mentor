@@ -3,6 +3,7 @@ import { requireTenant } from '../middleware/tenant.js';
 import { requireRole } from '../middleware/authorize.js';
 import {
   getKpiDashboard,
+  exportKpiReport,
   adminListUsers,
   adminListMatches,
   adminListCertResults,
@@ -41,6 +42,8 @@ router.use(requireRole('ADMIN'));
 
 // ─── KPI & Raporlama ──────────────────────────────────────────────────────────
 router.get('/kpi', getKpiDashboard as unknown as RequestHandler);
+// F-18: aynı toplu KPI'lar CSV olarak (Excel uyumlu) — kişi düzeyinde veri yok
+router.get('/kpi/export', exportKpiReport as unknown as RequestHandler);
 // "Kimse kaynıyor mu" — mentörsüz menti / ölü eşleşme / pasif üye + arz-talep dengesi (drill-down)
 router.get('/health-metrics', getHealthMetrics as unknown as RequestHandler);
 

@@ -73,6 +73,16 @@ export function parseUploadMaxBytes(raw: string | undefined = process.env.UPLOAD
   return DEFAULT_UPLOAD_MAX_BYTES;
 }
 
+/**
+ * F-05 (G1-26) — Cloudflare Turnstile CAPTCHA gizli anahtarı.
+ * Boş/tanımsız ise `middleware/turnstile.ts` NO-OP'tur (doğrudan `next()`) — anahtar
+ * Dokploy env'ine girilene kadar bugünkü davranış (yalnız IP rate-limit) aynen korunur.
+ * Diğer parse* fonksiyonları gibi çağrı-zamanında okunur (bkz. üstteki `config.turnstile` notu).
+ */
+export function getTurnstileSecretKey(raw: string | undefined = process.env.TURNSTILE_SECRET_KEY): string {
+  return raw?.trim() ?? '';
+}
+
 // Backend base URL — hem config.backendBaseUrl hem de yüklenen avatar'ın public
 // URL tabanı için kullanılır. Object içinde iki kez tekrar etmemek için üste alındı.
 const backendBaseUrl = process.env.BACKEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000';
@@ -185,5 +195,15 @@ export const config = {
     },
     /** Başarılı veya başarısız OAuth sonrasında frontend'e yönlendirme adresi. */
     frontendCallbackUrl: process.env.FRONTEND_OAUTH_CALLBACK_URL ?? 'http://localhost:3001/oauth/callback',
+  },
+
+  /**
+   * F-05 (G1-26) — Cloudflare Turnstile CAPTCHA. Yalnız referans/okunabilirlik içindir;
+   * `middleware/turnstile.ts` bu değeri DEĞİL, `getTurnstileSecretKey()`'i çağrı-zamanında
+   * okur (rateLimiter.ts eşikleri gibi) — böylece testler kendi anahtarını env'e yazıp
+   * middleware'i tetikleyebilir, modül-yükleme anında donmuş bir değer buna engel olmaz.
+   */
+  turnstile: {
+    secretKey: getTurnstileSecretKey(),
   },
 };

@@ -1,12 +1,14 @@
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
-import { isPairBlocked } from '../services/blockList.js';
+import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { sendNewChatMessageEmail } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
+import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 // Chat v1 — menti↔mentör talep mesajlaşma.
 // Güvenlik sınırı KATILIMCIDIR (tenant değil): shared-pool'da taraflar farklı
@@ -104,7 +106,7 @@ async function emailRecipientIfCaughtUp(
   if (unreadBefore > 0) return; // zaten okunmamış var → tekrar mail atma
   const recipient = await prisma.user.findUnique({
     where: { id: recipientId },
-    select: { email: true, fullName: true },
+    select: USER_CONTACT_SELECT,
   });
   if (!recipient) return;
   void sendNewChatMessageEmail({
@@ -162,13 +164,7 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   // aksine — oradaki "yalnız kendi tenant'ı" kısayolu liste sıralaması için yeterliyken,
   // burada tek bir eylemi (konuşma açma) engellemek için her iki taraf da kontrol edilir).
   // Varlık ifşası YOK: blok bilgisi kullanıcıya sızdırılmaz, jenerik hata döner.
-  const blockTenantIds = Array.from(new Set([tenantId, mentor.tenantId]));
-  const blockTenants = await prisma.tenant.findMany({
-    where: { id: { in: blockTenantIds } },
-    select: { blockedPairs: true },
-  });
-  const isBlocked = blockTenants.some((t) => isPairBlocked(t.blockedPairs, mentiId, mentor.id));
-  if (isBlocked) {
+  if (await isPairBlockedInTenants([tenantId, mentor.tenantId], mentiId, mentor.id)) {
     return res.status(403).json({
       error: 'ISLEM_YAPILAMIYOR',
       message: 'Bu işlem şu anda gerçekleştirilemiyor.',
@@ -230,6 +226,27 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Konuşma bulunamadı.' });
   }
 
+  // KR-19b: idari blok, blok KONMADAN ÖNCE açılmış konuşmada da mesajlaşmayı durdurur
+  // (önceden yalnız startConversation kontrol ediyordu — K5-Y2 denetimi). startConversation ile
+  // AYNI kural: konuşmanın tenant'ı + iki tarafın home tenant'ı; blok yön bağımsız. Taraflık
+  // yukarıda doğrulandığı için 403 varlık ifşa etmez; jenerik metin, blok bilgisi sızmaz.
+  // Okuma (getMessages/listConversations) bilinçli olarak açık bırakıldı — ürün kararı.
+  const [mentorUser, mentiUser] = await Promise.all([
+    prisma.user.findUnique({ where: { id: convo.mentorUserId }, select: { tenantId: true } }),
+    prisma.user.findUnique({ where: { id: convo.mentiUserId }, select: { tenantId: true } }),
+  ]);
+  const blocked = await isPairBlockedInTenants(
+    [convo.tenantId, mentorUser?.tenantId, mentiUser?.tenantId],
+    convo.mentorUserId,
+    convo.mentiUserId,
+  );
+  if (blocked) {
+    return res.status(403).json({
+      error: 'ISLEM_YAPILAMIYOR',
+      message: 'Bu işlem şu anda gerçekleştirilemiyor.',
+    });
+  }
+
   // Okundu-bazlı e-posta (mesaj oluşmadan ÖNCE): alıcı güncelse ilk okunmamışta mail.
   await emailRecipientIfCaughtUp(convo, otherSide(side), req.auth.fullName);
 
@@ -272,32 +289,65 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
     }),
   ]);
 
-  const items = await Promise.all(
-    convos.map(async (c) => {
-      const side = sideOf(c, me)!;
-      const lastRead = lastReadForSide(c, side);
-      const unread = await prisma.message.count({
+  // AJ-06: eskiden sayfadaki HER konuşma için ayrı unread-count + son-mesaj sorgusu vardı
+  // (sayfa boyutuyla orantılı N+1). Şimdi sayfa başına sabit 2 sorgu:
+  //  1) unread — her konuşmanın KENDİ eşiğine (lastReadForSide) göre OR koşuluyla groupBy;
+  //     eşik konuşmadan konuşmaya FARKLI olduğu için tek WHERE'le sayılamaz, bu yüzden her
+  //     konuşma kendi koşuluyla OR'a eklenir; count tek groupBy sorgusunda toplanır.
+  //  2) son mesaj — ham SQL `DISTINCT ON` (Postgres). ⚠️ Prisma'nın `findMany({ distinct })`
+  //     API'si `nativeDistinct` preview flag'i AÇIK OLMADAN (bu şemada kapalı — previewFeatures
+  //     yok, schema.prisma'ya DOKUNULMADI) SQL'e `DISTINCT ON` olarak inmez; eşleşen TÜM satırları
+  //     (mesaj içerikleriyle) belleğe çekip uygulama katmanında filtreler — uzun sohbetlerde eski
+  //     N+1'den daha kötü sonuç verir (bağımsız inceleme, PR #174 yorumu). Bu yüzden burada
+  //     Prisma.sql + Prisma.join ile parametreli ham SQL kullanılır (string birleştirme YOK →
+  //     enjeksiyon riski yok); Postgres DISTINCT ON'u index'le (`@@index([conversationId, createdAt])`)
+  //     sunucu tarafında, satır satır belleğe çekmeden uygular.
+  // Sayfa boş ise hiç sorgu atılmaz.
+  const convoIds = convos.map((c) => c.id);
+
+  const unreadGroups = convoIds.length === 0
+    ? []
+    : await prisma.message.groupBy({
+        by: ['conversationId'],
         where: {
-          conversationId: c.id,
-          senderUserId: { not: me },
-          ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
+          OR: convos.map((c) => {
+            const side = sideOf(c, me)!;
+            const lastRead = lastReadForSide(c, side);
+            return {
+              conversationId: c.id,
+              senderUserId: { not: me },
+              ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
+            };
+          }),
         },
+        _count: { _all: true },
       });
-      const last = await prisma.message.findFirst({
-        where: { conversationId: c.id },
-        orderBy: { createdAt: 'desc' },
-        select: { content: true, createdAt: true, senderUserId: true },
-      });
-      const counterpart = side === 'mentor' ? c.menti : c.mentor;
-      return {
-        id: c.id,
-        counterpart,
-        lastMessagePreview: last ? preview(last.content) : null,
-        lastMessageAt: c.lastMessageAt,
-        unread,
-      };
-    }),
-  );
+  const unreadByConvo = new Map(unreadGroups.map((g) => [g.conversationId, g._count._all]));
+
+  const lastMessages = convoIds.length === 0
+    ? []
+    : await prisma.$queryRaw<Array<{ conversationId: string; content: string }>>(
+        Prisma.sql`
+          SELECT DISTINCT ON ("conversationId") "conversationId", "content"
+          FROM "Message"
+          WHERE "conversationId" IN (${Prisma.join(convoIds)})
+          ORDER BY "conversationId", "createdAt" DESC
+        `,
+      );
+  const lastByConvo = new Map(lastMessages.map((m) => [m.conversationId, m]));
+
+  const items = convos.map((c) => {
+    const side = sideOf(c, me)!;
+    const last = lastByConvo.get(c.id) ?? null;
+    const counterpart = side === 'mentor' ? c.menti : c.mentor;
+    return {
+      id: c.id,
+      counterpart,
+      lastMessagePreview: last ? preview(last.content) : null,
+      lastMessageAt: c.lastMessageAt,
+      unread: unreadByConvo.get(c.id) ?? 0,
+    };
+  });
 
   return res.json({ items, total, limit, offset });
 }
