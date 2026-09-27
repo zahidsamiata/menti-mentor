@@ -696,6 +696,16 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
   return res.json({ meeting: updated });
 }
 
+// AJ-12: mentörün ret gerekçesi — approveMeetingByMentor (:626 ApproveMeetingSchema) ile aynı
+// desen. Gövdesiz istekte (req.body undefined — Content-Type eksik/boş POST) eski kod
+// `req.body as { reason?: string }` ile doğrudan destructure ediyordu → TypeError → 500.
+// `validateRequest(RejectMeetingSchema, req.body ?? {}, res)` komşu uçla simetrik: 500 yerine
+// ya 400 (reason 500 karakteri aşarsa) ya da başarılı ret (reason yoksa, MarkNotHappenedSchema'daki
+// gibi opsiyonel).
+const RejectMeetingSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
 // 4-b) rejectMeetingByMentor — Mentor görüşme talebini reddeder
 export async function rejectMeetingByMentor(req: RequestWithTenant, res: Response) {
   const ctx = getCtx(req);
@@ -703,7 +713,10 @@ export async function rejectMeetingByMentor(req: RequestWithTenant, res: Respons
   const { userId, tenantId } = ctx;
 
   const meetingId = req.params['meetingId'] as string;
-  const { reason } = req.body as { reason?: string };
+
+  const parsedBody = validateRequest(RejectMeetingSchema, req.body ?? {}, res);
+  if (!parsedBody.success) return parsedBody.response;
+  const { reason } = parsedBody.data;
 
   const meeting = await prisma.meeting.findFirst({
     where: { id: meetingId, tenantId, mentorUserId: userId, status: MeetingStatus.PENDING },

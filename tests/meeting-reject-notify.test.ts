@@ -98,6 +98,30 @@ describe('P-05 — görüşme talebi reddi menti bildirimi', () => {
     expect(unchanged?.status).toBe('PENDING');
   });
 
+  // AJ-12: gövdesiz istek (Content-Type/body yok → req.body undefined) eskiden
+  // `req.body as { reason?: string }` doğrudan destructure edildiği için 500 veriyordu.
+  it('AJ-12: gövdesiz istek 500 vermez — reason yokmuş gibi ret tamamlanır', async () => {
+    await http
+      .post(`/api/meetings/${meetingId}/reject`)
+      // .send() yok — Content-Type/body hiç gönderilmiyor, req.body undefined kalır.
+      .set(tenantHeaders(tenantId, tokenFor(mentorA)))
+      .expect(200);
+    const updated = await testPrisma.meeting.findUnique({ where: { id: meetingId } });
+    expect(updated?.status).toBe('CANCELLED');
+    expect(updated?.notes).toBeNull();
+  });
+
+  // Negatif: gövdesiz istekte de IDOR koruması (kendi görüşmesi değilse 404) aynı kalmalı.
+  it('AJ-12: gövdesiz istek + başka mentörün görüşmesi → hâlâ 404 (500 değil)', async () => {
+    await http
+      .post(`/api/meetings/${meetingId}/reject`)
+      .set(tenantHeaders(tenantId, tokenFor(mentorB)))
+      .expect(404);
+    expect(mocks.sendMeetingRejectedEmail).not.toHaveBeenCalled();
+    const unchanged = await testPrisma.meeting.findUnique({ where: { id: meetingId } });
+    expect(unchanged?.status).toBe('PENDING');
+  });
+
   it('menti reddedemez (403) — e-posta gitmez', async () => {
     await http
       .post(`/api/meetings/${meetingId}/reject`)
