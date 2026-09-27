@@ -862,11 +862,15 @@ export async function rejectPendingTuning(req: RequestWithTenant, res: Response)
 
 /** GET /api/admin/managers — kurumun tüm adminlerini listele */
 export async function listAdmins(req: RequestWithTenant, res: Response) {
-  const admins = await prisma.user.findMany({
-    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
-    select: { id: true, fullName: true, email: true, createdAt: true },
-    orderBy: { createdAt: 'asc' },
+  // AJ-01: kurum-içi sayım/liste TenantMembership.role üzerinden (CLAUDE.md "Veri Modeli") —
+  // User.role değil. Bir kullanıcının bu kurumdaki (üyelik) rolü, home tenant'taki User.role'ünden
+  // farklı olabilir; bu kurumda aktif ADMIN üyeliği olan, kendisi de aktif kişiler listelenir.
+  const adminMemberships = await prisma.tenantMembership.findMany({
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true } },
+    select: { user: { select: { id: true, fullName: true, email: true, createdAt: true } } },
+    orderBy: { user: { createdAt: 'asc' } },
   });
+  const admins = adminMemberships.map((m) => m.user);
 
   return res.json({ items: admins, total: admins.length });
 }
@@ -882,8 +886,9 @@ export async function promoteToAdmin(req: RequestWithTenant, res: Response) {
   if (!target) return res.status(404).json({ error: 'KULLANICI_BULUNAMADI' });
   if (target.role === 'ADMIN') return res.status(400).json({ error: 'ZATEN_ADMIN' });
 
-  const adminCount = await prisma.user.count({
-    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
+  // AJ-01: limit sayımı TenantMembership.role üzerinden — User.role değil (CLAUDE.md "Veri Modeli").
+  const adminCount = await prisma.tenantMembership.count({
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true } },
   });
   if (adminCount >= MAX_ADMINS_PER_TENANT) {
     return res.status(403).json({
@@ -913,8 +918,9 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
   if (target.role !== 'ADMIN') return res.status(400).json({ error: 'KULLANICI_ADMIN_DEGIL' });
 
   // Son admin koruma: en az 1 admin kalmalı
-  const adminCount = await prisma.user.count({
-    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
+  // AJ-01: sayım TenantMembership.role üzerinden — User.role değil (CLAUDE.md "Veri Modeli").
+  const adminCount = await prisma.tenantMembership.count({
+    where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true, user: { isActive: true } },
   });
   if (adminCount <= 1) {
     return res.status(400).json({

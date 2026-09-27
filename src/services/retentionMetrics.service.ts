@@ -45,9 +45,11 @@ export async function computeHealthMetrics(
   const staleCutoff = daysAgo(staleMatchDays);
 
   // ── Arz-talep dengesi (rol dağılımı) ──────────────────────────────────────
-  const roleCounts = await prisma.user.groupBy({
+  // AJ-01: kurum-içi rol sayımı TenantMembership.role üzerinden (CLAUDE.md "Veri Modeli") —
+  // User.role değil. Bir kullanıcı bu kurumda farklı, başka kurumda farklı rolde olabilir.
+  const roleCounts = await prisma.tenantMembership.groupBy({
     by: ['role'],
-    where: { tenantId, isActive: true, approvalStatus: 'APPROVED' },
+    where: { tenantId, isActive: true, user: { isActive: true, approvalStatus: 'APPROVED' } },
     _count: { id: true },
   });
   const mentors = roleCounts.find((r) => r.role === 'MENTOR')?._count.id ?? 0;

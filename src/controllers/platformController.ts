@@ -90,9 +90,13 @@ export async function getPlatformStats(_req: Request, res: Response) {
   ] = await Promise.all([
     prisma.tenant.count(),
     prisma.user.count(),
-    prisma.user.count({ where: { role: 'MENTOR' } }),
-    prisma.user.count({ where: { role: 'MENTI' } }),
-    prisma.user.count({ where: { role: 'ADMIN' } }),
+    // AJ-01: kurum-içi rol sayımı TenantMembership.role üzerinden (CLAUDE.md "Veri Modeli") —
+    // User.role değil. Platform genelinde bir kişi birden çok kurumda farklı rolde olabilir;
+    // bu üç sayı artık "kaç kurumda bu rolde aktif üyelik var" anlamına gelir (kişi başına
+    // birden fazla sayılabilir), önceki hâli yalnız kişinin home-tenant rolünü sayıyordu.
+    prisma.tenantMembership.count({ where: { role: 'MENTOR' } }),
+    prisma.tenantMembership.count({ where: { role: 'MENTI' } }),
+    prisma.tenantMembership.count({ where: { role: 'ADMIN' } }),
     prisma.meeting.count(),
     prisma.meeting.count({ where: { status: 'PENDING' } }),
     prisma.meeting.count({ where: { status: 'COMPLETED' } }),

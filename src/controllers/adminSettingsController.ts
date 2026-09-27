@@ -237,8 +237,12 @@ export async function getSuperAdminDashboard(_req: Request, res: Response) {
     prisma.tenant.count(),
     prisma.tenant.count({ where: { isActive: true } }),
     prisma.user.count({ where: { isActive: true } }),
-    prisma.user.count({ where: { role: 'MENTOR', isActive: true } }),
-    prisma.user.count({ where: { role: 'MENTI',  isActive: true } }),
+    // AJ-01: kurum-içi rol sayımı TenantMembership.role üzerinden (CLAUDE.md "Veri Modeli") —
+    // User.role değil. Platform genelinde bir kişi birden çok kurumda farklı rolde olabilir;
+    // bu iki sayı artık "kaç kurumda mentor/menti üyeliği var" anlamına gelir (kişi başına
+    // birden fazla sayılabilir), önceki hâli yalnız kişinin home-tenant rolünü sayıyordu.
+    prisma.tenantMembership.count({ where: { role: 'MENTOR', isActive: true, user: { isActive: true } } }),
+    prisma.tenantMembership.count({ where: { role: 'MENTI',  isActive: true, user: { isActive: true } } }),
     // Tamamlanan görüşmelerin toplam dakikası
     prisma.meeting.aggregate({
       _sum: { durationMin: true },
