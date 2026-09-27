@@ -8,7 +8,6 @@
 
 import { z } from 'zod';
 import type { Response } from 'express';
-import type { UserRole } from '@prisma/client';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { computeKpiStats, buildKpiReportRows, kpiReportFileName } from '../services/kpiReport.service.js';
@@ -209,14 +208,9 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   const { role, isActive, rematchOnly, approvalStatus, page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
 
-  // AJ-40: liste/filtre/toplam BU kurumun üyeliğinden (TenantMembership.role, CLAUDE.md "Veri
-  // Modeli") — User.role/home tenant değil. Rol filtresi üyelik rolüne uygulanır; kişinin başka
-  // kurumdaki rolü bu kurumun listesini etkilemez. Üyelik isActive şartı konmaz: yönetici pasife
-  // aldığında User.isActive düşer (üyelik aktif kalır) — "Pasif" filtresi User.isActive ile çalışır.
   const where = {
-    memberships: {
-      some: { tenantId: req.tenant.tenantId, ...(role !== undefined && { role }) },
-    },
+    tenantId: req.tenant.tenantId,
+    ...(role !== undefined && { role }),
     ...(isActive !== undefined && { isActive }),
     ...(rematchOnly && { rematchPriority: true }),
     ...(approvalStatus !== undefined && { approvalStatus }),
@@ -284,16 +278,14 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   // platform admin'de zaten görünür (platformTenantController); STK yöneticisi de havuzda görsün
   // (retention göstergesi). Kaynak yine TenantMembership (rol-bazlı yolculuk anı), tenant-scoped.
   const userIds = base.map((u) => u.id);
-  const roleByUser = new Map<string, UserRole>();
   const qualityByUser = new Map<string, number>();
   const journeyByUser = new Map<string, Date>();
   if (userIds.length > 0) {
     const memberships = await prisma.tenantMembership.findMany({
       where:  { tenantId: req.tenant.tenantId, userId: { in: userIds } },
-      select: { userId: true, role: true, qualityMultiplier: true, learningJourneyCompletedAt: true },
+      select: { userId: true, qualityMultiplier: true, learningJourneyCompletedAt: true },
     });
     for (const m of memberships) {
-      roleByUser.set(m.userId, m.role);
       qualityByUser.set(m.userId, m.qualityMultiplier);
       if (m.learningJourneyCompletedAt) journeyByUser.set(m.userId, m.learningJourneyCompletedAt);
     }
@@ -301,8 +293,6 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
 
   const items = base.map((u) => ({
     ...u,
-    // AJ-40: gösterilen rol BU kurumdaki üyelik rolü (User.role home tenant'a aittir).
-    role: roleByUser.get(u.id) ?? u.role,
     approvedByName: u.approvedBy ? nameById.get(u.approvedBy) ?? null : null,
     rejectedByName: u.rejectedBy ? nameById.get(u.rejectedBy) ?? null : null,
     // Ham çarpan (0.8–1.2, nötr 1.0). FE yöneticiye anlaşılır biçime çevirir (5 üzerinden puan).
