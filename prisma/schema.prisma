@@ -1080,6 +1080,14 @@ model AvailabilityBlock {
   endTime   String // "HH:MM" — örn. "16:00"
   timezone  String  @default("Europe/Istanbul")
   isActive  Boolean @default(true)
+  // K-15 (KARAR-1 → A, "tam mimari"): mentör artık slot açarken format+süreyi de belirler;
+  // menti yalnız slotu seçer, format/süreyi kendisi seçemez (bookMeeting bu ikisini blokla
+  // birebir eşleştirir). Var olan satırlar için varsayılan ONLINE/60dk — PO'nun KARAR-1
+  // cevabında açıkça kabul ettiği (ve yedek tablosuyla güvenceye alınan) meşru anlam
+  // değişikliği: eskiden blok yalnız gün+saat penceresiydi, format/süre menti tarafından
+  // serbestçe seçiliyordu; artık ikisi de mentörün tanımıdır.
+  format      MeetingFormat @default(ONLINE)
+  durationMin Int           @default(60)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

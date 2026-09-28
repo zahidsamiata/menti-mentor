@@ -1,0 +1,32 @@
+-- K-15 (KARAR-1 → A, "tam mimari"): AvailabilityBlock'a format + süre eklenir.
+--
+-- Mentör artık müsaitlik bloğu açarken görüşme formatını (online/yüz yüze/telefon) ve
+-- süresini (dakika) da belirler; menti yalnız hazır bir slotu seçer, format/süreyi kendisi
+-- seçemez (bkz. backend/src/controllers/meetingController.ts bookMeeting — blokla birebir eşleşme).
+--
+-- "MeetingFormat" enum'u zaten var (Meeting.format, 20260613215517_add_calendar_and_availability
+-- migration'ında yaratıldı) — yeni bir enum YARATILMAZ, aynısı yeniden kullanılır.
+--
+-- Varsayılan değerler (format=ONLINE, durationMin=60): PO'nun KARAR-1 cevabında ("A") açıkça
+-- kabul ettiği varsayılan — mevcut satırlar hata vermeden ONLINE/60dk'lık slotlara dönüşür.
+-- Bu, kasıtlı bir anlam değişikliğidir: eskiden blok yalnız gün+saat penceresiydi, format ve
+-- süreyi menti serbestçe seçiyordu (frontend/src/app/(dashboard)/book-meeting/page.tsx eski
+-- FORMATS/DURATIONS seçicileri); artık ikisi de mentörün slot tanımının bir parçasıdır. PO bu
+-- riski KARAR-1 cevabında kabul etti ve "önce yedek tablo" şartını koydu — bkz. PR açıklaması
+-- (availability_block_yedek_<tarih> + geri alma SQL'i).
+--
+-- Neon shadow-DB güvenli deseni: ADD COLUMN IF NOT EXISTS (idempotent, iki kez çalışsa da bozmaz).
+--
+-- ⚠️ BU TUR ÇALIŞTIRILMADI — yalnız dosya üretildi (DATABASE_URL yok, `prisma db execute`/
+--    `prisma migrate` komutları bu turda ÇAĞRILMADI). Uygulama AYRI bir turda, PO'nun AÇIK
+--    "EVET"i + tarihli yedek tablo sonrası yapılır (CLAUDE.md § Migration Kuralı, Bölüm 7b istisna 1).
+--
+-- Uygulama sırası (AYRI TUR, PO onayı + yedek ZORUNLU):
+--   1) CREATE TABLE "availability_block_yedek_<YYYYMMDD>" AS SELECT * FROM "AvailabilityBlock";
+--      (satır sayısı doğrulaması + tam SQL PR açıklamasında)
+--   2) `prisma db execute --file prisma/migrations/20260927000000_availability_block_format_duration/migration.sql`
+--   3) `prisma migrate resolve --applied 20260927000000_availability_block_format_duration`
+
+-- AlterTable
+ALTER TABLE "AvailabilityBlock" ADD COLUMN IF NOT EXISTS "format" "MeetingFormat" NOT NULL DEFAULT 'ONLINE';
+ALTER TABLE "AvailabilityBlock" ADD COLUMN IF NOT EXISTS "durationMin" INTEGER NOT NULL DEFAULT 60;
