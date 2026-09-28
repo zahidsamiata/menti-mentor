@@ -78,7 +78,6 @@ export async function createTenant(req: Request, res: Response) {
       primaryColor: parsed.data.primaryColor ?? '#6366f1',
       tenantVocabulary: parsed.data.tenantVocabulary,
     },
-    select: TENANT_ADMIN_RESPONSE_SELECT,
   });
 
   return res.status(201).json(tenant);
@@ -105,7 +104,6 @@ export async function listTenants(_req: Request, res: Response) {
 export async function getTenant(req: Request, res: Response) {
   const tenant = await prisma.tenant.findUnique({
     where: { id: req.params['id'] as string },
-    select: TENANT_ADMIN_RESPONSE_SELECT,
   });
 
   if (!tenant) {
@@ -150,7 +148,6 @@ export async function updateTenant(req: Request, res: Response) {
   const updated = await prisma.tenant.update({
     where: { id: existing.id },
     data: parsed.data,
-    select: TENANT_ADMIN_RESPONSE_SELECT,
   });
 
   invalidateTenant(existing.id);
