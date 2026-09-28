@@ -38,6 +38,11 @@ import {
 import { signToken } from '../src/middleware/jwtAuth.js';
 import type { User, Tenant } from '@prisma/client';
 
+// E-4 karantina: GET /api/meetings/pair-signal karantinada (410). Bu dosya o ucun handler davranışını korumaya
+// devam eder — kapı ortam değişkeniyle yeniden açılır (vitest pool=forks: her dosya ayrı süreç,
+// değişken başka dosyaya sızmaz). Kapının kendisi `e4-karantina.test.ts`'te test edilir.
+process.env['QUARANTINE_REOPEN'] = 'meetings-pair-signal';
+
 type SeededUser = Awaited<ReturnType<typeof createMenti>>;
 
 function tokenFor(u: Pick<User, 'id' | 'tenantId' | 'role' | 'fullName'>): string {

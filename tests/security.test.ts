@@ -19,6 +19,11 @@ import systemLogRoutes from '../src/routes/systemLogRoutes.js';
 import { notFoundHandler, globalErrorHandler } from '../src/middleware/errorHandler.js';
 import type { Tenant, User } from '@prisma/client';
 
+// E-4 karantina: GET /api/system-logs karantinada (410). Bu dosya o ucun handler davranışını korumaya
+// devam eder — kapı ortam değişkeniyle yeniden açılır (vitest pool=forks: her dosya ayrı süreç,
+// değişken başka dosyaya sızmaz). Kapının kendisi `e4-karantina.test.ts`'te test edilir.
+process.env['QUARANTINE_REOPEN'] = 'system-logs';
+
 // ─── Test app: sadece system-log route'unu içerir ────────────────────────────
 function createSystemLogTestApp() {
   const app = express();
