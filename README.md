@@ -31,8 +31,15 @@ cp .env.example .env
 # .env içinde DATABASE_URL, JWT_SECRET, OPENAI_API_KEY doldurun
 
 # 3. Veritabanı
-npm run prisma:migrate
 npm run prisma:generate
+npm run prisma:migrate:status   # Salt-okuma: uygulanmış/bekleyen migration listesi
+# ⛔ `npm run prisma:migrate` (= `prisma migrate dev`) KORUMALIDIR (AJ-57): şema sapmasında DB'yi
+# SIFIRLAMAYI önerir, sıfırlama sonrası prisma/seed.ts kendiliğinden koşar (deleteMany). CANLI =
+# LOKAL AYNI DB → yalnız MENTI_TEHLIKELI_DB_ONAY=migrate-dev verilirse, izole/geçici DB'de çalışır.
+# Şema değişikliği: CLAUDE.md § Migration Kuralı — `IF NOT EXISTS` SQL + `npx prisma db execute`
+# + `npx prisma migrate resolve --applied <ad>` (KARAR "evet" + tarihli yedek sonrası).
+# Boş, izole bir DB'ye (host doğrulanmış) şema kurmak: `npx prisma migrate deploy` (sıfırlamaz,
+# seed koşmaz). `prisma migrate reset` ve `prisma db push --accept-data-loss` YASAKTIR.
 
 # 4. Kanonik/mock veri (geliştirme / yük testi)
 # ⚠️ npm run seed TEHLİKELİDİR — toplu deleteMany() çalıştırır (userResponse/feedback/
@@ -59,8 +66,12 @@ npm run prisma:generate
 # DB'deki mevcut veri kullanılır. Mock veri gerekiyorsa önce DATABASE_URL'i izole/geçici bir
 # DB'ye yönlendirin (host'u doğrulayın), ancak ondan sonra yukarıdaki uyarıları okuyarak
 # ilgili komutu elle çalıştırın. Komutların tam listesi: § Geliştirme Komutları.
-# (tests/readme-seed-guard.unit.test.ts bu README'de çalıştırılabilir `npm run seed` satırı
-# olmadığını denetler.)
+# `npm run seed`, `prisma db seed` ve doğrudan `tsx prisma/seed.ts` onay değişkeni
+# (MENTI_TEHLIKELI_DB_ONAY=seed) olmadan hiçbir DB işlemi yapmadan çıkar (AJ-57,
+# scripts/db-guard.ts + prisma/seed-approval-gate.ts); seed.ts ayrıca yerel host +
+# SEED_ALLOW_DESTRUCTIVE ister (KR-01, src/seedGuard.ts).
+# (tests/readme-seed-guard.unit.test.ts bu README'de çalıştırılabilir seed / migrate dev /
+# migrate reset / db push --accept-data-loss satırı olmadığını denetler.)
 
 # 5. Geliştirme sunucusu
 npm run dev
@@ -438,9 +449,12 @@ npm start                # Production build çalıştır
 npm run lint             # ESLint
 npm run format           # Prettier
 npm run prisma:generate  # Prisma client yenile
-npm run prisma:migrate   # Migration uygula
+npm run prisma:migrate:status  # Salt-okuma: uygulanmış/bekleyen migration listesi
+# npm run prisma:migrate  # ⛔ KORUMALI (AJ-57) — `prisma migrate dev`; DB'yi sıfırlayıp seed koşturabilir.
+                         # Yalnız MENTI_TEHLIKELI_DB_ONAY=migrate-dev + izole DB. Şema değişikliği:
+                         # CLAUDE.md § Migration Kuralı (IF NOT EXISTS SQL + db execute + migrate resolve).
 npm run prisma:studio    # Prisma Studio GUI
-# npm run seed           # ⛔ ÇALIŞTIRMA — toplu deleteMany() (veri SİLER); CANLI=LOKAL AYNI DB.
+# npm run seed           # ⛔ ÇALIŞTIRMA — toplu deleteMany() (veri SİLER); CANLI=LOKAL AYNI DB. KORUMALI (AJ-57).
                          # Yalnız izole/geçici DB'de, host doğrulanarak, bilerek.
 npm run seed:certification    # Silme yapmaz AMA canlı içeriği günceller: sertifikasyon soru
                                # bankası (kanonik içerik) + bankada olmayan soruları pasifleştirir.

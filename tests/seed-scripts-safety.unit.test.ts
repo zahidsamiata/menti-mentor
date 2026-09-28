@@ -76,8 +76,9 @@ describe('AJ-08 · seed:* komutlarının hedef betiklerinde silme deseni yok', (
     });
   }
 
-  it('bilinen-tehlikeli düz "seed" komutu güvenli listede DEĞİL (silme protokolü — dokunulmadı)', () => {
+  it('bilinen-tehlikeli düz "seed" komutu güvenli listede DEĞİL; AJ-57 koruma betiğinden geçer', () => {
     expect(seedCommandNames).not.toContain('seed');
-    expect(scripts['seed']).toBe('tsx prisma/seed.ts');
+    // AJ-57: eski değer "tsx prisma/seed.ts" → onay kapısı (arşiv: docs/arsiv/silinenler-2026-09-28.md).
+    expect(scripts['seed']).toBe('tsx scripts/db-guard.ts seed');
   });
 });

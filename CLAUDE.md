@@ -18,7 +18,11 @@ npm run lint               # ESLint
 npm run format             # Prettier
 
 npm run prisma:generate    # Regenerate Prisma client after schema changes
-npm run prisma:migrate     # Apply pending migrations
+npm run prisma:migrate:status  # Read-only: list applied/pending migrations
+# npm run prisma:migrate   # ⛔ GUARDED (AJ-57) — runs `prisma migrate dev` only with MENTI_TEHLIKELI_DB_ONAY=migrate-dev;
+#                          # migrate dev may RESET the DB and auto-run prisma/seed.ts (deleteMany). LIVE = LOCAL SAME DB.
+#                          # Schema changes: root CLAUDE.md § Migration Kuralı (IF NOT EXISTS SQL + db execute + migrate resolve).
+# npm run seed             # ⛔ GUARDED (AJ-57) — never run (root CLAUDE.md § CANLI = LOKAL AYNI DB).
 npm run prisma:studio      # Open Prisma Studio GUI
 ```
 

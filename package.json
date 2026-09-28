@@ -9,11 +9,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate": "tsx scripts/db-guard.ts migrate-dev",
+    "prisma:migrate:status": "prisma migrate status",
     "prisma:studio": "prisma studio",
     "lint": "eslint .",
     "format": "prettier -w .",
-    "seed": "tsx prisma/seed.ts",
+    "seed": "tsx scripts/db-guard.ts seed",
     "seed:certification": "tsx prisma/seed-certification.ts",
     "seed:learning-journey": "tsx prisma/seed-learning-journey.ts",
     "seed:test-tenant": "node scripts/seed-test-tenant.mjs",
@@ -39,7 +40,7 @@
     "zod": "^4.1.5"
   },
   "prisma": {
-    "seed": "npx tsx prisma/seed.ts"
+    "seed": "npx tsx scripts/db-guard.ts seed"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
