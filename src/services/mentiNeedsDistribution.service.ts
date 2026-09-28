@@ -81,7 +81,7 @@ export function buildMentiNeedsDistribution(
 /** Kurumun aktif menti üyelerinin S1 cevaplarından toplu dağılım (kurum yalnız çağırandan gelir). */
 export async function computeMentiNeedsDistribution(tenantId: string): Promise<MentiNeedsDistribution> {
   const memberships = await prisma.tenantMembership.findMany({
-    where: { tenantId, role: 'MENTI', isActive: true, user: { isActive: true } },
+    where: { tenantId: undefined, role: 'MENTI', isActive: true, user: { isActive: true } },
     select: { user: { select: { mentiNeeds: true } } },
   });
   return buildMentiNeedsDistribution(memberships.map((m) => m.user.mentiNeeds));
