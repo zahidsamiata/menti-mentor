@@ -9,7 +9,7 @@ import { ensureMembershipSafe } from '../services/membership.js';
 import { canViewerSeeDiscType, toPublicDiscResultCard } from '../services/discVisibility.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { applyKAnonymity } from '../services/mask.js';
-import { validateRequest } from '../middleware/validate.js';
+import { validateRequest, sendValidationError } from '../middleware/validate.js';
 import { TemperamentResultWriteSchema } from '../services/jsonFieldSchemas.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
@@ -467,16 +467,16 @@ export async function patchSelfProfile(req: RequestWithTenant, res: Response) {
   }
 
   if (typeof req.body !== 'object' || Array.isArray(req.body)) {
-    return res.status(400).json({ error: 'VALIDATION', message: 'Body bir JSON objesi olmalıdır.' });
+    return sendValidationError(res, 'Body bir JSON objesi olmalıdır.');
   }
 
   // Security: selfProfile bomba koruması — maksimum 50 anahtar, 100 char key
   const bodyKeys = Object.keys(req.body as object);
   if (bodyKeys.length > 50) {
-    return res.status(400).json({ error: 'VALIDATION', message: 'selfProfile en fazla 50 anahtar içerebilir.' });
+    return sendValidationError(res, 'selfProfile en fazla 50 anahtar içerebilir.');
   }
   if (bodyKeys.some((k) => k.length > 100)) {
-    return res.status(400).json({ error: 'VALIDATION', message: 'selfProfile anahtarları en fazla 100 karakter olabilir.' });
+    return sendValidationError(res, 'selfProfile anahtarları en fazla 100 karakter olabilir.');
   }
 
   const existing = (user.selfProfile as Record<string, unknown>) ?? {};

@@ -5,7 +5,7 @@ import { prisma } from '../db.js';
 import { applyFeedbackSignal } from '../services/rewardPenalty.js';
 import { computePairSignalFromCheckIns, PAIR_SIGNAL_CONFIG } from '../services/pairSignal.service.js';
 import { logger } from '../services/logger.js';
-import { validateRequest } from '../middleware/validate.js';
+import { validateRequest, sendValidationError } from '../middleware/validate.js';
 
 // ─── Katman 1: Zorunlu kısa değerlendirme ────────────────────────────────────
 
@@ -132,7 +132,7 @@ export async function getCheckIns(req: RequestWithTenant, res: Response) {
 export async function getPairEfficiencySignal(req: RequestWithTenant, res: Response) {
   const { mentorId, mentiId } = req.query as { mentorId?: string; mentiId?: string };
   if (!mentorId || !mentiId) {
-    return res.status(400).json({ error: 'mentorId ve mentiId gerekli.' });
+    return sendValidationError(res, 'mentorId ve mentiId gerekli.');
   }
 
   // Bu çiftin son N görüşmesindeki check-in'leri çek (eşik: pairSignal.service).

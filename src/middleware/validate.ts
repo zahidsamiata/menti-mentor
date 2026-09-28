@@ -41,3 +41,20 @@ export function validateRequest<S extends z.ZodType>(
   }
   return { success: true, data: parsed.data };
 }
+
+/**
+ * Zod'suz elle yapılan girdi kontrolleri için AYNI 400 biçimi (AJ-62).
+ *
+ * Neden: bazı uçlar (randevu müsaitliği, selfProfile boyut koruması, check-in çift sinyali)
+ * kontrolü şema yerine elle yapar; bunlar `{ error: '<Türkçe cümle>' }` ya da `details`'siz
+ * `VALIDATION` dönüyordu. Artık tek cümlelik hata da `validateRequest` ile aynı biçimde gider:
+ * `error: 'VALIDATION'` kodu, cümle `message`'da (ön yüz `client.ts` önce bunu okur) ve
+ * Zod `flatten()` şeklinde `details` (cümle `formErrors`'ta, alan hatası yok).
+ */
+export function sendValidationError(res: Response, message: string): Response {
+  return res.status(400).json({
+    error: 'VALIDATION',
+    message,
+    details: { formErrors: [message], fieldErrors: {} },
+  });
+}

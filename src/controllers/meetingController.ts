@@ -6,7 +6,7 @@ import { isHttpUrl } from '../services/safeUrl.js';
 import { UserRole, MeetingFormat, MeetingStatus, Weekday } from '@prisma/client';
 import { sendMeetingRequestEmail, sendMeetingApprovalEmail, sendMeetingRejectedEmail } from '../services/emailService.js';
 import { logger } from '../services/logger.js';
-import { validateRequest } from '../middleware/validate.js';
+import { validateRequest, sendValidationError } from '../middleware/validate.js';
 import { isPairBlocked } from '../services/blockList.js';
 import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { USER_CONTACT_SELECT, USER_IDENTITY_SELECT } from '../utils/userSelect.js';
@@ -365,20 +365,20 @@ export async function saveAvailability(req: RequestWithTenant, res: Response) {
   };
 
   if (!Array.isArray(blocks)) {
-    return res.status(400).json({ error: 'blocks bir dizi olmalı.' });
+    return sendValidationError(res, 'blocks bir dizi olmalı.');
   }
 
   for (const b of blocks) {
     if (!VALID_WEEKDAYS.includes(b.weekday)) {
-      return res.status(400).json({ error: `Geçersiz gün: ${b.weekday}` });
+      return sendValidationError(res, `Geçersiz gün: ${b.weekday}`);
     }
     const s = timeToMinutes(b.startTime);
     const e = timeToMinutes(b.endTime);
     if (s === null || e === null) {
-      return res.status(400).json({ error: 'Saatler HH:MM formatında olmalı.' });
+      return sendValidationError(res, 'Saatler HH:MM formatında olmalı.');
     }
     if (s >= e) {
-      return res.status(400).json({ error: 'Başlangıç saati bitişten önce olmalı.' });
+      return sendValidationError(res, 'Başlangıç saati bitişten önce olmalı.');
     }
   }
 
@@ -427,7 +427,7 @@ export async function getAvailability(req: RequestWithTenant, res: Response) {
 
   const mentorUserId = req.query['mentorUserId'] as string | undefined;
   if (!mentorUserId) {
-    return res.status(400).json({ error: 'mentorUserId query parametresi gerekli.' });
+    return sendValidationError(res, 'mentorUserId query parametresi gerekli.');
   }
 
   const mentorMembership = await prisma.tenantMembership.findUnique({
@@ -478,19 +478,19 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   } = parsed.data;
 
   if (!VALID_FORMATS.includes(format as MeetingFormat)) {
-    return res.status(400).json({ error: `Geçersiz format: ${format}` });
+    return sendValidationError(res, `Geçersiz format: ${format}`);
   }
 
   const start = new Date(startsAtRaw);
   const end   = new Date(endsAtRaw);
   if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-    return res.status(400).json({ error: 'startsAt/endsAt geçerli ISO tarih olmalı.' });
+    return sendValidationError(res, 'startsAt/endsAt geçerli ISO tarih olmalı.');
   }
   if (start >= end) {
-    return res.status(400).json({ error: 'Başlangıç bitişten önce olmalı.' });
+    return sendValidationError(res, 'Başlangıç bitişten önce olmalı.');
   }
   if (start.getTime() < Date.now()) {
-    return res.status(400).json({ error: 'Geçmiş bir zamana görüşme oluşturulamaz.' });
+    return sendValidationError(res, 'Geçmiş bir zamana görüşme oluşturulamaz.');
   }
 
   // KR-19 / AJ-54: idari blok — startConversation ve POST /api/requests ile AYNI kural:
@@ -521,7 +521,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
       return res.status(403).json({ error: 'Bu eşleşme için görüşme oluşturma yetkiniz yok.' });
     }
     if (match.mentor.userId !== mentorUserId) {
-      return res.status(400).json({ error: 'mentorUserId bu eşleşmenin mentörüyle uyuşmuyor.' });
+      return sendValidationError(res, 'mentorUserId bu eşleşmenin mentörüyle uyuşmuyor.');
     }
   }
 
@@ -697,7 +697,7 @@ export async function approveMeetingByMentor(req: RequestWithTenant, res: Respon
     return res.status(404).json({ error: 'Bekleyen görüşme bulunamadı veya yetkiniz yok.' });
   }
   if (outcome.kind === 'missing_link') {
-    return res.status(400).json({ error: 'Online görüşmeyi onaylamak için görüşme bağlantısı girmelisiniz.' });
+    return sendValidationError(res, 'Online görüşmeyi onaylamak için görüşme bağlantısı girmelisiniz.');
   }
   if (outcome.kind === 'conflict') {
     return res.status(409).json({ error: 'Bu saatte sizin ya da mentinin onaylanmış başka bir görüşmesi var.' });
@@ -860,7 +860,7 @@ export async function markFeedbackPrompted(req: RequestWithTenant, res: Response
   const { userId, tenantId } = ctx;
 
   const meetingId = req.params['meetingId'] as string;
-  if (!meetingId) return res.status(400).json({ error: 'meetingId gerekli.' });
+  if (!meetingId) return sendValidationError(res, 'meetingId gerekli.');
 
   const meeting = await prisma.meeting.findFirst({
     where: {
