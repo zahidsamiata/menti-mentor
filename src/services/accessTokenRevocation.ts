@@ -35,6 +35,9 @@
  *     `authenticateTenantAdmin` kayıt yoksa reddeder (bkz. middleware/membershipAccess.ts). Bu liste
  *     yine de tutulur: (a) `sid`'siz eski anahtarlar, (b) oturum kaydı olmayan PLATFORM anahtarı
  *     için tek iptal yolu budur — platform anahtarında yeniden başlatma boşluğu sürer.
+ *   - ⚠️ AJ-51 (2026-09-28): PLATFORM anahtarı için yeniden başlatma boşluğu da kapatıldı — çıkış
+ *     ayrıca SystemLog'a yazılır, requirePlatformAdmin bellekte yoksa DB'ye bakar (bkz.
+ *     services/platformSessionRevocation.ts). Bu liste orada önbellek görevi görür.
  *
  * GERİYE UYUMLULUK: bu değişiklikten ÖNCE imzalanmış anahtarlarda `jti` YOKTUR. Böyle bir
  * anahtar logout'ta iptal listesine hiç GİRMEZ (revokeAccessToken jti'siz çağrılmaz) —

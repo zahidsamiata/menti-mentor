@@ -20,7 +20,8 @@ vi.mock('../src/db.js', () => ({
     user: { findUnique: vi.fn().mockResolvedValue(null) },
     refreshToken: { create: vi.fn() },
     tenant: { findUnique: vi.fn().mockResolvedValue(null) },
-    systemLog: { create: vi.fn().mockResolvedValue({}) },
+    // AJ-51: requirePlatformAdmin DB'de çıkış kaydı arar — burada kayıt yok.
+    systemLog: { create: vi.fn().mockResolvedValue({}), findFirst: vi.fn().mockResolvedValue(null) },
   },
   runWithTenant: (_tenantId: string, fn: () => unknown) => fn(),
 }));
@@ -169,23 +170,24 @@ describe('AJ-87 · geçiş: tür-siz ESKİ erişim anahtarı bir ömür kabul ed
 });
 
 describe('AJ-87 · platform doğrulayıcısı', () => {
-  function platformGate(token: string): number {
+  // AJ-51: requirePlatformAdmin artık async (DB'de çıkış kaydı kontrolü) → beklenir.
+  async function platformGate(token: string): Promise<number> {
     const req = { headers: { cookie: `${PLATFORM_COOKIE}=${token}` } } as unknown as Request;
     const res = fakeRes();
     let passed = false;
-    requirePlatformAdmin(req, res as unknown as Response, (() => { passed = true; }) as NextFunction);
+    await requirePlatformAdmin(req, res as unknown as Response, (() => { passed = true; }) as NextFunction);
     return passed ? 200 : res.statusCode;
   }
 
-  it('platform anahtarı (aud + typ:platform) → kabul', () => {
+  it('platform anahtarı (aud + typ:platform) → kabul', async () => {
     expect((jwt.decode(platformToken()) as { typ?: string }).typ).toBe('platform');
-    expect(platformGate(platformToken())).toBe(200);
+    expect(await platformGate(platformToken())).toBe(200);
   });
 
-  it('negatif: erişim / state / davet anahtarı platform kapısında → 403', () => {
-    expect(platformGate(accessToken())).toBe(403);
-    expect(platformGate(createOAuthState('kurum', 'MENTI'))).toBe(403);
-    expect(platformGate(invitationToken())).toBe(403);
+  it('negatif: erişim / state / davet anahtarı platform kapısında → 403', async () => {
+    expect(await platformGate(accessToken())).toBe(403);
+    expect(await platformGate(createOAuthState('kurum', 'MENTI'))).toBe(403);
+    expect(await platformGate(invitationToken())).toBe(403);
   });
 
   it('negatif: aud:platform taşıyan ama typ:access olan anahtar platform sayılmaz', () => {
