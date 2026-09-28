@@ -235,12 +235,13 @@ describe('AJ-19 negatif test kovası — son parti', () => {
       expect(res.body.error).toBe('KIMLIK_DOGRULANMADI');
     });
 
-    it('(b) yanlış rol (MENTOR/MENTI) → 403 YETKI_YOK', async () => {
+    // AJ-118: kurum-içi rol yalnız üyelikten okunur → MENTOR üyeliği reddi UYELIK_BULUNAMADI (hâlâ 403, veri dönmez).
+    it('(b) yanlış rol (MENTOR/MENTI üyeliği) → 403 UYELIK_BULUNAMADI', async () => {
       const res = await http
         .get(`/api/tenants/${tenantA.slug}/preview`)
         .set('Authorization', `Bearer ${tokenFor(mentorA)}`)
         .expect(403);
-      expect(res.body.error).toBe('YETKI_YOK');
+      expect(res.body.error).toBe('UYELIK_BULUNAMADI');
     });
 
     it('(c) başka kurumun yöneticisi → 403 YETKI_YOK, DISC/persona verisi dönmez', async () => {
