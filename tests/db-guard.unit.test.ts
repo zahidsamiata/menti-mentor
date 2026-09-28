@@ -137,7 +137,14 @@ describe('AJ-96 · migrate-dev onayı yalnız yerel veritabanında geçer', () =
   });
 
   it('hedef doğrulanamıyorsa (adres yok / bozuk / ?host= ile ezilmiş) + doğru onay → ret', () => {
-    for (const url of [undefined, '', '   ', 'bozuk adres', 'postgresql://u:p@localhost:5432/db?host=ep-x.neon.tech']) {
+    for (const url of [
+      undefined,
+      '',
+      '   ',
+      'bozuk adres',
+      'postgresql://u:p@localhost:5432/db?host=ep-x.neon.tech',
+      'postgresql://u:p@localhost:5432/${REST}', // Prisma genişletir, kapı göremez
+    ]) {
       const deps = fakeDeps();
       expect(runDangerousDbCommand(['migrate-dev'], approved(url), deps), String(url)).toBe(
         DB_GUARD_REFUSED_EXIT_CODE,

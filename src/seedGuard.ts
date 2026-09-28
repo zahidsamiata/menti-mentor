@@ -36,6 +36,9 @@ export type LocalDbHostCheck =
 export function checkLocalDatabaseUrl(rawUrl: string | undefined): LocalDbHostCheck {
   const url = rawUrl?.trim();
   if (!url) return { ok: false, reason: 'missing' };
+  // Prisma .env'deki `${VAR}` ifadesini genişletir, dotenv genişletmez → iki taraf farklı adres
+  // görebilir (ör. `localhost/${X}` içinde `?host=uzak`). Hedef doğrulanamaz sayılır.
+  if (url.includes('$')) return { ok: false, reason: 'unparseable' };
 
   let parsed: URL;
   try {
