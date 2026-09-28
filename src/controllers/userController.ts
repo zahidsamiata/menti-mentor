@@ -5,7 +5,14 @@ import { prisma } from '../db.js';
 import { socialUrlSchema } from '../services/socialUrl.js';
 import { sendAdminNewUserNotification } from '../services/emailService.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
-import { ensureMembershipSafe } from '../services/membership.js';
+import {
+  ACTIVE_MEMBERSHIP_ROLES_SELECT,
+  activeMemberRoleWhere,
+  ensureMembershipSafe,
+  findTenantAdminUsers,
+  getActiveMembershipRole,
+  roleInTenant,
+} from '../services/membership.js';
 import { canViewerSeeDiscType, toPublicDiscResultCard } from '../services/discVisibility.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { applyKAnonymity } from '../services/mask.js';
@@ -74,7 +81,8 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
     // Admin PENDING'i AYRI endpoint'ten görür (adminListUsers → /api/admin/users); bu endpoint
     // yalnız peer taramasıdır, admin akışını etkilemez.
     approvalStatus: 'APPROVED' as const,
-    ...(role !== undefined && { role }),
+    // AJ-105: rol filtresi bu kurumdaki AKTİF üyelik rolünden (User.role kişi-genel).
+    ...(role !== undefined && activeMemberRoleWhere(req.tenant.tenantId, role)),
     ...(isActive !== undefined && { isActive }),
   };
 
@@ -89,6 +97,7 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
       select: {
         id: true,
         role: true,
+        ...ACTIVE_MEMBERSHIP_ROLES_SELECT,
         fullName: true,
         isActive: true,
         sectorTags: true,
@@ -109,10 +118,14 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
   // Menti→mentör yönünde mentörün DISC tipi response'ta HİÇ dönmez (alan tamamen çıkarılır),
   // yalnızca uyum skoru kalır. Mentör→menti ve admin yönlerinde tip korunur. Merkezi kural:
   // discVisibility.canViewerSeeDiscType. Frontend gizleme ek katmandır; asıl kapatma burada.
+  // AJ-105: hedef rol bu kurumdaki üyelikten; üyelik yoksa null → yalnız ADMIN görür (kısıtlayıcı taraf).
+  // Yanıttaki `role` da kurum-içi roldür (üyelik yoksa eski davranış: User.role).
   const viewerRole = req.auth?.role;
-  const safeItems = items.map((u) => {
-    if (canViewerSeeDiscType(viewerRole, u.role)) return u;
-    const { discType: _hiddenDisc, ...rest } = u;
+  const safeItems = items.map(({ memberships, ...u }) => {
+    const memberRole = roleInTenant(memberships, req.tenant.tenantId);
+    const item = { ...u, role: memberRole ?? u.role };
+    if (canViewerSeeDiscType(viewerRole, memberRole)) return item;
+    const { discType: _hiddenDisc, ...rest } = item;
     return rest;
   });
 
@@ -227,10 +240,15 @@ export async function getUser(req: RequestWithTenant, res: Response) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
   }
 
+  // AJ-105: hedefin rolü bu kurumdaki AKTİF üyelikten (User.role kişi-genel). Üyelik yoksa DISC
+  // kararı kısıtlayıcı tarafa düşer (yalnız ADMIN görür); yanıttaki `role` kurum-içi rol (yoksa User.role).
+  const memberRole = await getActiveMembershipRole(user.id, req.tenant.tenantId);
+  user.role = memberRole ?? user.role;
+
   // KARAR 5: public (self/admin olmayan) bakışta discType + discResultCard bakan-rol/hedef-rol
   // çiftine göre kısıtlanır. Menti→mentör detayında ikisi de response'tan çıkarılır (sızıntı yok).
   // fullAccess yolunda (self/admin) USER_FULL_SELECT zaten hepsini içerir — dokunulmaz.
-  if (!fullAccess && !canViewerSeeDiscType(req.auth?.role, user.role)) {
+  if (!fullAccess && !canViewerSeeDiscType(req.auth?.role, memberRole)) {
     const { discType: _hiddenDisc, discResultCard: _hiddenCard, ...rest } = user;
     return res.json(rest);
   }
@@ -538,10 +556,8 @@ export async function createUser(req: RequestWithTenant, res: Response) {
   // MENTOR/MENTI kayıtları PENDING başlar — tenant adminlerine bildirim gönder
   if (user.role === 'MENTOR' || user.role === 'MENTI') {
     const [admins, tenantRecord] = await Promise.all([
-      prisma.user.findMany({
-        where: { tenantId: req.tenant.tenantId, role: 'ADMIN', isActive: true },
-        select: USER_CONTACT_SELECT,
-      }),
+      // AJ-105: alıcılar bu kurumun AKTİF ADMIN üyeleri (User.role + ana kurum değil).
+      findTenantAdminUsers(req.tenant.tenantId, USER_CONTACT_SELECT),
       prisma.tenant.findUnique({
         where: { id: req.tenant.tenantId },
         select: { name: true },

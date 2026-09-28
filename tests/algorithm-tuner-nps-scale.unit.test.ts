@@ -24,6 +24,11 @@ vi.mock('../src/db.js', () => ({
     feedbackLog: { findMany: mocks.feedbackLogFindMany },
     tenant: { findUnique: mocks.tenantFindUnique, update: mocks.tenantUpdate },
     user: { findMany: mocks.userFindMany },
+    // AJ-105: yönetici alıcıları üyelik tablosundan (findTenantAdminUsers) — satır { user } şeklinde.
+    tenantMembership: {
+      findMany: async (...a: unknown[]) =>
+        ((await mocks.userFindMany(...a)) as unknown[]).map((user) => ({ user })),
+    },
   },
 }));
 vi.mock('../src/services/logger.js', () => ({

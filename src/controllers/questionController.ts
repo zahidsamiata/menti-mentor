@@ -34,6 +34,7 @@ import {
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { sendAdminTestCompletedNotification } from '../services/emailService.js';
 import { USER_IDENTITY_SELECT } from '../utils/userSelect.js';
+import { findTenantAdminUsers } from '../services/membership.js';
 
 // ─── Validasyon şemaları ──────────────────────────────────────────────────────
 
@@ -418,10 +419,8 @@ async function triggerWaitingRoomNotificationIfNeeded(
   });
 
   // Tenant admin'lerini bul
-  const admins = await prisma.user.findMany({
-    where: { tenantId, role: 'ADMIN', isActive: true },
-    select: USER_IDENTITY_SELECT,
-  });
+  // AJ-105: alıcılar bu kurumun AKTİF ADMIN üyeleri (User.role + ana kurum değil).
+  const admins = await findTenantAdminUsers(tenantId, USER_IDENTITY_SELECT);
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
