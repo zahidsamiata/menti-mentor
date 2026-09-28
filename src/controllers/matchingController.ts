@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { rankMentisForMentor, rankMentorsForMenti, MAX_MATCH_CANDIDATES, type RankedMenti, type RankedMentor } from '../services/matching.js';
-import { canCrossTenantMatch } from '../services/tenantSharing.js';
+import { resolveCrossTenantTarget } from '../services/tenantSharing.js';
 import { validateRequest } from '../middleware/validate.js';
 import { rejectIfCallerNotApproved } from '../middleware/approvalGate.js';
 
@@ -162,12 +162,15 @@ export async function setVisibilityOptIn(req: RequestWithTenant, res: Response) 
   }
 
   // cross-tenant kasıtlı: menti farklı tenant'tan olabilir (shared pool).
-  // canCrossTenantMatch çağrısı hemen ardından izin kontrolünü yapar.
-  // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından canCrossTenantMatch paylaşım iznini zorlar
-  const menti = await prisma.user.findUnique({
+  // resolveCrossTenantTarget hemen ardından izin kontrolünü yapar. AJ-103: paylaşım kapısı
+  // rol/aktiflik kontrolünden ÖNCE ve "menti yok" ile AYNI 404'ü verir → paylaşımı kapalı
+  // kurumdaki kişinin durumu sızmaz.
+  // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından resolveCrossTenantTarget paylaşım iznini zorlar
+  const mentiRow = await prisma.user.findUnique({
     where: { id: parsed.data.mentiId },
     select: { id: true, role: true, isActive: true, tenantId: true },
   });
+  const menti = await resolveCrossTenantTarget(mentiRow, req.tenant.tenantId);
   if (!menti) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Menti bulunamadı.' });
   }
@@ -176,17 +179,6 @@ export async function setVisibilityOptIn(req: RequestWithTenant, res: Response) 
     return res.status(400).json({
       error: 'GECERSIZ_ROL',
       message: 'Hedef kullanıcı aktif bir menti değil.',
-    });
-  }
-
-  const crossAllowed = await canCrossTenantMatch({
-    requesterTenantId: req.tenant.tenantId,
-    targetTenantId: menti.tenantId,
-  });
-  if (!crossAllowed) {
-    return res.status(403).json({
-      error: 'SHARED_POOL_KAPALI',
-      message: 'Tenant havuzu paylaşımı kapalı olduğu için bu menti için visibility opt-in verilemez (cross-tenant).',
     });
   }
 

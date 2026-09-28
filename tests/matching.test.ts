@@ -128,7 +128,8 @@ describe('Matching: Visibility Opt-In', () => {
       .expect(400);
   });
 
-  it('cross-tenant opt-in izole tenant\'larda 403 döner', async () => {
+  // AJ-103: eskiden 403 SHARED_POOL_KAPALI; artık "menti yok" ile AYNI 404 (varlık sızmaz).
+  it('cross-tenant opt-in izole tenant\'larda 404 döner (menti yok ile aynı)', async () => {
     const otherTenant = await createTenant({ isSharedPoolActive: false });
     const crossMenti = await createMenti(otherTenant.id);
 
@@ -136,7 +137,7 @@ describe('Matching: Visibility Opt-In', () => {
       .post(`/api/mentors/${mentorId}/visibility-optin`)
       .set(tenantHeaders(tenant.id, mentorToken))
       .send({ mentiId: crossMenti.id, status: 'APPROVED' })
-      .expect(403);
+      .expect(404);
   });
 
   it('her iki tenant shared pool aktifse cross-tenant opt-in başarılı olur', async () => {

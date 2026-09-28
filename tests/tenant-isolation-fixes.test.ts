@@ -3,7 +3,7 @@
  *
  * 1. getMentorFilter: başka tenant'ın mentör filtresi OKUNAMAZ (cross-tenant IDOR).
  * 2. createMatchRequest: talep sahibi body'den DEĞİL req.auth'tan alınır (spoof engellenir).
- * 3. createMatchRequest: paylaşımsız cross-tenant hedefe talep 403.
+ * 3. createMatchRequest: paylaşımsız cross-tenant hedefe talep reddedilir (AJ-103: "hedef yok" ile aynı 400).
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -67,7 +67,8 @@ describe('Tenant izolasyonu düzeltmeleri', () => {
     expect(res.body.requesterUserId).not.toBe(other.id);
   });
 
-  it('createMatchRequest: paylaşımsız cross-tenant hedefe 403', async () => {
+  // AJ-103: eskiden 403 SHARED_POOL_KAPALI; artık "hedef yok" ile AYNI 400 TARGET (varlık sızmaz).
+  it('createMatchRequest: paylaşımsız cross-tenant hedefe 400 (hedef yok ile aynı)', async () => {
     const tenantA = await createTenant({ isSharedPoolActive: false });
     const tenantB = await createTenant({ isSharedPoolActive: false });
     const menti = await createMenti(tenantA.id);
@@ -78,6 +79,6 @@ describe('Tenant izolasyonu düzeltmeleri', () => {
       .post('/api/requests')
       .set(tenantHeaders(tenantA.id, accessToken))
       .send({ targetType: 'USER', targetId: mentorB.id, requestMessage: 'Selam' })
-      .expect(403);
+      .expect(400);
   });
 });

@@ -163,15 +163,16 @@ describe('AJ15-1/2/3: mentörlük anlaşması confirm/renew/end', () => {
 // ─── AJ15-4: POST /api/conversations (c) ─────────────────────────────────────
 // conversationController.ts:startConversation — hedef mentör başka tenant'taysa
 // canCrossTenantMatch kontrolü; iki tenant da isSharedPoolActive:false (factory varsayılanı)
-// olduğu için paylaşım kapalı → 403 SHARED_POOL_KAPALI, konuşma oluşmaz.
+// olduğu için paylaşım kapalı → konuşma oluşmaz. AJ-103: kapalı paylaşım artık "hedef yok" ile
+// AYNI yanıtı (400 TARGET) verir — eskiden 403 SHARED_POOL_KAPALI kişinin varlığını ele veriyordu.
 describe('AJ15-4: POST /api/conversations (c) — paylaşımlı havuz kapalıyken cross-tenant', () => {
-  it('tenant B menti, tenant A mentörüne konuşma açamaz → 403; konuşma oluşmaz', async () => {
+  it('tenant B menti, tenant A mentörüne konuşma açamaz → 400 TARGET; konuşma oluşmaz', async () => {
     const res = await http
       .post('/api/conversations')
       .set(authAs(mentiB))
       .send({ mentorUserId: mentorA.id, message: 'aj15 gizli ilk mesaj' })
-      .expect(403);
-    expect(res.body.error).toBe('SHARED_POOL_KAPALI');
+      .expect(400);
+    expect(res.body.error).toBe('TARGET');
     expect(
       await testPrisma.conversation.count({ where: { mentorUserId: mentorA.id, mentiUserId: mentiB.id } }),
     ).toBe(0);
