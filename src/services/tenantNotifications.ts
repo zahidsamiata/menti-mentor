@@ -21,6 +21,21 @@ import { findTenantAdminUsers } from './membership.js';
 
 export type TenantNotificationKind = 'APPROVED' | 'REJECTED' | 'CORRECTION_REQUESTED';
 
+/**
+ * KARAR-23 (PO, 2026-09-21): kuruma yalnız ONAY ve DÜZELTME e-postası gider; RET e-postası GÖNDERİLMEZ
+ * ("ret maili kırıcı olabilir" — reddedilen kurum durumu yalnız uygulama içinde görür, U-04).
+ * REJECTED şablonu (buildTenantNotification) silinmedi: karar değişirse bu kümeye eklemek yeter.
+ */
+const EMAILED_TENANT_NOTIFICATION_KINDS: ReadonlySet<TenantNotificationKind> = new Set([
+  'APPROVED',
+  'CORRECTION_REQUESTED',
+]);
+
+/** Bu bildirim türü kuruma e-postayla gider mi? (KARAR-23) Saf fonksiyon — test edilebilir. */
+export function isTenantNotificationEmailed(kind: TenantNotificationKind): boolean {
+  return EMAILED_TENANT_NOTIFICATION_KINDS.has(kind);
+}
+
 interface TenantNotificationArgs {
   tenantId: string;
   kind: TenantNotificationKind;
@@ -84,6 +99,14 @@ export function buildTenantNotification(args: {
  * kapalıysa GERÇEK MAİL GİTMEZ, yalnız log'lanır. Non-fatal: hata ana akışı bozmaz.
  */
 export async function notifyTenantVerification(args: TenantNotificationArgs): Promise<void> {
+  // KARAR-23: ret e-postası gönderilmez — bayrak açık olsa bile. Yalnız log (KVKK: adres yok).
+  if (!isTenantNotificationEmailed(args.kind)) {
+    void logger.info('EMAIL', 'Kurum bildirimi e-postayla gönderilmez (KARAR-23).', {
+      tenantId: args.tenantId,
+      kind: args.kind,
+    });
+    return;
+  }
   try {
     // Kurum yöneticisini (ADMIN) + kurum adını bul — tenant-scoped, minimum alan.
     // AJ-105: ilk yönetici = bu kurumun en eski AKTİF ADMIN üyesi (User.role + ana kurum değil).
