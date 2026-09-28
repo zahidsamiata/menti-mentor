@@ -147,7 +147,7 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
     // submitDisc, adaptiveTestEngine, temperamentController) yazar; platform kurum analizi de aynı ölçüt.
     // `discAssessmentCompletedAt` KULLANILMAZ: yalnız onay bekleyen (PENDING) kullanıcıda, yönetici
     // bildirimi için dolar (questionController) — davetle onaylı gelen kullanıcıda hiç dolmaz.
-    prisma.tenantMembership.count({ where: participantWhere(tenantId, { discType: { not: null } }) }),
+    prisma.tenantMembership.count({ where: participantWhere(tenantId, { discAssessmentCompletedAt: { not: null } }) }),
     // Tamamlanan görüşme — kurum kapsamlı (görüşmenin kendi tenantId'si).
     prisma.meeting.count({ where: { tenantId, status: 'COMPLETED' } }),
   ]);
