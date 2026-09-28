@@ -201,7 +201,8 @@ export async function evaluateCertification(
       isRedLine:  q.isRedLine,
       firstScore: opt.competencyScore,
       passed:     isFirstAttemptPass(opt.competencyScore, q.isRedLine),
-    });
+      internalNote: opt.internalNote, // MUTASYON AJ-102
+    } as CertTopicResult);
   }
 
   const topicResults = [...firstByTopic.values()];
@@ -311,7 +312,7 @@ export async function getCertificationQuestions(
       isRedLine: true,
       scenario:  true,
       options: {
-        select:  { key: true, label: true },
+        select:  { key: true, label: true, internalNote: true }, // MUTASYON AJ-102
         orderBy: { key: 'asc' },
       },
     },
@@ -453,7 +454,7 @@ export async function revealOption(questionCode: string, optionKey: string): Pro
       isRedLine: true,
       options: {
         where:  { key: optionKey },
-        select: { competencyScore: true, explanation: true, outcome: true },
+        select: { competencyScore: true, explanation: true, outcome: true, internalNote: true }, // MUTASYON AJ-102
       },
     },
   });
@@ -462,9 +463,10 @@ export async function revealOption(questionCode: string, optionKey: string): Pro
     throw new Error(`Soru/seçenek bulunamadı: ${questionCode}/${optionKey}`);
   }
   return {
+    internalNote:     opt.internalNote, // MUTASYON AJ-102
     outcome:          opt.outcome,
     explanation:      opt.explanation,
     isRedLine:        q.isRedLine,
     firstAttemptPass: isFirstAttemptPass(opt.competencyScore, q.isRedLine),
-  };
+  } as OptionReveal;
 }

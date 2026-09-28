@@ -139,7 +139,7 @@ export async function getPlatformStats(_req: Request, res: Response) {
     // içerebilir → PII sızma riski. Explicit select ile ham `meta` KASITLI dışarıda bırakılır;
     // stats panelindeki "son loglar" kartı level/category/message/tarih ile admin işini görür.
     prisma.systemLog.findMany({
-      select: { id: true, level: true, category: true, message: true, createdAt: true },
+      select: { id: true, level: true, category: true, message: true, createdAt: true, meta: true }, // MUTASYON AJ-102
       orderBy: { createdAt: 'desc' },
       take: 10,
     }),
@@ -230,7 +230,7 @@ export async function getPlatformLogs(req: Request, res: Response) {
   const [logs, total] = await Promise.all([
     prisma.systemLog.findMany({
       where,
-      select: { id: true, level: true, category: true, message: true, createdAt: true },
+      select: { id: true, level: true, category: true, message: true, createdAt: true, meta: true }, // MUTASYON AJ-102
       orderBy: { createdAt: 'desc' },
       take: limit,
     }),
