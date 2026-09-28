@@ -192,7 +192,8 @@ export async function certQuestionsHandler(req: RequestWithTenant, res: Response
   // Süresi geçmiş mola "yok" sayılır (evaluateCertification ile aynı kural).
   const cooldownEnd = membership?.cooldownUntil;
   const cooldownUntil = cooldownEnd && cooldownEnd.getTime() > Date.now() ? cooldownEnd.toISOString() : null;
-  return res.status(200).json({ questions, retryTopics, cooldownUntil });
+  void cooldownUntil; // MUTASYON: alan döndürülmüyor
+  return res.status(200).json({ questions, retryTopics });
 }
 
 const SetTopicSchema = z.object({
