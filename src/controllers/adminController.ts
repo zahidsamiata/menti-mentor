@@ -11,6 +11,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { computeKpiStats, buildKpiReportRows, kpiReportFileName } from '../services/kpiReport.service.js';
+import { computeMentiNeedsDistribution } from '../services/mentiNeedsDistribution.service.js';
 import { toCsv } from '../services/csv.js';
 import { runWeeklyTuning, runWeeklyPurge } from '../services/cronScheduler.js';
 import { logger } from '../services/logger.js';
@@ -44,7 +45,11 @@ import { USER_APPROVAL_SELECT } from '../utils/userSelect.js';
 export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
   const tenantId = req.tenant.tenantId;
   // F-18: hesap tek kaynakta (kpiReport.service) — CSV dışa aktarımı aynı sayıları üretir.
-  const stats = await computeKpiStats(tenantId);
+  // AJ-89: mentilerin S1 ihtiyaç dağılımı — yalnız toplu, k-anonim (§10.3); kurum yalnız req.tenant'tan.
+  const [stats, mentiNeeds] = await Promise.all([
+    computeKpiStats(tenantId),
+    computeMentiNeedsDistribution(tenantId),
+  ]);
 
   return res.json({
     tenantId,
@@ -62,6 +67,7 @@ export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
         successRate: stats.feedback.successRate,
       },
       activeJobListings: stats.activeJobListings,
+      mentiNeeds,
     },
   });
 }
