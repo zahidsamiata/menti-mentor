@@ -2,6 +2,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
+import type { UserRole } from '@prisma/client';
 import { prisma } from '../db.js';
 import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAuth.js';
 import { revokeAccessToken } from '../services/accessTokenRevocation.js';
@@ -13,7 +14,7 @@ import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
 import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthStateService.js';
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
-import { ensureMembershipSafe, findTenantAdminUsers } from '../services/membership.js';
+import { ensureMembershipSafe, findTenantAdminUsers, getActiveMembershipRole } from '../services/membership.js';
 import { recordSignupConsent, hasCurrentSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
@@ -250,6 +251,20 @@ interface SessionUserSource {
   needsReconsent: boolean;
 }
 
+/**
+ * AJ-115: oturum yanıtındaki (login/refresh gövdesi) rol = oturum kurumundaki AKTİF üyelik rolü.
+ * Neden: ön yüz ekran seçimini (yönetici paneli / mentör / menti) bu alandan yapıyor; arka uç ise
+ * yetki kararını kurum-içi rolle veriyor (`requireTenant` her istekte üyelikten düzeltir). `User.role`
+ * kişi-genel tek alandır — üyelik rolü farklıysa yanlış panel açılıyordu (CLAUDE.md "Veri Modeli").
+ * Aktif üyelik yoksa `User.role` döner: yanıt şekli bozulmaz; o oturum zaten `requireTenant`'ta
+ * UYELIK_BULUNAMADI ile durur. Yalnız OKUMA — kişi-genel rol yazımı (KARAR-133) buraya girmez.
+ */
+async function sessionRoleFor(
+  user: { id: string; tenantId: string; role: UserRole },
+): Promise<UserRole> {
+  return (await getActiveMembershipRole(user.id, user.tenantId)) ?? user.role;
+}
+
 function toSessionUser(user: SessionUserSource) {
   return {
     id: user.id,
@@ -391,7 +406,7 @@ export async function login(req: Request, res: Response) {
   return res.json({
     accessToken,
     expiresIn: 3600,
-    user: toSessionUser({ ...user, needsReconsent }),
+    user: toSessionUser({ ...user, role: await sessionRoleFor(user), needsReconsent }),
     tenant,
   });
 }
@@ -540,7 +555,7 @@ export async function refresh(req: Request, res: Response) {
   return res.json({
     accessToken,
     expiresIn: 3600,
-    user: toSessionUser({ ...stored.user, needsReconsent }),
+    user: toSessionUser({ ...stored.user, role: await sessionRoleFor(stored.user), needsReconsent }),
     tenant: await loadSessionTenant(stored.user.tenantId),
   });
 }
@@ -850,7 +865,6 @@ export async function getMe(req: RequestWithTenant, res: Response) {
     where: { id: req.auth.userId, tenantId: req.tenant.tenantId, isActive: true },
     select: {
       id: true,
-      role: true,
       fullName: true,
       email: true,
       discType: true,
@@ -885,6 +899,9 @@ export async function getMe(req: RequestWithTenant, res: Response) {
   // #12: kendi profili — DISC çoklu-harf türetilir (vektör kendi verisi, zaten dönüyor).
   return res.json({
     ...user,
+    // AJ-115: kurum-içi rol (üyelikten; requireTenant her istekte düzeltir) — User.role değil.
+    // Ön yüz ekran seçimini bu alandan yapar; yetki kararıyla aynı kaynak olmalı.
+    role: req.auth.role,
     tenantId: req.tenant.tenantId, // KR-03: istemci kurum markasını bu kimlikle eşler (oturumdan)
     discLetters: discLettersFromVector(user.discVector),
     needsReconsent,
