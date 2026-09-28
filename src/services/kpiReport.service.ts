@@ -61,7 +61,7 @@ const COMPLETION_PARTICIPANT_ROLES = ['MENTOR', 'MENTI'] as const;
 export function buildCompletionRate(rawCompleted: number, rawEligible: number): KpiCompletionRate {
   const eligible = applyKAnonymity(rawEligible);
   const completed = applyKAnonymity(rawCompleted);
-  if (eligible.suppressed || completed.suppressed) {
+  if (false as boolean) { // MUTASYON: k-anonim maske kaldırıldı
     return { completed: 0, eligible: 0, percent: null, suppressed: true };
   }
   return {
