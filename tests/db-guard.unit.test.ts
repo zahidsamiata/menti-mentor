@@ -25,6 +25,8 @@ import {
 
 const BACKEND_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+const LOCAL_DB_URL = 'postgresql://u:p@localhost:5432/menti_dev';
+
 function fakeDeps(exitCode = 0) {
   return { run: vi.fn(() => exitCode), logError: vi.fn() };
 }
@@ -75,7 +77,8 @@ describe('AJ-57 · checkDangerousDbApproval / runDangerousDbCommand', () => {
 
   it('doğru onay → migrate-dev ek argümanları aktarır, alt sürecin çıkış kodunu döndürür', () => {
     const deps = fakeDeps(7);
-    const env: DbGuardEnv = { [DANGEROUS_DB_APPROVAL_ENV]: 'migrate-dev' };
+    // AJ-96: migrate-dev onayı yalnız yerel host'ta geçer → izin senaryosu yerel adresle kurulur.
+    const env: DbGuardEnv = { [DANGEROUS_DB_APPROVAL_ENV]: 'migrate-dev', DATABASE_URL: LOCAL_DB_URL };
     expect(runDangerousDbCommand(['migrate-dev', '--name', 'ekle'], env, deps)).toBe(7);
     expect(deps.run).toHaveBeenCalledWith('npx', ['prisma', 'migrate', 'dev', '--name', 'ekle'], env);
   });
@@ -108,6 +111,80 @@ describe('AJ-57 · checkDangerousDbApproval / runDangerousDbCommand', () => {
     expect(migrate.message).toContain('prisma db execute');
     expect(migrate.message).toContain('prisma migrate resolve');
     expect(migrate.message).toContain('prisma:migrate:status');
+  });
+});
+
+describe('AJ-96 · migrate-dev onayı yalnız yerel veritabanında geçer', () => {
+  const approved = (DATABASE_URL: string | undefined): DbGuardEnv => ({
+    [DANGEROUS_DB_APPROVAL_ENV]: 'migrate-dev',
+    DATABASE_URL,
+  });
+
+  it('canlı biçimli (yönetilen/uzak) adres + doğru onay → ret, çalıştırıcı ÇAĞRILMAZ', () => {
+    const remote = [
+      'postgresql://u:p@ep-example-123.eu-west-2.aws.neon.tech/neondb?sslmode=require',
+      'postgresql://u:p@ep-example-123-pooler.eu-west-2.aws.neon.tech/neondb',
+      'postgresql://u:p@postgres:5432/menti', // docker-compose prod servis adı
+      'postgresql://u:p@10.0.0.5:5432/menti',
+      'postgresql://u:p@localhost.example.com:5432/menti',
+    ];
+    for (const url of remote) {
+      const deps = fakeDeps();
+      expect(runDangerousDbCommand(['migrate-dev'], approved(url), deps), url).toBe(DB_GUARD_REFUSED_EXIT_CODE);
+      expect(deps.run, url).not.toHaveBeenCalled();
+      expect(deps.logError).toHaveBeenCalledWith(expect.stringContaining('yerel değil'));
+    }
+  });
+
+  it('hedef doğrulanamıyorsa (adres yok / bozuk / ?host= ile ezilmiş) + doğru onay → ret', () => {
+    for (const url of [
+      undefined,
+      '',
+      '   ',
+      'bozuk adres',
+      'postgresql://u:p@localhost:5432/db?host=ep-x.neon.tech',
+      'postgresql://u:p@localhost:5432/${REST}', // Prisma genişletir, kapı göremez
+    ]) {
+      const deps = fakeDeps();
+      expect(runDangerousDbCommand(['migrate-dev'], approved(url), deps), String(url)).toBe(
+        DB_GUARD_REFUSED_EXIT_CODE,
+      );
+      expect(deps.run, String(url)).not.toHaveBeenCalled();
+    }
+  });
+
+  it('yerel adres + doğru onay → izin (localhost / 127.0.0.1 / ::1)', () => {
+    for (const url of [LOCAL_DB_URL, 'postgresql://u:p@127.0.0.1:5432/db', 'postgresql://u:p@[::1]:5432/db']) {
+      const decision = checkDangerousDbApproval('migrate-dev', approved(url));
+      expect(decision.allowed, url).toBe(true);
+    }
+  });
+
+  it('ret mesajı onaya rağmen neden durulduğunu ve yerel host şartını söyler', () => {
+    const decision = checkDangerousDbApproval('migrate-dev', approved('postgresql://u:p@db.example.com/x'));
+    if (decision.allowed) throw new Error('canlı biçimli adreste izin verildi');
+    expect(decision.message).toContain('DB KİLİDİ');
+    expect(decision.message).toContain('onay verildi');
+    expect(decision.message).toContain('"db.example.com" yerel değil');
+    expect(decision.message).toContain('CANLI = LOKAL AYNI DB');
+    expect(decision.message).toContain('Güvenli yol');
+  });
+
+  it('onaysız ret mesajı da onayın yalnız yerel host\'ta geçtiğini söyler', () => {
+    const decision = checkDangerousDbApproval('migrate-dev', {});
+    if (decision.allowed) throw new Error('onaysız izin verildi');
+    expect(decision.message).toContain('yalnız yerel host');
+  });
+
+  it('seed onay yolu değişmedi (host şartı seed.ts içindeki KR-01 kilidinde)', () => {
+    expect(checkDangerousDbApproval('seed', { [DANGEROUS_DB_APPROVAL_ENV]: 'seed' }).allowed).toBe(true);
+  });
+
+  it('CLI backend/.env\'i var olan ortam değişkenini ezmeden yükler (Prisma ile aynı hedef)', () => {
+    const cli = readFileSync(path.join(BACKEND_ROOT, 'scripts', 'db-guard.ts'), 'utf8');
+    expect(cli).toMatch(/dotenvConfig\(\{ path: resolve\(.*'\.\.\/\.env'\)/);
+    expect(cli).not.toMatch(/override:\s*true/);
+    expect(cli.indexOf('dotenvConfig(')).toBeLessThan(cli.indexOf('runDangerousDbCommand(process.argv'));
   });
 });
 
