@@ -38,6 +38,8 @@ router.post('/logout', platformLogout);
 
 // Protected: platform-admin token tüm aşağıdaki endpoint'ler için zorunlu.
 // Ardından IP-bazlı makul okuma limiti (X-Tenant-Id taşımayan platform trafiği için).
+// MUTASYON(DK-03): iz ucu platform kimlik kontrolünden ÖNCE — negatif testler KIRMIZI olmalı.
+router.get('/logs/:id/trace', getPlatformLogTrace);
 router.use(requirePlatformAdmin);
 router.use(platformReadRateLimiter);
 
@@ -45,7 +47,6 @@ router.use(platformReadRateLimiter);
 router.get('/stats', getPlatformStats);
 router.get('/health', getPlatformHealth);
 router.get('/logs', getPlatformLogs);
-router.get('/logs/:id/trace', getPlatformLogTrace); // DK-03: temizlenmiş hata iz kaydı (yalnız ERROR)
 
 // ─── Kurum Yönetimi ───────────────────────────────────────────────────────────
 router.get('/tenants/pending', listPendingTenants);
