@@ -131,6 +131,8 @@ describe('Sertifika deneme döngüsü', () => {
 
 // madde 157 (I-07): yanlış yapılan konu bir sonraki sınavda başta ve DİĞER varyantıyla gelir.
 // Uçtan uca: evaluate → certWrongTopics/certAttempts → GET /certification/questions.
+const failAll5A = [1, 2, 3, 4, 5].map((i) => ({ questionCode: `Q_T${i}_A`, optionKey: 'D' }));
+
 describe('Tekrar sınavda yanlış konu farklı sahneyle gelir (HTTP)', () => {
   let tenant: Tenant;
   let token: string;
@@ -155,12 +157,24 @@ describe('Tekrar sınavda yanlış konu farklı sahneyle gelir (HTTP)', () => {
       .get('/api/scoring/certification/questions')
       .set(tenantHeaders(tenant.id, token))
       .expect(200);
-    return res.body as { questions: { code: string; topic: string }[]; retryTopics: string[] };
+    return res.body as {
+      questions: { code: string; topic: string }[];
+      retryTopics: string[];
+      cooldownUntil: string | null;
+    };
+  }
+
+  async function setCooldown(userId: string, until: Date | null) {
+    await testPrisma.tenantMembership.update({
+      where: { userId_tenantId: { userId, tenantId: tenant.id } },
+      data:  { cooldownUntil: until },
+    });
   }
 
   it('ilk kez giren: sıra değişmez, her konu A ile başlar, retryTopics boş', async () => {
     const exam = await fetchExam();
     expect(exam.retryTopics).toEqual([]);
+    expect(exam.cooldownUntil).toBeNull();
     expect(exam.questions.map((q) => q.code)).toEqual(
       [1, 2, 3, 4, 5].flatMap((i) => [`Q_T${i}_A`, `Q_T${i}_B`]),
     );
@@ -180,5 +194,41 @@ describe('Tekrar sınavda yanlış konu farklı sahneyle gelir (HTTP)', () => {
     expect(exam.questions.slice(0, 4).map((q) => q.code)).toEqual(['Q_T4_B', 'Q_T4_A', 'Q_T5_B', 'Q_T5_A']);
     // Tüm konular hâlâ sınavda (puanlama paydası değişmedi).
     expect(new Set(exam.questions.map((q) => q.topic)).size).toBe(5);
+  });
+
+  // AJ-60: sayfa yeniden açılınca mola kalan süresi görünsün — soru ucu KENDİ molasını döndürür.
+  it('mola sürüyorsa cooldownUntil bitiş anını döndürür (skor/deneme sayısı sızdırmaz)', async () => {
+    await evaluateCertification(mentorId, tenant.id, failAll5A);
+    await evaluateCertification(mentorId, tenant.id, failAll5A); // 2. başarısız → mola başlar
+    const m = await testPrisma.tenantMembership.findUnique({
+      where: { userId_tenantId: { userId: mentorId, tenantId: tenant.id } },
+    });
+    expect(m!.cooldownUntil).not.toBeNull();
+
+    const exam = await fetchExam();
+    expect(exam.cooldownUntil).toBe(m!.cooldownUntil!.toISOString());
+    expect(Date.parse(exam.cooldownUntil!)).toBeGreaterThan(Date.now());
+    // Yanıt yalnız bu üç alanı taşır — certAttempts / certScore yok.
+    expect(Object.keys(exam).sort()).toEqual(['cooldownUntil', 'questions', 'retryTopics']);
+  });
+
+  it('süresi geçmiş mola null döner', async () => {
+    await setCooldown(mentorId, new Date(Date.now() - 60_000));
+    const exam = await fetchExam();
+    expect(exam.cooldownUntil).toBeNull();
+  });
+
+  it('başka mentörün molası çağırana sızmaz (yalnız kendi kaydı)', async () => {
+    const other = await createMentor(tenant.id);
+    await setCooldown(other.id, new Date(Date.now() + 3_600_000));
+    const exam = await fetchExam();
+    expect(exam.cooldownUntil).toBeNull();
+
+    const otherToken = (await loginAs(agent(), other.email, other.rawPassword)).accessToken;
+    const res = await agent()
+      .get('/api/scoring/certification/questions')
+      .set(tenantHeaders(tenant.id, otherToken))
+      .expect(200);
+    expect(res.body.cooldownUntil).not.toBeNull();
   });
 });

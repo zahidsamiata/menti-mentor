@@ -172,13 +172,16 @@ const RevealAnswerSchema = z.object({
 // Önceki denemede geçilemeyen konular (certWrongTopics) listenin başına alınır ve
 // tekrar denemede her konunun diğer varyantı (farklı sahne) önce gelir (certAttempts).
 // retryTopics: ekranın "geçen sefer zorlandığın konu" işareti için — kişinin KENDİ verisi.
+// cooldownUntil (AJ-60): mola sürüyorsa bitiş anı (ISO), yoksa null — yine kişinin KENDİ
+// üyeliği (oturumdaki userId + tenant). Sayfa yeniden açılınca kalan süre ve kilitli
+// "Bitir ve değerlendir" buradan gösterilir; skor/deneme sayısı döndürülmez.
 export async function certQuestionsHandler(req: RequestWithTenant, res: Response) {
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
   const membership = await prisma.tenantMembership.findUnique({
     where:  { userId_tenantId: { userId: req.auth.userId, tenantId: req.tenant.tenantId } },
-    select: { certWrongTopics: true, certAttempts: true },
+    select: { certWrongTopics: true, certAttempts: true, cooldownUntil: true },
   });
   const retryTopics = membership?.certWrongTopics ?? [];
   const questions = await getCertificationQuestions(
@@ -186,7 +189,10 @@ export async function certQuestionsHandler(req: RequestWithTenant, res: Response
     retryTopics,
     membership?.certAttempts ?? 0,
   );
-  return res.status(200).json({ questions, retryTopics });
+  // Süresi geçmiş mola "yok" sayılır (evaluateCertification ile aynı kural).
+  const cooldownEnd = membership?.cooldownUntil;
+  const cooldownUntil = cooldownEnd && cooldownEnd.getTime() > Date.now() ? cooldownEnd.toISOString() : null;
+  return res.status(200).json({ questions, retryTopics, cooldownUntil });
 }
 
 const SetTopicSchema = z.object({
