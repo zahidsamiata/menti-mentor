@@ -101,7 +101,10 @@ export async function exportMyDataHandler(req: RequestWithTenant, res: Response)
   }
 
   // AJ-124: kendi isteği → TÜM kurum üyelikleri (KVKK Md.11 erişim hakkı).
-  const result = await exportUserData(req.auth.userId, req.tenant.tenantId, 'all');
+  // Kayıt yine bulunamazsa (ör. hesap kaldırılmış) 500 değil anlamlı 404.
+  const userId = req.auth.userId;
+  const result = await withUserNotFound(res, () => exportUserData(userId, req.tenant.tenantId, 'all'));
+  if (!result) return res;
   return res.json(result);
 }
 

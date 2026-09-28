@@ -57,11 +57,3 @@ export type MembershipExport = Prisma.TenantMembershipGetPayload<{ select: typeo
  *                      üyelik. Yönetici, kişinin başka kurumlardaki rol/sertifika bilgisini göremez.
  */
 export type MembershipExportScope = 'all' | 'requestTenant';
-
-export function membershipExportWhere(
-  userId: string,
-  tenantId: string,
-  scope: MembershipExportScope,
-): Prisma.TenantMembershipWhereInput {
-  return scope === 'all' ? { userId } : { userId, tenantId };
-}

@@ -10,12 +10,17 @@
  *  - başka kişinin üyeliği (aynı kurumlarda) çıktıda YOK;
  *  - kurum yöneticisi başkasını dışa aktarırken yalnız KENDİ kurumundaki üyeliği görür
  *    (kişinin diğer kurum bilgisi sızmaz); başka kurumun yöneticisi → 404 (değişmedi).
+ *  - Kurum filtresi (src/db.ts RLS) 'all' kapsamında BİLİNÇLİ aşılır — yalnız kişinin KENDİ kaydı için:
+ *    kişi misafir üyesi olduğu kurumun oturumundayken de /me/data-export → 200 + iki üyelik
+ *    (önceden ev kurumu araması bulamıyor → 500); aynı kurumdaki başka üye bu yolu başkası için
+ *    kullanamaz (403).
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createUser } from './helpers/factories.js';
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
+import { signToken } from '../src/middleware/jwtAuth.js';
 
 type MembershipOut = {
   tenantId: string;
@@ -157,5 +162,33 @@ describe('AJ-124 — dışa aktarmada kurum üyelikleri', () => {
       .expect(404);
     expect(res.body).not.toHaveProperty('memberships');
     expect(res.body).not.toHaveProperty('profile');
+  });
+
+  it('misafir üye olduğu kurumun (B) oturumunda /me/data-export → 200, iki üyelik (500 değil)', async () => {
+    // Kişinin ev kurumu A; B'de MENTOR üyeliği var. B bağlamında oturum anahtarı.
+    const token = signToken({ sub: person.id, tenantId: tenantB.id, role: 'MENTOR', fullName: person.fullName });
+    const res = await http.get('/api/me/data-export').set(tenantHeaders(tenantB.id, token)).expect(200);
+    expect(res.body.userId).toBe(person.id);
+    expect(res.body.profile.email).toBe(person.email);
+    assertBothMemberships(res.body.memberships);
+    assertOnlyOwnMemberships(res.body);
+
+    // Aynı kurumda /users/<kendi id>/export da kendi isteği → iki üyelik.
+    const own = await http
+      .get(`/api/users/${person.id}/export`)
+      .set(tenantHeaders(tenantB.id, token))
+      .expect(200);
+    assertBothMemberships(own.body.memberships);
+  });
+
+  it('kurum filtresinin aşılması başka kişi için kullanılamaz: aynı kurumdaki üye → 403, veri yok', async () => {
+    const { accessToken } = await loginAs(http, other.email, other.rawPassword);
+    const res = await http
+      .get(`/api/users/${person.id}/export`)
+      .set(tenantHeaders(tenantA.id, accessToken))
+      .expect(403);
+    expect(res.body).not.toHaveProperty('memberships');
+    expect(res.body).not.toHaveProperty('profile');
+    expect(JSON.stringify(res.body)).not.toContain(tenantB.id);
   });
 });

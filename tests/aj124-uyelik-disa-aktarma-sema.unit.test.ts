@@ -15,7 +15,6 @@ import { dirname, resolve } from 'node:path';
 import {
   MEMBERSHIP_EXPORT_SELECT,
   MEMBERSHIP_EXPORT_EXCLUDED,
-  membershipExportWhere,
 } from '../src/services/gdprMembershipExport.js';
 
 const SCHEMA_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../prisma/schema.prisma');
@@ -81,10 +80,5 @@ describe('AJ-124 — üyelik dışa aktarma şema kapsamı', () => {
   it('sır/token/hash adlı alan dışa aktarılmıyor; kurum bağlamı yalnız ad + kısa ad', () => {
     expect(exported.filter((f) => SECRET_NAME.test(f))).toEqual([]);
     expect(MEMBERSHIP_EXPORT_SELECT.tenant).toEqual({ select: { name: true, slug: true } });
-  });
-
-  it('sorgu kapsamı her zaman kişinin userId\'siyle sınırlı; yönetici kapsamı ayrıca kuruma', () => {
-    expect(membershipExportWhere('u1', 't1', 'all')).toEqual({ userId: 'u1' });
-    expect(membershipExportWhere('u1', 't1', 'requestTenant')).toEqual({ userId: 'u1', tenantId: 't1' });
   });
 });
