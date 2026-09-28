@@ -281,6 +281,11 @@ const UpdateUserSchema = z.object({
   skills: z.array(z.string().max(100)).max(30).optional(),
   isActive: z.boolean().optional(),
   timeCommitment: z.enum(TIME_COMMITMENT_VALUES).nullable().optional(),
+  // @deprecated AN-12 karantina (2026-09-27) — `interactionStyle` DONDURULMUŞ alan
+  // (KARAR 2 revize, `docs/kararlar/konu/degerlendirme-sistemi-tasarim-2026-08-27.md:574-586`).
+  // Zod anahtarı BİLEREK burada bırakıldı (şema `.strict()` — anahtarı kaldırmak, bu alanı
+  // içeren TÜM isteği 400 ile reddederdi). Gönderilse bile `updateUser` aşağıda bu alanı
+  // yazma verisinden çıkarır — DB'ye asla ulaşmaz. Bkz. `docs/arsiv/silinenler-2026-09-27.md`.
   interactionStyle: z.enum(INTERACTION_STYLE_VALUES).nullable().optional(),
   expectationCategories: z
     .array(z.enum(EXPECTATION_CATEGORY_VALUES))
@@ -295,6 +300,10 @@ const UpdateUserSchema = z.object({
 export async function updateUser(req: RequestWithTenant, res: Response) {
   const parsed = validateRequest(UpdateUserSchema, req.body, res);
   if (!parsed.success) return parsed.response;
+
+  // AN-12 karantina: `interactionStyle` DONDURULMUŞ — Zod'da tip-doğrulama için kabul
+  // edilir ama hiçbir zaman yazılmaz. `updateData`'dan bilerek dışlanır.
+  const { interactionStyle: _interactionStyleQuarantined, ...updateData } = parsed.data;
 
   const existing = await prisma.user.findFirst({
     where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
@@ -311,7 +320,7 @@ export async function updateUser(req: RequestWithTenant, res: Response) {
   // onayı için gereksiz, veri-minimizasyonu — getUser'ın KARAR 5 desenindeki gibi çıkarılır.
   const updated = await prisma.user.update({
     where: { id: existing.id },
-    data: parsed.data,
+    data: updateData,
     select: USER_FULL_SELECT,
   });
 
@@ -333,6 +342,10 @@ const CreateUserSchema = z.object({
   discType: z.enum(['D', 'I', 'S', 'C']).optional(),
   temperamentJson: boundedJson,
   timeCommitment: z.enum(TIME_COMMITMENT_VALUES).optional(),
+  // @deprecated AN-12 karantina (2026-09-27) — `interactionStyle` DONDURULMUŞ alan
+  // (KARAR 2 revize, `docs/kararlar/konu/degerlendirme-sistemi-tasarim-2026-08-27.md:574-586`).
+  // Zod anahtarı kabul eder ama `createUser` aşağıda `prisma.user.create` verisine hiç
+  // katmaz — gönderilse bile DB'ye yazılmaz. Bkz. `docs/arsiv/silinenler-2026-09-27.md`.
   interactionStyle: z.enum(INTERACTION_STYLE_VALUES).optional(),
   expectationCategories: z
     .array(z.enum(EXPECTATION_CATEGORY_VALUES))
@@ -498,7 +511,7 @@ export async function createUser(req: RequestWithTenant, res: Response) {
       discType: parsed.data.discType,
       temperamentJson: parsed.data.temperamentJson,
       timeCommitment: parsed.data.timeCommitment,
-      interactionStyle: parsed.data.interactionStyle,
+      // AN-12 karantina: `interactionStyle` BİLEREK yazılmıyor — bkz. şema üstündeki not.
       expectationCategories: parsed.data.expectationCategories ?? [],
       volunteerHistory: parsed.data.volunteerHistory,
       pastProjects: parsed.data.pastProjects,
