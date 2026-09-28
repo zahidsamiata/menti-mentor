@@ -32,6 +32,7 @@ import { verifyTransporter } from './services/emailService.js';
 import { logger } from './services/logger.js';
 import sjtScoringRoutes from './routes/sjtScoringRoutes.js';
 import suspicionRoutes from './routes/suspicionRoutes.js';
+import cspReportRoutes from './routes/cspReportRoutes.js';
 import agreementRoutes from './routes/agreementRoutes.js';
 import learningJourneyRoutes from './routes/learningJourneyRoutes.js';
 import learningJourneyAdminRoutes from './routes/learningJourneyAdminRoutes.js';
@@ -92,6 +93,9 @@ app.use('/api/platform', platformRoutes);
 
 // ─── Şüphe bildirimi (herkese açık) ─────────────────────────────────────────
 app.use('/api/suspicion-reports', suspicionRoutes);
+
+// ─── CSP ihlal raporu (herkese açık — tarayıcı gönderir; AJ-52) ─────────────
+app.use('/api/csp-reports', cspReportRoutes);
 
 // ─── Kimlik doğrulama (tenant gerektirmez) ───────────────────────────────────
 app.use('/api/auth', authRoutes);

@@ -196,6 +196,24 @@ export function suspicionReportRateLimiter(req: Request, res: Response, next: Ne
   return next();
 }
 
+// ─── CSP ihlal raporu (AJ-52) ────────────────────────────────────────────────
+// POST /api/csp-reports PUBLIC'tir: raporu oturumsuz TARAYICI gönderir (kimlik yok). Her kabul
+// edilen rapor SystemLog'a satır yazar → günlük doldurma / DoS koruması için IP-bazlı EK limit.
+// Eşik suspicion'dan gevşek (varsayılan 30/dk/IP): tek sayfa açılışı birden çok ihlal raporlayabilir
+// ve kampüs/ofis NAT'ı ardındaki kullanıcılar aynı IP'yi paylaşır. Eşik call-time'da okunur.
+/** POST /api/csp-reports — tarayıcı CSP ihlal raporu, günlük doldurma koruması (varsayılan 30/dk/IP). */
+export function cspReportRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const limit = Number(process.env['CSP_REPORT_RATE_RPM'] ?? 30);
+  if (!checkLimit(`csp-report:${clientIp(req)}`, limit)) {
+    return res.status(429).json({
+      error: 'RATE_LIMIT',
+      message: 'Çok fazla rapor gönderildi. Lütfen bir dakika sonra tekrar deneyin.',
+      retryAfter: 60,
+    });
+  }
+  return next();
+}
+
 // GET /api/invitations/:token/join — token imzalı JWT olduğundan brute-force kriptografik
 // olarak infeasible; bu limit token-deneme + DoS/kötüye-kullanım azaltmadır. Eşik, kampüs/
 // ofis NAT'ı ardından toplu katılımı (tek IP'den çok üye aynı anda) kilitlememek için makul
