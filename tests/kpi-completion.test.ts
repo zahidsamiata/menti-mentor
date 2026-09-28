@@ -85,16 +85,18 @@ describe('AJ-78: yönetici KPI — tamamlama oranları ve tamamlanan görüşme'
       const m = await createMenti(tenantA.id);
       await markDiscDone(m.id);
     }
-    // Ev kurumu B, A'da aktif MENTI üyeliği → A'da sayılır (DISC'siz).
+    // Ev kurumu B (User.role MENTOR), A'da aktif MENTI üyeliği, onaylı + DISC bitirmiş → A'da sayılır.
     const guest = await createMentor(tenantB.id);
+    await markDiscDone(guest.id);
     await testPrisma.tenantMembership.create({ data: { userId: guest.id, tenantId: tenantA.id, role: 'MENTI', isActive: true } });
-    // A'da üyeliği pasif → sayılmaz.
-    const left = await createMenti(tenantA.id);
+    // Ev kurumu A ama A'daki üyeliği pasif (onay bekliyor, DISC yok) → hiçbir sayıma girmez.
+    // Ev kurumundan (User.tenantId) sayan bir hesap misafiri kaçırıp bunu sayar → oranlar değişir.
+    const left = await createMenti(tenantA.id, { approvalStatus: 'PENDING' });
     await testPrisma.tenantMembership.updateMany({ where: { userId: left.id, tenantId: tenantA.id }, data: { isActive: false } });
 
     const res = await http.get(KPI_URL).set(tenantHeaders(tenantA.id, tokenFor(adminA))).expect(200);
     expect(res.body.stats.completion.registration).toEqual({ completed: 4, eligible: 4, percent: 100, suppressed: false });
-    expect(res.body.stats.completion.disc).toEqual({ completed: 3, eligible: 4, percent: 75, suppressed: false });
+    expect(res.body.stats.completion.disc).toEqual({ completed: 4, eligible: 4, percent: 100, suppressed: false });
   });
 
   it('negatif (k-anonim): 2 kişilik grupta oranlar gizli — "%100" bile dönmez', async () => {
