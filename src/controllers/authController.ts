@@ -110,6 +110,12 @@ const REGISTER_MESSAGES = {
     'Kaydınız alındı. Kurum yöneticiniz onayladıktan sonra giriş yapabilirsiniz.',
 } as const;
 
+// AJ-112: kayıt başarı yanıtının TEK gövdesi — kayıtlı ve kayıtsız e-posta dalı bu nesneyi AYNEN
+// döner. Eskiden kayıtsız dal oluşturulan kullanıcıyı, kayıtlı dal `user: null` döndürüyordu; kod ve
+// mesaj aynı olsa da gövde farkı hesabın var olup olmadığını gösteriyordu. Bu uç oturum açmaz; ön yüz
+// yalnız başarı/hata durumuna bakıp ayrıca /login çağırır → kullanıcı nesnesi gereksiz. Kişiye özgü veri eklenmez.
+const REGISTER_SUCCESS_BODY = { message: REGISTER_MESSAGES.SUCCESS_PENDING_APPROVAL } as const;
+
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
 export async function register(req: Request, res: Response) {
   const parsed = validateRequest(RegisterSchema, req.body, res);
@@ -167,10 +173,7 @@ export async function register(req: Request, res: Response) {
   if (existing) {
     // E-posta numaralandırmasını önle: kayıtlı ve kayıtsız e-posta için aynı yanıt
     void sendAlreadyRegisteredEmail({ toEmail: email, userName: existing.fullName });
-    return res.status(201).json({
-      message: REGISTER_MESSAGES.SUCCESS_PENDING_APPROVAL,
-      user: null,
-    });
+    return res.status(201).json(REGISTER_SUCCESS_BODY);
   }
 
   // KVKK: rızasız kayıt olmamalı → user.create + tipli rıza (AYDINLATMA + ACIK_RIZA) AYNI
@@ -187,14 +190,8 @@ export async function register(req: Request, res: Response) {
         approvalStatus, // davet geçerliyse APPROVED, aksi halde PENDING (yukarıda hesaplandı)
         kvkkConsentAt:  new Date(), // KVKK Md.5: onay anını kaydet (legacy, dual-write)
       },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        role: true,
-        tenantId: true,
-        approvalStatus: true,
-      },
+      // Yalnız sonraki iç adımların (profil + üyelik) ihtiyacı; yanıtta kullanıcı dönmez (AJ-112).
+      select: { id: true, role: true, tenantId: true },
     });
     await recordSignupConsent({ userId: created.id }, 'FORM', { db: tx });
     return created;
@@ -234,10 +231,7 @@ export async function register(req: Request, res: Response) {
     });
   }
 
-  return res.status(201).json({
-    message: REGISTER_MESSAGES.SUCCESS_PENDING_APPROVAL,
-    user,
-  });
+  return res.status(201).json(REGISTER_SUCCESS_BODY);
 }
 
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────

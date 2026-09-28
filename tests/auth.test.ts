@@ -14,6 +14,15 @@ import { config } from '../src/config.js';
 import { __resetAccessTokenRevocationForTests } from '../src/services/accessTokenRevocation.js';
 import type { Tenant } from '@prisma/client';
 
+/**
+ * AJ-112: kayıt yanıtı kullanıcı nesnesi taşımaz (kayıtlı/kayıtsız e-posta aynı gövde) →
+ * onay durumu yanıttan değil DB'den okunur.
+ */
+async function approvalStatusOf(email: string): Promise<string | undefined> {
+  const u = await testPrisma.user.findUnique({ where: { email }, select: { approvalStatus: true } });
+  return u?.approvalStatus;
+}
+
 /** Geçerli davet token'ı üret (createInvitation ile BİREBİR aynı imza: type='invitation'). */
 function signInvite(tenantId: string, role: 'MENTOR' | 'MENTI'): string {
   return jwt.sign({ tenantId, role, type: 'invitation' }, config.jwt.secret, { expiresIn: '30d' });
@@ -44,14 +53,15 @@ describe('Auth: Register', () => {
       })
       .expect(201);
 
-    expect(res.body.user.approvalStatus).toBe('PENDING');
-    expect(res.body.user.email).toBe('newuser@test.local');
+    // AJ-112: yanıt yalnız mesaj taşır (kişiye özgü veri yok); kullanıcı DB'de oluşmuş ve PENDING.
+    expect(Object.keys(res.body)).toEqual(['message']);
+    expect(await approvalStatusOf('newuser@test.local')).toBe('PENDING');
   });
 
   // GÜVENLİK İYİLEŞTİRMESİ (PO 2026-09-01, Seçenek A): geçerli davet token'ı = onay → APPROVED.
   // Kurum yöneticisi token'ı üretip kime verdiğini biliyor; ikinci admin onayı mükerrer.
   it('geçerli davet token\'ı ile → 201 + kullanıcı APPROVED', async () => {
-    const res = await http
+    await http
       .post('/api/auth/register')
       .send({
         email: 'davetli@test.local',
@@ -64,12 +74,12 @@ describe('Auth: Register', () => {
       })
       .expect(201);
 
-    expect(res.body.user.approvalStatus).toBe('APPROVED');
+    expect(await approvalStatusOf('davetli@test.local')).toBe('APPROVED');
   });
 
   // Sahte/geçersiz token onay KAZANDIRMAZ → PENDING (kayıt reddedilmez, admin onaylar).
   it('sahte/geçersiz davet token\'ı ile → 201 + PENDING (onay kazandırmaz)', async () => {
-    const res = await http
+    await http
       .post('/api/auth/register')
       .send({
         email: 'sahte@test.local',
@@ -82,12 +92,12 @@ describe('Auth: Register', () => {
       })
       .expect(201);
 
-    expect(res.body.user.approvalStatus).toBe('PENDING');
+    expect(await approvalStatusOf('sahte@test.local')).toBe('PENDING');
   });
 
   // Token GEÇERLİ ama rol/tenant UYUŞMUYOR → PENDING (başka kuruma/role ait token onay taşımaz).
   it('davet token\'ı rol/tenant uyuşmuyorsa → 201 + PENDING', async () => {
-    const res = await http
+    await http
       .post('/api/auth/register')
       .send({
         email: 'uyusmaz@test.local',
@@ -100,7 +110,7 @@ describe('Auth: Register', () => {
       })
       .expect(201);
 
-    expect(res.body.user.approvalStatus).toBe('PENDING');
+    expect(await approvalStatusOf('uyusmaz@test.local')).toBe('PENDING');
   });
 
   it('geçersiz e-posta ile 400 döner', async () => {
@@ -125,9 +135,14 @@ describe('Auth: Register', () => {
       .post('/api/auth/register')
       .send({ email: user.email, password: 'Test1234!', fullName: 'Tekrar', role: 'MENTI', tenantSlug: tenant.slug, kvkkConsent: true })
       .expect(201);
-    // Kayıtlı ve kayıtsız e-posta için aynı status + aynı mesaj yapısı
+    // Kayıtlı ve kayıtsız e-posta için aynı status + AYNI gövde (AJ-112: `user` alanı hiçbir dalda yok)
+    const fresh = await http
+      .post('/api/auth/register')
+      .send({ email: 'kayitsiz-aj112@test.local', password: 'Test1234!', fullName: 'Yeni', role: 'MENTI', tenantSlug: tenant.slug, kvkkConsent: true })
+      .expect(201);
     expect(res.body.message).toBeDefined();
-    expect(res.body.user).toBeNull();
+    expect(res.body).toEqual(fresh.body);
+    expect(res.body).not.toHaveProperty('user');
   });
 
   it('geçersiz tenant slug ile 400 döner', async () => {
