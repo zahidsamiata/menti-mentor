@@ -139,7 +139,7 @@ describe('GV-15: her gönderim fonksiyonu kullanıcı metnini kaçırır', () =>
   it('sendAlgorithmAdjustmentProposal (gerekçe + ad kaçırılır, href içindeki tenantId kodlanır)', async () => {
     await email.sendAlgorithmAdjustmentProposal({
       toEmail: TO, adminName: EVIL, tenantName: 'Kurum', tenantId: 't1"&x=<y>', reason: '3. ay NPS 40 (< 50)',
-      phase1Nps: null, phase3Nps: 40, prevSector: 60, prevDisc: 40, newSector: 55, newDisc: 45,
+      phase1Nps: { avgNps: null, sampleSize: 0 }, phase3Nps: { avgNps: 4, sampleSize: 10 }, prevSector: 60, prevDisc: 40, newSector: 55, newDisc: 45,
     });
     const html = lastHtml();
     expectEscaped(html);

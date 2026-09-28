@@ -73,3 +73,66 @@ export function applyKAnonymity(rawCount: number): KAnonymousCount {
   }
   return { count: rawCount, suppressed: false };
 }
+
+/** Bir NPS örneği: ortalama + yanıt sayısı. `suppressed` yalnız zaten maskelenmiş kayıtta bulunur. */
+export interface NpsSample {
+  avgNps: number | null;
+  sampleSize: number;
+  suppressed?: boolean;
+}
+
+/**
+ * `maskNpsSample` dönüşü — dışarı (API yanıtı, e-posta, kayıtlı öneri) çıkan tek NPS biçimi.
+ * `minSampleSize` = K_ANONYMITY_THRESHOLD; ekran "gizli (<N yanıt)" metnini sabitten kurabilsin diye.
+ */
+export interface MaskedNpsSample {
+  avgNps: number | null;
+  sampleSize: number;
+  suppressed: boolean;
+  minSampleSize: number;
+}
+
+/**
+ * AJ-69 (V-05 kalanı): NPS ortalamasını k-anonimlik eşiğine göre gösterime hazırlar.
+ * Eşiğin altındaki yanıta dayanan ortalama DÖNMEZ (null) ve yanıt sayısı 0'a indirgenir —
+ * küçük kurumda 1-2 kişinin puanı ortalamadan okunmasın. `kpiReport.service.ts` ile aynı kural.
+ *
+ * - Hiç yanıt yoksa gizlenecek veri yoktur → `suppressed: false` (ekran "yetersiz veri" der).
+ * - Zaten maskelenmiş kayıt (`suppressed: true`) yeniden maskelenince gizli kalır — sayısı 0 olsa da
+ *   "veri yok"a dönüşmez (kayıtlı öneri okuma anında tekrar maskelenir).
+ *
+ * Saf fonksiyon — birim testi: `tests/algorithm-tuner-nps-scale.unit.test.ts`.
+ */
+export function maskNpsSample(sample: NpsSample): MaskedNpsSample {
+  const hidden: MaskedNpsSample = {
+    avgNps: null,
+    sampleSize: 0,
+    suppressed: true,
+    minSampleSize: K_ANONYMITY_THRESHOLD,
+  };
+  if (sample.suppressed === true) return hidden;
+  if (sample.sampleSize <= 0) {
+    return { avgNps: null, sampleSize: 0, suppressed: false, minSampleSize: K_ANONYMITY_THRESHOLD };
+  }
+  const safeCount = applyKAnonymity(sample.sampleSize);
+  if (safeCount.suppressed) return hidden;
+  return {
+    avgNps: sample.avgNps,
+    sampleSize: safeCount.count,
+    suppressed: false,
+    minSampleSize: K_ANONYMITY_THRESHOLD,
+  };
+}
+
+/** Gizlenmiş NPS ortalamasının kullanıcıya görünen metni (e-posta). Eşik sabitten gelir. */
+export const NPS_HIDDEN_LABEL = `gizli (<${K_ANONYMITY_THRESHOLD} yanıt)`;
+
+/**
+ * NPS örneğini metne çevirir — ÖNCE maskeler (çağıran ham veri verse bile ortalama sızmaz).
+ * Veri yoksa `emptyLabel`, eşik altıysa NPS_HIDDEN_LABEL, değilse ortalama.
+ */
+export function formatNpsSample(sample: NpsSample, emptyLabel = 'Yetersiz veri'): string {
+  const masked = maskNpsSample(sample);
+  if (masked.suppressed) return NPS_HIDDEN_LABEL;
+  return masked.avgNps === null ? emptyLabel : String(masked.avgNps);
+}

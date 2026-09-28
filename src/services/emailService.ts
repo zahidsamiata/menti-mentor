@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 import { escapeHtml, sanitizeHeaderText } from './htmlEscape.js';
+import { formatNpsSample, type NpsSample } from './mask.js';
 
 // Generic SMTP relay (Resend/Brevo vb.). service:'gmail' KALDIRILDI: Gmail App
 // Password kırılgan (Google periyodik iptal ediyor) ve gmail.com'dan sunucu gönderimi
@@ -247,8 +248,9 @@ export async function sendAlgorithmAdjustmentProposal(args: {
   tenantName: string;
   tenantId: string;
   reason: string;
-  phase1Nps: number | null;
-  phase3Nps: number | null;
+  /** AJ-69: istatistik nesnesi — e-posta kendisi de maskeler (eşik altında ortalama yazılmaz). */
+  phase1Nps: NpsSample;
+  phase3Nps: NpsSample;
   prevSector: number; prevDisc: number;
   newSector: number;  newDisc: number;
 }): Promise<void> {
@@ -267,7 +269,7 @@ export async function sendAlgorithmAdjustmentProposal(args: {
        <tr><td style="padding:8px">Karakter/DISC Ağırlığı</td><td style="padding:8px">%${escapeHtml(args.prevDisc)}</td><td style="padding:8px"><strong>%${escapeHtml(args.newDisc)}</strong></td></tr>
      </table>
      <p><strong>Neden bu öneri?</strong><br>${escapeHtml(args.reason)}</p>
-     <p>NPS Verileri: 1. ay = ${escapeHtml(args.phase1Nps ?? 'Yetersiz veri')} | 3. ay = ${escapeHtml(args.phase3Nps ?? 'Yetersiz veri')}</p>
+     <p>NPS Verileri: 1. ay = ${escapeHtml(formatNpsSample(args.phase1Nps))} | 3. ay = ${escapeHtml(formatNpsSample(args.phase3Nps))}</p>
      <p>Bu değişiklik küçük (±%5) ve geri alınabilir. Son karar sizindir.</p>
      <p>
        <a href="${escapeHtml(approveUrl)}" style="background:#6366f1;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;margin-right:8px">✅ Onayla</a>
