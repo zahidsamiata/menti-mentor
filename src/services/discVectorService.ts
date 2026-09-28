@@ -27,6 +27,7 @@
 
 import { prisma } from '../db.js';
 import { parseDiscVector, type DiscVector } from './scoring.js';
+import { DiscVectorWriteSchema, toValidatedJson } from './jsonFieldSchemas.js';
 
 // Tip doğrulama guard'ı `parseDiscVector` AJ-94'te saf `scoring.ts`'e taşındı ve dışa açıldı
 // (eşleştirme + analitik aynı kapıyı kullansın diye).
@@ -138,7 +139,8 @@ export async function recalcDiscVector(userId: string, tenantId: string): Promis
 
   await prisma.user.update({
     where: { id: userId },
-    data: { discVector: vector satisfies object },
+    // AJ-95a: yapı yazımdan ÖNCE doğrulanır; geçersizse fırlatır, yazım yapılmaz.
+    data: { discVector: toValidatedJson('discVector', DiscVectorWriteSchema, vector) },
   });
 
   // UserProfile'a normalize DISC bileşenlerini de yaz (skorlayıcının kullandığı kaynak).

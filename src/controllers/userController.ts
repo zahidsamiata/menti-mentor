@@ -10,6 +10,7 @@ import { canViewerSeeDiscType, toPublicDiscResultCard } from '../services/discVi
 import { discLettersFromVector } from '../services/discLetters.js';
 import { applyKAnonymity } from '../services/mask.js';
 import { validateRequest } from '../middleware/validate.js';
+import { TemperamentResultWriteSchema } from '../services/jsonFieldSchemas.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 
 // ─── Security: Tag Poisoning Prevention ───────────────────────────────────────
@@ -270,11 +271,17 @@ const boundedJson = z
     { message: `Alan çok büyük (maksimum ${MAX_JSON_BYTES} karakter).` },
   );
 
+// AJ-95a: temperamentJson psikometrik alan — serbest `boundedJson` yerine mizaç sonucu şeması
+// (strict, `jsonFieldSchemas.ts`). Yapısı bozuk gövde 400 VALIDATION alır, yazım yapılmaz.
+// `null` artık 400: eskiden `z.any()` geçiriyordu ama Prisma nullable Json alanına çıplak `null`
+// kabul etmez (JsonNull ister) → istek zaten 500 ile düşüyordu; alan silme ayrı bir yol değildi.
+const TEMPERAMENT_JSON_INPUT = TemperamentResultWriteSchema.optional();
+
 const UpdateUserSchema = z.object({
   fullName: z.string().min(2).max(200).optional(),
   sectorTags: SECTOR_TAGS_SCHEMA,
   discType: z.enum(['D', 'I', 'S', 'C']).nullable().optional(),
-  temperamentJson: boundedJson,
+  temperamentJson: TEMPERAMENT_JSON_INPUT,
   volunteerHistory: boundedJson,
   pastProjects: boundedJson,
   education: boundedJson,
@@ -331,7 +338,7 @@ const CreateUserSchema = z.object({
   fullName: z.string().min(2).max(200),
   sectorTags: SECTOR_TAGS_SCHEMA,
   discType: z.enum(['D', 'I', 'S', 'C']).optional(),
-  temperamentJson: boundedJson,
+  temperamentJson: TEMPERAMENT_JSON_INPUT,
   timeCommitment: z.enum(TIME_COMMITMENT_VALUES).optional(),
   interactionStyle: z.enum(INTERACTION_STYLE_VALUES).optional(),
   expectationCategories: z

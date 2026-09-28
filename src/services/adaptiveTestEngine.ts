@@ -17,6 +17,7 @@
 import { prisma } from '../db.js';
 import type { DiscDimension, DiscType } from '@prisma/client';
 import type { DiscVector } from './scoring.js';
+import { DiscVectorWriteSchema, toValidatedJson } from './jsonFieldSchemas.js';
 
 // Minimum yanıt sayısı — bu eşiğin altında DISC vektörü hesaplanmaz
 //
@@ -251,7 +252,8 @@ export async function getNextQuestion(
   await prisma.user.update({
     where: { id: userId },
     data: {
-      discVector: discVector as object,
+      // AJ-95a: yapı yazımdan ÖNCE doğrulanır; geçersizse fırlatır, yazım yapılmaz.
+      discVector: toValidatedJson('discVector', DiscVectorWriteSchema, discVector),
       discType: dominantType,
     },
   });

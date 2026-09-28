@@ -4,6 +4,7 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { analyzeTemperament } from '../services/temperamentAnalysis.js';
 import { validateRequest } from '../middleware/validate.js';
+import { TemperamentResultWriteSchema, toValidatedJson } from '../services/jsonFieldSchemas.js';
 
 const QuestionAnswerSchema = z.object({
   questionId: z.number().int().min(1).max(7),
@@ -55,7 +56,8 @@ export async function submitTemperamentTest(req: RequestWithTenant, res: Respons
     where: { id: existing.id },
     data: {
       discType: result.dominantDisc,
-      temperamentJson: result,
+      // AJ-95a: yapı yazımdan ÖNCE doğrulanır; geçersizse fırlatır, yazım yapılmaz.
+      temperamentJson: toValidatedJson('temperamentJson', TemperamentResultWriteSchema, result),
       enneagramWing: result.enneagramWing,
     },
     select: {

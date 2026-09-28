@@ -15,6 +15,7 @@ import { recordSignupConsent } from '../services/consentService.js';
 import { hashRefreshToken } from '../services/refreshToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
+import { parseDiscVector, type DiscVector } from '../services/scoring.js';
 import { sendAlreadyRegisteredEmail } from '../services/emailService.js';
 import { setRefreshCookie, refreshTokenExpiresAt } from '../utils/authCookies.js';
 
@@ -127,11 +128,11 @@ function buildNarrative(
   };
 }
 
-function getDominantDimension(discVector: Record<string, number>): string {
+function getDominantDimension(discVector: Pick<DiscVector, 'D' | 'I' | 'S' | 'C'>): string {
   const dims = ['D', 'I', 'S', 'C'] as const;
-  return dims.reduce((best, dim) => (
-    (discVector[dim] ?? 0) > (discVector[best] ?? 0) ? dim : best
-  ), 'D' as string);
+  return dims.reduce<(typeof dims)[number]>((best, dim) => (
+    discVector[dim] > discVector[best] ? dim : best
+  ), 'D');
 }
 
 function buildMockPersonas(adminDim: string) {
@@ -501,7 +502,11 @@ export async function getTenantPreview(req: Request, res: Response) {
     select: { discVector: true, discType: true },
   });
 
-  if (!admin?.discVector) {
+  // AJ-95 (AJ-94 7b eki): vektör doğrulanarak okunur — doğrulamasız `as Record<string, number>`
+  // bozuk kayıtta (metin/NaN/eksik anahtar) baskın boyutu sessizce yanlış seçiyordu. Bozuk ya da
+  // eski (confidence'sız) vektör eşleştirmedeki gibi "vektör yok" sayılır → aynı 422 yolu.
+  const discVector = parseDiscVector(admin?.discVector ?? null);
+  if (!discVector) {
     return res.status(422).json({
       error:   'DISC_TESTI_EKSIK',
       message: 'Önizleme için önce DISC mizaç testini tamamlamanız gerekmektedir.',
@@ -509,7 +514,6 @@ export async function getTenantPreview(req: Request, res: Response) {
     });
   }
 
-  const discVector  = admin.discVector as Record<string, number>;
   const dominantDim = getDominantDimension(discVector);
   const adminArch   = DISC_ARCHETYPES[dominantDim];
   const personas    = buildMockPersonas(dominantDim);
