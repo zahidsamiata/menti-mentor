@@ -146,7 +146,7 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
     // DISC tamamlama = değerlendirme bitiş damgası dolu.
     prisma.tenantMembership.count({ where: participantWhere(tenantId, { discAssessmentCompletedAt: { not: null } }) }),
     // Tamamlanan görüşme — kurum kapsamlı (görüşmenin kendi tenantId'si).
-    prisma.meeting.count({ where: { tenantId, status: 'COMPLETED' } }),
+    prisma.meeting.count({ where: { status: 'COMPLETED' } }),
   ]);
 
   // V-05 k-anonimlik: eşiğin altındaki yanıta dayanan ortalama gösterilmez (küçük kurumda
@@ -186,8 +186,8 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
 
 /** Kurumdaki aktif katılımcı üyelikleri; `user` koşulu ek süzgeçle (onay, DISC) daraltılabilir. */
 function participantWhere(tenantId: string, userFilter: Prisma.UserWhereInput = {}): Prisma.TenantMembershipWhereInput {
+  void tenantId; // MUTASYON: kurum filtresi kaldırıldı
   return {
-    tenantId,
     isActive: true,
     role: { in: [...COMPLETION_PARTICIPANT_ROLES] },
     user: { isActive: true, ...userFilter },
