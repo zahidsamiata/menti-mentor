@@ -9,6 +9,7 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../../config.js';
+import { TOKEN_TYPES } from '../../middleware/jwtAuth.js';
 import type { OAuthStatePayload } from './oauthTypes.js';
 
 const STATE_EXPIRY_SECONDS = 600; // 10 dakika — authorization flow için yeterli
@@ -21,7 +22,8 @@ export function createOAuthState(tenantSlug: string, role: 'MENTOR' | 'MENTI', i
     nonce: crypto.randomBytes(16).toString('hex'),
     ...(inviteToken ? { inviteToken } : {}),
   };
-  return jwt.sign(payload, config.jwt.secret, { expiresIn: STATE_EXPIRY_SECONDS });
+  // AJ-87: tür bilgisi — state anahtarı erişim anahtarı yerine (ya da tersi) kullanılamasın.
+  return jwt.sign({ ...payload, typ: TOKEN_TYPES.OAUTH_STATE }, config.jwt.secret, { expiresIn: STATE_EXPIRY_SECONDS });
 }
 
 /**
@@ -30,7 +32,10 @@ export function createOAuthState(tenantSlug: string, role: 'MENTOR' | 'MENTI', i
  */
 export function verifyOAuthState(state: string): OAuthStatePayload | null {
   try {
-    const decoded = jwt.verify(state, config.jwt.secret) as OAuthStatePayload & jwt.JwtPayload;
+    const decoded = jwt.verify(state, config.jwt.secret) as OAuthStatePayload & jwt.JwtPayload & { typ?: string };
+    // AJ-87: yalnız state türü. Tür-siz eski state'e geçiş YOK: ömrü 10 dk, reddedilen kullanıcı
+    // girişi yeniden başlatır (erişim anahtarı state yerine verilirse de burada düşer).
+    if (decoded.typ !== TOKEN_TYPES.OAUTH_STATE) return null;
     // jwt.verify zaten exp kontrolü yapıyor; tip guard olarak alanları kontrol et
     if (!decoded.tenantSlug || !decoded.role || !decoded.nonce) return null;
     return {

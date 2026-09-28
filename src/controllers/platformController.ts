@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
-import { signToken, verifyToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
+import { signToken, verifyPlatformToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
 import { revokeAccessToken } from '../services/accessTokenRevocation.js';
 import { logger } from '../services/logger.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
@@ -92,7 +92,8 @@ function extractPlatformCookieToken(cookieHeader: string | undefined): string | 
 // POST /api/platform/logout
 export async function platformLogout(req: Request, res: Response) {
   const token = extractPlatformCookieToken(req.headers.cookie);
-  const payload = token ? verifyToken(token) : null;
+  // AJ-87: platform çerezi platform türünde doğrulanır (erişim doğrulayıcısı platform anahtarını reddeder).
+  const payload = token ? verifyPlatformToken(token) : null;
   if (payload?.jti && payload.exp) {
     revokeAccessToken(payload.jti, payload.exp);
   }
