@@ -20,6 +20,7 @@
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
+import { maskNpsSample, type MaskedNpsSample, type NpsSample } from './mask.js';
 
 export type AlgorithmWeights = {
   sectorWeight: number;   // 0-1 (varsayılan: 0.60)
@@ -160,6 +161,11 @@ export async function setManualWeights(
 
 // ─── NPS istatistikleri ───────────────────────────────────────────────────────
 
+/**
+ * HAM NPS istatistiği — yalnız bu modülün İÇİNDE, ağırlık kararı için kullanılır.
+ * Dışarı çıkan her yol (TuningResult, kayıtlı öneri, API yanıtı, e-posta) `maskNpsSample`
+ * ile k-anonim hale getirilmiş `MaskedNpsSample` taşır (AJ-69).
+ */
 type NpsStats = {
   avgNps: number | null;
   sampleSize: number;
@@ -196,7 +202,11 @@ export async function getAlgorithmWeights(tenantId: string): Promise<AlgorithmWe
 
   const vocab = tenant?.tenantVocabulary as Record<string, unknown> | null;
   const stored = vocab?.algorithmWeights as AlgorithmWeights | undefined;
-  return stored ?? { ...DEFAULT_WEIGHTS };
+  if (!stored) return { ...DEFAULT_WEIGHTS };
+  // AJ-69: uygulanmış eski önerinin gerekçesi 1. ay ortalamasını taşıyabilir (ekranda "Son değişiklik").
+  return typeof stored.reason === 'string'
+    ? { ...stored, reason: redactPhase1AverageFromReason(stored.reason) }
+    : stored;
 }
 
 // ─── Son değişiklik izi (95) — "kim / ne zaman / eski→yeni" ────────────────────
@@ -319,10 +329,13 @@ export function decideSectorWeight(input: {
     };
   }
   if (phase1AvgNps !== null && phase1AvgNps >= HIGH && phase3AvgNps < PHASE3_DROP) {
-    // 1. ay iyi başladı ama 3. ay düştü → uzun vadeli uyum sorunu
+    // 1. ay iyi başladı ama 3. ay düştü → uzun vadeli uyum sorunu.
+    // AJ-69: gerekçe metni 1. ay ORTALAMASINI taşımaz — 1. ay örneği eşik altında olabilir (bu dal
+    // yalnız 3. ay ≥ MIN_PHASE3_SAMPLE'ı şart koşar) ve metin ekrana, e-postaya, kayda gider.
+    // 1. ay ortalaması yalnız maskelenmiş `phase1Nps` alanında gösterilir. Karar mantığı DEĞİŞMEDİ.
     return {
       newSectorWeight: Math.max(MIN_SECTOR_WEIGHT, currentSectorWeight - STEP),
-      reason: `1. ay ortalama NPS ${phase1AvgNps}/10 → 3. ay ${phase3AvgNps}/10 düşüşü — DISC ağırlığı +${STEP * 100}%`,
+      reason: `${phaseDropReasonHead(phase3AvgNps)} — DISC ağırlığı +${STEP * 100}%`,
     };
   }
   // Orta performans → sektöre biraz daha ağırlık ver
@@ -332,12 +345,31 @@ export function decideSectorWeight(input: {
   };
 }
 
+/** "Düşüş" gerekçesinin baş kısmı — yeni metin ve eski kayıtların okuma-anı dönüşümü aynı kalıbı kullanır. */
+function phaseDropReasonHead(phase3AvgNps: number | string): string {
+  return `1. aydan 3. aya NPS düşüşü (3. ay ortalama ${phase3AvgNps}/10)`;
+}
+
+/**
+ * AJ-69 öncesi kaydedilen "düşüş" gerekçesi 1. ay ortalamasını içeriyordu:
+ * `1. ay ortalama NPS 8/10 → 3. ay 5.5/10 düşüşü`. O kayıtta 1. ay yanıt sayısı gerekçenin yanında
+ * tutulmadığından (uygulanmış ağırlığın `reason`'ı) eşiği geçip geçmediği bilinemez → okuma anında
+ * her zaman yeni kalıba çevrilir (1. ay ortalaması düşer, 3. ay ortalaması korunur).
+ */
+const LEGACY_PHASE_DROP_REASON = /1\. ay ortalama NPS -?[\d.]+\/10 → 3\. ay (-?[\d.]+)\/10 düşüşü/g;
+
+/** Gerekçe metninden 1. ay ortalamasını çıkarır (eski kayıtlar). Saf fonksiyon. */
+export function redactPhase1AverageFromReason(reason: string): string {
+  return reason.replace(LEGACY_PHASE_DROP_REASON, (_match, phase3: string) => phaseDropReasonHead(phase3));
+}
+
 export type TuningResult = {
   tenantId: string;
   previousWeights: AlgorithmWeights;
   newWeights: AlgorithmWeights;
-  phase1Nps: NpsStats;
-  phase3Nps: NpsStats;
+  /** k-anonim (AJ-69): eşik altında avgNps=null, sampleSize=0, suppressed=true. */
+  phase1Nps: MaskedNpsSample;
+  phase3Nps: MaskedNpsSample;
   adjusted: boolean;
   reason: string;
 };
@@ -353,8 +385,9 @@ export async function tuneScoringWeights(tenantId: string): Promise<TuningResult
     tenantId,
     previousWeights: { ...current },
     newWeights: { ...current },
-    phase1Nps,
-    phase3Nps,
+    // Karar HAM istatistikle verilir (aşağıda); dışarı çıkan sonuç maskelidir (AJ-69).
+    phase1Nps: maskNpsSample(phase1Nps),
+    phase3Nps: maskNpsSample(phase3Nps),
     adjusted: false,
     reason: 'Yeterli NPS verisi yok — ağırlıklar değişmedi',
   };
@@ -425,7 +458,32 @@ export async function getPendingAdjustment(tenantId: string): Promise<PendingAdj
     select: { tenantVocabulary: true },
   });
   const vocab = tenant?.tenantVocabulary as Record<string, unknown> | null;
-  return (vocab?.pendingAlgorithmAdjustment as PendingAdjustment) ?? null;
+  const stored = vocab?.pendingAlgorithmAdjustment as StoredPendingAdjustment | undefined;
+  // AJ-69: kayıtlı öneri OKUMA anında da maskelenir — AJ-69 öncesi kayıtlar ham ortalama taşır.
+  return stored ? maskPendingAdjustment(stored) : null;
+}
+
+/** DB'de duran öneri — AJ-69 öncesi kayıtlarda NPS alanları ham (`suppressed` yok) olabilir. */
+type StoredPendingAdjustment = Omit<PendingAdjustment, 'phase1Nps' | 'phase3Nps'> & {
+  phase1Nps?: NpsSample;
+  phase3Nps?: NpsSample;
+};
+
+/**
+ * Kayıtlı öneriyi gösterime hazırlar (saf fonksiyon): NPS örnekleri k-anonim maskelenir,
+ * gerekçe metinlerinden 1. ay ortalaması çıkarılır. Eksik alanlı eski kayıtlarda patlamaz.
+ */
+export function maskPendingAdjustment(stored: StoredPendingAdjustment): PendingAdjustment {
+  const redactWeights = (w: AlgorithmWeights | undefined): AlgorithmWeights =>
+    (w && typeof w.reason === 'string' ? { ...w, reason: redactPhase1AverageFromReason(w.reason) } : w) as AlgorithmWeights;
+  return {
+    ...stored,
+    phase1Nps: maskNpsSample(stored.phase1Nps ?? { avgNps: null, sampleSize: 0 }),
+    phase3Nps: maskNpsSample(stored.phase3Nps ?? { avgNps: null, sampleSize: 0 }),
+    reason: typeof stored.reason === 'string' ? redactPhase1AverageFromReason(stored.reason) : stored.reason,
+    previousWeights: redactWeights(stored.previousWeights),
+    newWeights: redactWeights(stored.newWeights),
+  };
 }
 
 /** Admin onayladığında çağrılır — ağırlıkları uygular ve pending'i temizler. */
@@ -479,8 +537,8 @@ async function notifyAdminsAboutPendingAdjustment(tenantId: string, result: Tuni
       tenantName,
       tenantId,
       reason:     result.reason,
-      phase1Nps:  result.phase1Nps.avgNps,
-      phase3Nps:  result.phase3Nps.avgNps,
+      phase1Nps:  result.phase1Nps,
+      phase3Nps:  result.phase3Nps,
       prevSector, prevDisc,
       newSector,  newDisc,
     });

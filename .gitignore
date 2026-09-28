@@ -2,6 +2,8 @@
 
 # Bağımlılıklar
 node_modules/
+# Sembolik bağ olarak node_modules (worktree) — sondaki "/" yalnız dizini yakalar (AJ-69 7b)
+node_modules
 
 # Derleme çıktıları
 dist/
