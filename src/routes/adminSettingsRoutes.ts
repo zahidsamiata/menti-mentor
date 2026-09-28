@@ -4,6 +4,8 @@ import {
   blockPair,
   listBlockedPairs,
   unblockPair,
+  getTenantLegalInfo,
+  updateTenantLegalInfo,
 } from '../controllers/adminSettingsController.js';
 
 const router = Router();
@@ -26,5 +28,10 @@ router.get('/:id/block-pairs',           listBlockedPairs as RequestHandler);
 // DELETE /api/tenants/:id/block-pair/:pairId
 // E-3d: engeli kaldırır — çift yeniden eşleşme/mesaj/randevu/anlaşma kurabilir.
 router.delete('/:id/block-pair/:pairId', unblockPair      as RequestHandler);
+
+// GET/PATCH /api/tenants/:id/legal-info
+// AN-36 / G1-12: kurum yöneticisi KVKK veri işleyen sözleşmesi için yasal kimlik bilgilerini görür/düzenler.
+router.get('/:id/legal-info',   getTenantLegalInfo    as RequestHandler);
+router.patch('/:id/legal-info', updateTenantLegalInfo as RequestHandler);
 
 export default router;
