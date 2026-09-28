@@ -17,7 +17,8 @@ vi.mock('../src/services/logger.js', () => ({
   logger: { warn: (...args: unknown[]) => warn(...args), info: vi.fn(), error: vi.fn() },
 }));
 
-const { default: cspReportRoutes } = await import('../src/routes/cspReportRoutes.js');
+// Gerçek bağlama: uç, server.ts'te `/api` altına bağlı onboardingRoutes içinden sunulur.
+const { default: onboardingRoutes } = await import('../src/routes/onboardingRoutes.js');
 const {
   CSP_UNKNOWN_VALUE,
   CSP_REPORT_MAX_PER_REQUEST,
@@ -26,11 +27,11 @@ const {
   sanitizeDocumentUri,
 } = await import('../src/services/cspReport.js');
 
-/** server.ts ile aynı sıra: genel JSON ayrıştırıcı (1 MB) → uç. */
+/** server.ts ile aynı sıra: genel JSON ayrıştırıcı (1 MB) → `app.use('/api', onboardingRoutes)`. */
 function buildApp() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
-  app.use('/api/csp-reports', cspReportRoutes);
+  app.use('/api', onboardingRoutes);
   return app;
 }
 
@@ -218,12 +219,26 @@ describe('AJ-52 — alan daraltma (saf)', () => {
   });
 });
 
-describe('AJ-52 — server.ts bağlantısı', () => {
-  it('uç /api/csp-reports altında, genel /api oran sınırından SONRA bağlı', () => {
+describe('AJ-52 — bağlantı (server.ts DEĞİŞMEDİ; uç onboardingRoutes içinden)', () => {
+  it('server.ts: onboardingRoutes `/api` altına, genel /api oran sınırından SONRA bağlı; önündeki önekler /api/csp-reports ile çakışmaz', () => {
     const server = readFileSync(new URL('../src/server.ts', import.meta.url), 'utf8');
     const general = server.indexOf("app.use('/api', generalRateLimiter)");
-    const mount = server.indexOf("app.use('/api/csp-reports', cspReportRoutes)");
+    const mount = server.indexOf("app.use('/api', onboardingRoutes)");
     expect(general).toBeGreaterThan(-1);
     expect(mount).toBeGreaterThan(general);
+    const earlierPrefixes = [...server.slice(0, mount).matchAll(/app\.use\('(\/api[^']*)'/g)].map((m) => m[1]);
+    for (const prefix of earlierPrefixes) {
+      if (prefix === '/api') continue;
+      expect('/api/csp-reports'.startsWith(`${prefix}/`) || prefix === '/api/csp-reports').toBe(false);
+    }
+  });
+
+  it('onboardingRoutes: uç requireTenant\'tan ÖNCE bağlı (tenant başlığı/kimlik olmadan 204 ve yazılır)', async () => {
+    const routes = readFileSync(new URL('../src/routes/onboardingRoutes.ts', import.meta.url), 'utf8');
+    expect(routes.indexOf("router.use('/csp-reports', cspReportRoutes)")).toBeGreaterThan(-1);
+    expect(routes.indexOf("router.use('/csp-reports', cspReportRoutes)")).toBeLessThan(routes.indexOf('router.use(requireTenant'));
+    const res = await post(JSON.stringify(legacyReport()), 'application/csp-report');
+    expect(res.status).toBe(204);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
