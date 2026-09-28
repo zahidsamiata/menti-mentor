@@ -8,8 +8,16 @@ import {
   updateSocialProfile,
   submitMatchingPreferences,
 } from '../controllers/onboardingController.js';
+import cspReportRoutes from './cspReportRoutes.js';
 
 const router = Router();
+
+// ─── CSP ihlal raporu (PUBLIC — tarayıcı oturumsuz gönderir; AJ-52) ──────────
+// POST /api/csp-reports. Neden burada: bu router server.ts'te `/api` altına, genel `/api` oran
+// sınırının ARKASINDA bağlı; server.ts bu turda dokunulmaz olduğu için uç yeni bir mount yerine
+// buradan sunulur. `requireTenant`'tan ÖNCE bağlanmalı (tarayıcı X-Tenant-Id / kimlik göndermez);
+// uç her isteği kendisi sonlandırır (204/429), aşağıdaki tenant/kimlik zincirine düşmez.
+router.use('/csp-reports', cspReportRoutes);
 
 // Tüm onboarding endpoint'leri tenant izolasyonu + kimlik doğrulaması gerektirir.
 router.use(requireTenant as unknown as RequestHandler);

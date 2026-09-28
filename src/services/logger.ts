@@ -4,7 +4,8 @@ import { sanitizeLogMeta, scrubText } from './logSanitizer.js';
 
 // Desteklenen log kategorileri
 // AUDIT: KVKK Md.12 — platform admin'in hassas veri erişimini izlenebilir kılan denetim kaydı.
-type LogCategory = 'EMAIL' | 'ML' | 'AUTH' | 'DB' | 'HTTP' | 'SYSTEM' | 'AUDIT';
+// CSP: tarayıcının gönderdiği İçerik Güvenlik Politikası ihlal raporu (AJ-52, `cspReportController`).
+type LogCategory = 'EMAIL' | 'ML' | 'AUTH' | 'DB' | 'HTTP' | 'SYSTEM' | 'AUDIT' | 'CSP';
 
 /**
  * Her log girişini hem konsola hem de SystemLog tablosuna yazar.
