@@ -234,6 +234,19 @@ model Tenant {
   reminderEmailSentAt DateTime? // Duplicate send koruması
   unsubscribedAt      DateTime? // NULL = abone, set = listeden çıkmış
 
+  // AN-36 / G1-12 — Veri İşleyen Sözleşmesi (KVKK) için kurumun yasal kimliği.
+  // Kurum yöneticisi panelden girer (GET/PATCH /api/tenants/:id/legal-info). Hepsi nullable:
+  // eski kurumlar boş kalır, backfill YOK. Sözleşme metni + "imzala" akışı AYRI iş (avukat onayı bekler).
+  // ⚠️ Tüzel kişi bilgisidir ama adres/KEP bir gerçek kişiye ait olabilir → PII gibi davran:
+  // yalnız kendi kurumunun ADMIN'i okur/yazar, loglara DEĞER yazılmaz (yalnız alan adı).
+  legalName          String? // Resmî tam unvan (ör. "X Derneği" / "Y A.Ş.")
+  legalAddress       String? // Resmî (tebligat) adresi
+  kepAddress         String? // Kayıtlı Elektronik Posta adresi (…@….kep.tr)
+  mersisNo           String? // MERSİS numarası — 16 hane (dernekler için olmayabilir)
+  taxOffice          String? // Vergi dairesi
+  taxNumber          String? // Vergi kimlik no (VKN) — 10 hane
+  legalInfoUpdatedAt DateTime? // Yasal bilgilerin son güncellenme anı (sözleşme anındaki bilgiyi ayırt etmek için)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

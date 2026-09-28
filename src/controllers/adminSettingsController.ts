@@ -10,6 +10,11 @@ import { maskEmail, maskName } from '../services/mask.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 import { type BlockedPairRecord, pairKey, sanitizeBlockedPairs } from '../services/blockList.js';
+import {
+  UpdateLegalInfoSchema,
+  TENANT_LEGAL_INFO_SELECT,
+  pickProvidedLegalFields,
+} from '../services/tenantLegalInfo.js';
 
 // Tenant ADMIN kapısı + URL `:id` = oturum kurumu eşleşmesi: authenticateTenantAdminForParam
 // (middleware/tenantAdminAuth.ts) — GV-11 + AJ-44. Elle `payload.tenantId !== tenantId` YAZILMAZ.
@@ -135,6 +140,58 @@ const BLOCKED_PAIRS_CONFLICT_BODY = {
   error:   'ESZAMANLI_DEGISIKLIK',
   message: 'Engel listesi şu anda başka bir yönetici tarafından değiştiriliyor. Lütfen tekrar deneyin.',
 } as const;
+
+// ─── GET/PATCH /api/tenants/:id/legal-info ───────────────────────────────────
+// AN-36 / G1-12: KVKK Veri İşleyen Sözleşmesi için kurumun yasal kimliği (unvan, adres, KEP,
+// MERSİS, vergi dairesi/no). Kapı `updateTenantSettings` ile AYNI (komşu uç): kimlik OTURUMDAN,
+// aktif ADMIN üyeliği + URL `:id` = oturum kurumu. Okuma da aynı kapıda — adres/KEP bir gerçek
+// kişiye ait olabilir (PII gibi davranılır), kurumun mentör/mentisi görmez.
+// Yanıt yalnız TENANT_LEGAL_INFO_SELECT alanları (explicit select). Sözleşme metni/imzalama YOK.
+
+export async function getTenantLegalInfo(req: Request, res: Response) {
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun yasal bilgilerini göremezsiniz.');
+  if (!ctx) return;
+  const { tenantId } = ctx;
+
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: TENANT_LEGAL_INFO_SELECT,
+  });
+  if (!tenant) {
+    return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
+  }
+
+  return res.json({ legalInfo: tenant });
+}
+
+export async function updateTenantLegalInfo(req: Request, res: Response) {
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun yasal bilgilerini güncelleyemezsiniz.');
+  if (!ctx) return;
+  const { payload, tenantId } = ctx;
+
+  const parsed = validateRequest(UpdateLegalInfoSchema, req.body, res, {
+    message: (e) => e.issues[0]?.message ?? 'Yasal bilgiler geçersiz.',
+  });
+  if (!parsed.success) return parsed.response;
+
+  const changes = pickProvidedLegalFields(parsed.data);
+
+  const updated = await prisma.tenant.update({
+    where:  { id: tenantId },
+    data:   { ...changes, legalInfoUpdatedAt: new Date() },
+    select: TENANT_LEGAL_INFO_SELECT,
+  });
+
+  // Denetim izi — updateTenantSettings ile aynı desen: yalnız alan ADLARI, DEĞERLER değil
+  // (adres/KEP kişisel veri olabilir). Tenant önbelleği bu alanları taşımadığı için invalidate gerekmez.
+  void logger.info('AUDIT', 'Kurum yasal bilgileri güncellendi', {
+    actorId: payload.sub,
+    tenantId,
+    changedFields: Object.keys(changes),
+  });
+
+  return res.json({ message: 'Yasal bilgiler kaydedildi.', legalInfo: updated });
+}
 
 // ─── POST /api/tenants/:id/block-pair ────────────────────────────────────────
 
