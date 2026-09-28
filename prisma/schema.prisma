@@ -1314,9 +1314,18 @@ model Consent {
 enum ConsentType {
   AYDINLATMA // KVKK Aydınlatma Metni okundu/onaylandı (bilgilendirme onayı)
   ACIK_RIZA // Kişisel veri işleme açık rızası (KVKK Md.5/1)
+  // AN-30 / KARAR-34 — kayıt ekranında AYRI AYRI onay alınan gruplar (tek birleşik kutu
+  // yerine granüler rıza; bkz. consentService.ts MANDATORY_/OPTIONAL_SIGNUP_CONSENT_TYPES).
+  // ZORUNLU grup (kayıt için hepsi gerekli):
+  DISC_ESLESTIRME // DISC kişilik profili mentör eşleştirmesinde kullanılır
+  YURT_DISI_SAKLAMA // veriler yurt dışında (AB dışı) barındırılan sunucularda saklanır
+  VERI_ISLEME // kişisel verilerin platform içinde işlenmesi (genel KVKK Md.5 açık rızası)
+  ANONIM_IYILESTIRME // anonimleştirilmiş veriyle platform/algoritma iyileştirmesi
+  // İSTEĞE BAĞLI grup (kayıt bu onaylar olmadan da tamamlanır):
+  KURUMLARARASI_PAYLASIM // profilin başka kurumlarla paylaşılması (kurumlar-arası eşleştirme)
+  OCEAN_PROFIL // OCEAN (Big Five) kişilik profili işleme açık rızası
   // İLERİDE (yeni değer yeter, tablo/kolon migration'ı GEREKMEZ):
   //   PAZARLAMA        — iletişim/pazarlama rızası (avukat: gelebilir)
-  //   BIG_FIVE_PROFIL  — kişilik profili işleme açık rızası (G1-11, avukat bekliyor)
 }
 
 enum ConsentSource {

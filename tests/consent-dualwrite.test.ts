@@ -8,6 +8,7 @@ import { agent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant } from './helpers/factories.js';
 import { handleOAuthCallback } from '../src/services/oauth/oauthService.js';
+import { expectTokenResult } from './helpers/oauth.js';
 import type { Tenant } from '@prisma/client';
 
 describe('Dual-write — kayıt akışları Consent + kvkkConsentAt yazar', () => {
@@ -56,9 +57,11 @@ describe('Dual-write — kayıt akışları Consent + kvkkConsentAt yazar', () =
 
   it('OAuth yeni kullanıcı: Consent(OAUTH) yazılır', async () => {
     const email = `oauth-${Date.now()}@test.local`;
-    const res = await handleOAuthCallback(
-      { providerUserId: 'g-1', email, fullName: 'OAuth User', provider: 'GOOGLE' },
-      { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'n' },
+    const res = expectTokenResult(
+      await handleOAuthCallback(
+        { providerUserId: 'g-1', email, fullName: 'OAuth User', provider: 'GOOGLE' },
+        { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'n' },
+      ),
     );
     expect(res.isNewUser).toBe(true);
 
@@ -77,9 +80,11 @@ describe('Dual-write — kayıt akışları Consent + kvkkConsentAt yazar', () =
     const user = await testPrisma.user.findUnique({ where: { email }, select: { id: true } });
     const before = await testPrisma.consent.count({ where: { userId: user!.id } });
 
-    const res2 = await handleOAuthCallback(
-      { providerUserId: 'g-2', email, fullName: 'OAuth User', provider: 'GOOGLE' },
-      { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'n2' },
+    const res2 = expectTokenResult(
+      await handleOAuthCallback(
+        { providerUserId: 'g-2', email, fullName: 'OAuth User', provider: 'GOOGLE' },
+        { tenantSlug: tenant.slug, role: 'MENTI', nonce: 'n2' },
+      ),
     );
     expect(res2.isNewUser).toBe(false);
 
