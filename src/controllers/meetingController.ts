@@ -8,6 +8,7 @@ import { sendMeetingRequestEmail, sendMeetingApprovalEmail, sendMeetingRejectedE
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isPairBlocked } from '../services/blockList.js';
+import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { USER_CONTACT_SELECT, USER_IDENTITY_SELECT } from '../utils/userSelect.js';
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
@@ -72,8 +73,11 @@ function getCtx(req: RequestWithTenant): { userId: string; tenantId: string } | 
 
 // KR-19: idari blok kontrolü — randevu oluşturma yolları (createMeeting/bookMeeting) hiçbir
 // zaman blockedPairs'ı okumuyordu, yönetici tarafından engellenmiş çift randevu alabiliyordu
-// (kod-inceleme-2026-09-24.md D4). Bu iki yol cross-tenant DESTEKLEMEZ (mentör her zaman
-// istek tenant'ında aranır) — tek tenant'ın blockedPairs'ı yeterli, ekstra sorgu gerekmez.
+// (kod-inceleme-2026-09-24.md D4). Bu tek-kurum yardımcısını YALNIZ createMeeting kullanır:
+// orada mentör `findFirst({ tenantId: istek kurumu })` ile aranır, yani mentörün ana kurumu
+// istek kurumuyla aynıdır — tek kurumun blockedPairs'ı yeterli.
+// bookMeeting'de mentör istek kurumunda yalnız ÜYE olabilir (ana kurumu başka) → orada
+// konuşma/istek uçlarıyla aynı iki-kurum kuralı uygulanır (AJ-54, isPairBlockedInTenants).
 async function isAdminBlockedPair(tenantId: string, userIdA: string, userIdB: string): Promise<boolean> {
   const tenant = await prisma.tenant.findUnique({
     where:  { id: tenantId },
@@ -489,8 +493,19 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'Geçmiş bir zamana görüşme oluşturulamaz.' });
   }
 
-  // KR-19: idari blok — varlık ifşası yok, jenerik hata.
-  if (await isAdminBlockedPair(tenantId, mentorUserId, userId)) {
+  // KR-19 / AJ-54: idari blok — startConversation ve POST /api/requests ile AYNI kural:
+  // istek kurumu + mentörün ANA kurumu (yön bağımsız). Mentör istek kurumunda yalnız üye
+  // olabilir (ana kurumu başka); ana kurumun yöneticisinin koyduğu engel de randevuyu durdurur.
+  // Ana kurum okuması kurum filtresinin (db.ts RLS eklentisi) BİLİNÇLİ dışında: findUnique
+  // filtrelenmez ve burada amaç tam olarak istek kurumu DIŞINDAKİ kurumu bulmaktır. Yalnız
+  // tenantId seçilir — başka alan dönmez/sızmaz. Mentör yoksa istek kurumu yine kontrol edilir;
+  // gerisini aşağıdaki müsaitlik kontrolü (istek kurumunda) reddeder.
+  // Varlık ifşası yok, jenerik hata.
+  const mentorHome = await prisma.user.findUnique({
+    where:  { id: mentorUserId },
+    select: { tenantId: true },
+  });
+  if (await isPairBlockedInTenants([tenantId, mentorHome?.tenantId], userId, mentorUserId)) {
     return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
   }
 
