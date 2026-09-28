@@ -42,7 +42,7 @@ export interface KpiCompletionRate {
 export interface KpiCompletion {
   /** "Kaydını tamamlayan üye": onaylı (approvalStatus APPROVED) aktif katılımcı / aktif katılımcı. */
   registration: KpiCompletionRate;
-  /** DISC değerlendirmesini bitiren (discAssessmentCompletedAt dolu) aktif katılımcı / aktif katılımcı. */
+  /** DISC değerlendirmesini bitiren (discType dolu) aktif katılımcı / aktif katılımcı. */
   disc: KpiCompletionRate;
   /** Kurumda COMPLETED durumundaki görüşme sayısı (kişi değil olay sayımı — aktif eşleşme gibi gizlenmez). */
   completedMeetings: number;
@@ -143,8 +143,11 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
     prisma.tenantMembership.count({ where: participantWhere(tenantId) }),
     // "Kaydını tamamlayan" = onaylı aktif (retentionMetrics.service.ts arz-talep sayımıyla aynı ölçüt).
     prisma.tenantMembership.count({ where: participantWhere(tenantId, { approvalStatus: 'APPROVED' }) }),
-    // DISC tamamlama = değerlendirme bitiş damgası dolu.
-    prisma.tenantMembership.count({ where: participantWhere(tenantId, { discAssessmentCompletedAt: { not: null } }) }),
+    // DISC tamamlama = baskın tip yazılmış (discType dolu): DISC'i bitiren her yol (onboardingController
+    // submitDisc, adaptiveTestEngine, temperamentController) yazar; platform kurum analizi de aynı ölçüt.
+    // `discAssessmentCompletedAt` KULLANILMAZ: yalnız onay bekleyen (PENDING) kullanıcıda, yönetici
+    // bildirimi için dolar (questionController) — davetle onaylı gelen kullanıcıda hiç dolmaz.
+    prisma.tenantMembership.count({ where: participantWhere(tenantId, { discType: { not: null } }) }),
     // Tamamlanan görüşme — kurum kapsamlı (görüşmenin kendi tenantId'si).
     prisma.meeting.count({ where: { tenantId, status: 'COMPLETED' } }),
   ]);
@@ -203,7 +206,7 @@ const SUPPRESSED_NOTE =
 
 const SUPPRESSED_GROUP_NOTE =
   `Gizlilik için hem grupta hem tamamlayanlarda en az ${K_ANONYMITY_THRESHOLD} kişi gerekir; kişilerin durumu tek tek okunamasın diye gösterilmiyor.`;
-const REGISTRATION_DEFINITION = 'Aktif mentör ve mentilerden onaylanmış olanlar.';
+const REGISTRATION_DEFINITION = 'Aktif mentör ve mentilerden hesabı onaylanmış olanlar (onay kullanıcı düzeyindedir, kuruma özel değildir).';
 const DISC_DEFINITION = 'Aktif mentör ve mentilerden DISC değerlendirmesini bitirenler.';
 
 export const KPI_CSV_HEADER = ['Bölüm', 'Metrik', 'Değer', 'Açıklama'] as const;

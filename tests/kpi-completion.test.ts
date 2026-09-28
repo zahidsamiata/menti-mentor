@@ -24,8 +24,9 @@ function tokenFor(u: Pick<User, 'id' | 'tenantId' | 'role' | 'fullName'>): strin
   return signToken({ sub: u.id, tenantId: u.tenantId, role: u.role, fullName: u.fullName });
 }
 
+/** DISC bitişinin gerçek izi: tamamlama yolları (onboarding/adaptif test) `discType` yazar. */
 async function markDiscDone(userId: string) {
-  await testPrisma.user.update({ where: { id: userId }, data: { discAssessmentCompletedAt: new Date() } });
+  await testPrisma.user.update({ where: { id: userId }, data: { discType: 'D' } });
 }
 
 async function addMeeting(tenantId: string, mentorUserId: string, mentiUserId: string, status: MeetingStatus) {
@@ -151,6 +152,19 @@ describe('AJ-78: yönetici KPI — tamamlama oranları ve tamamlanan görüşme'
     expect(res.text).toContain('Tamamlama;Tamamlanan görüşme;3;');
     expect(res.text).not.toContain('Tamamlanan görüşme;11;');
     expect(res.text).not.toContain('Tamamlanan görüşme;8;');
+  });
+
+  it('davetle onaylı gelen (APPROVED) kullanıcı DISC\'i bitirdiyse sayılır — bekleme odası damgası gerekmez', async () => {
+    const tenant = await createTenant();
+    const admin = await createAdminUser(tenant.id);
+    // Davetle gelen kullanıcı kayıtta APPROVED: bekleme odası bildirimi (discAssessmentCompletedAt) hiç yazılmaz.
+    for (let i = 0; i < 3; i++) await createMenti(tenant.id, { approvalStatus: 'APPROVED', discType: 'S' });
+    await createMenti(tenant.id); // DISC'i bitirmemiş
+    const invited = await testPrisma.user.count({ where: { tenantId: tenant.id, discAssessmentCompletedAt: { not: null } } });
+    expect(invited).toBe(0);
+
+    const res = await http.get(KPI_URL).set(tenantHeaders(tenant.id, tokenFor(admin))).expect(200);
+    expect(res.body.stats.completion.disc).toEqual({ completed: 3, eligible: 4, percent: 75, suppressed: false });
   });
 
   it('negatif: MENTOR → 403', async () => {
