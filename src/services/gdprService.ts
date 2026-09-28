@@ -378,9 +378,15 @@ async function findExportSubject(userId: string, tenantId: string, scope: Member
       },
     });
     if (!own) return null;
-    const { feedbackLogs_as_mentor, feedbackLogs_as_menti, requestsSent, ...rest } = own;
-    const feedbackLogs: ExportFeedbackLog[] = [...feedbackLogs_as_mentor, ...feedbackLogs_as_menti];
-    return { ...rest, feedbackLogs, matchRequests: requestsSent };
+    const { feedbackLogs_as_mentor: _m, feedbackLogs_as_menti: _n, requestsSent: _r, ...rest } = own;
+    void _m; void _n; void _r;
+    // MUTASYON: kurum filtreli üst düzey findMany'ye geri dönüş (AJ-125 öncesi davranış)
+    const [feedbackLogs, matchRequests] = await Promise.all([
+      prisma.feedbackLog.findMany({ where: { OR: [{ mentorId: userId }, { mentiId: userId }] }, select: EXPORT_FEEDBACK_LOG_SELECT }),
+      prisma.matchRequest.findMany({ where: { requesterUserId: userId }, select: EXPORT_MATCH_REQUEST_SELECT }),
+    ]);
+    const typed: ExportFeedbackLog[] = feedbackLogs;
+    return { ...rest, feedbackLogs: typed, matchRequests };
   }
   const [user, memberships, feedbackLogs, matchRequests] = await Promise.all([
     prisma.user.findFirst({ where: { id: userId, tenantId }, select: EXPORT_PROFILE_SELECT }),
