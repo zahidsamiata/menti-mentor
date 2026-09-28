@@ -26,28 +26,10 @@
  */
 
 import { prisma } from '../db.js';
-import type { DiscVector } from './scoring.js';
+import { parseDiscVector, type DiscVector } from './scoring.js';
 
-// ─── Tip doğrulama guard'ı ────────────────────────────────────────────────────
-
-/**
- * Prisma'nın `Json` dönüş tipini `DiscVector`'e tip-güvenli şekilde dönüştürür.
- * `as unknown as DiscVector` kullanımını ortadan kaldırır.
- */
-function parseDiscVector(raw: unknown): DiscVector | null {
-  if (raw === null || typeof raw !== 'object') return null;
-  const v = raw as Record<string, unknown>;
-  if (
-    typeof v['D'] !== 'number' ||
-    typeof v['I'] !== 'number' ||
-    typeof v['S'] !== 'number' ||
-    typeof v['C'] !== 'number' ||
-    typeof v['confidence'] !== 'number'
-  ) {
-    return null;
-  }
-  return { D: v['D'], I: v['I'], S: v['S'], C: v['C'], confidence: v['confidence'] };
-}
+// Tip doğrulama guard'ı `parseDiscVector` AJ-94'te saf `scoring.ts`'e taşındı ve dışa açıldı
+// (eşleştirme + analitik aynı kapıyı kullansın diye).
 
 // ─── Dinamik güven hedefi — TTL cache ────────────────────────────────────────
 
