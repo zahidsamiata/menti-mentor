@@ -550,7 +550,7 @@ export async function rankMentorsForMenti(args: {
   const withinThreshold = aboveThreshold.length > 0 ? aboveThreshold : scored;
 
   // AJ-90: yalnız istenen sayfa zenginleştirilir (müsaitlik/profil sorguları sayfa boyu kadar).
-  const top = withinThreshold.slice(offset, offset + limit);
+  const top = withinThreshold.slice(0, limit); // MUTASYON AJ-90: offset yok sayılıyor
 
   // AN-28: "randevu alınabilir mi" — en az bir aktif müsaitlik bloğu var mı, TEK toplu sorguyla
   // (N+1 yasak, CLAUDE.md "Koşullu Paralellik"). groupBy, mentör başına ayrı sorgu yerine tüm
