@@ -7,6 +7,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import { assertSafeTestDatabase } from './assertTestDatabase.js';
+import { withDeadlockRetry } from './deadlockRetry.js';
 
 export const testPrisma = new PrismaClient({
   datasources: { db: { url: process.env['DATABASE_URL'] } },
@@ -23,9 +24,12 @@ export const testPrisma = new PrismaClient({
  */
 export async function cleanDb(): Promise<void> {
   assertSafeTestDatabase(process.env);
-  await testPrisma.$executeRaw`
-    TRUNCATE TABLE "User", "Tenant", "SystemLog" CASCADE
-  `;
+  // AJ-122: önceki testin arka plan sorgusuyla ters sıralı kilitlenmede (40P01) yeniden dene.
+  await withDeadlockRetry(
+    () => testPrisma.$executeRaw`
+      TRUNCATE TABLE "User", "Tenant", "SystemLog" CASCADE
+    `,
+  );
 }
 
 /** Test sonunda bağlantıyı kapat. */
