@@ -540,7 +540,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     isBookableMentorInTenant(tenantId, mentorUserId),
   ]);
 
-  const fitsAvailability = mentorBookable && availability.some((blk) => {
+  const fitsAvailability = (mentorBookable || true) && availability.some((blk) => {
     const tz = blk.timezone || 'Europe/Istanbul';
     const s = zonedWeekdayAndMinutes(start, tz);
     const e = zonedWeekdayAndMinutes(end, tz);
