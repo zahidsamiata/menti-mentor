@@ -136,3 +136,38 @@ export function formatNpsSample(sample: NpsSample, emptyLabel = 'Yetersiz veri')
   if (masked.suppressed) return NPS_HIDDEN_LABEL;
   return masked.avgNps === null ? emptyLabel : String(masked.avgNps);
 }
+
+/**
+ * `maskDefaultProfileRate` dönüşü — platform kurum analizindeki "varsayılana düşen profil" metriği.
+ * `minGroupSize` = K_ANONYMITY_THRESHOLD; ekran "gizli (<N üye)" metnini sabitten kurabilsin diye.
+ */
+export interface DefaultProfileRate {
+  withoutVector: number;
+  activeMembers: number;
+  ratePercent: number | null;
+  suppressed: boolean;
+  minGroupSize: number;
+}
+
+/**
+ * AJ-79 (md.111 / G2-06): kurumun aktif üyelerinden DISC vektörü OLMAYANLARIN oranı.
+ * Vektörü olmayan menti eşleştirmede vektör skoru yerine sınıflı matrise ya da nötr 50'ye düşer
+ * (`scoring.ts` `computeDiscScore`) — bu oran "kaç profil varsayılana düşüyor" izleme metriğidir.
+ *
+ * k-anonimlik: grup = kurumun aktif üyeleri. Grup eşiğin altındaysa sayılar 0'a, oran null'a
+ * indirgenir — 1-2 kişilik kurumda oran tek tek kişilerin durumunu söylerdi.
+ * Hiç üye yoksa gizlenecek veri yoktur → `suppressed: false`, oran null (ekran "veri yok" der).
+ *
+ * Saf fonksiyon — birim testi: `tests/default-profile-rate.unit.test.ts`.
+ */
+export function maskDefaultProfileRate(withoutVector: number, activeMembers: number): DefaultProfileRate {
+  if (activeMembers <= 0) {
+    return { withoutVector: 0, activeMembers: 0, ratePercent: null, suppressed: false, minGroupSize: K_ANONYMITY_THRESHOLD };
+  }
+  if (applyKAnonymity(activeMembers).suppressed) {
+    return { withoutVector: 0, activeMembers: 0, ratePercent: null, suppressed: true, minGroupSize: K_ANONYMITY_THRESHOLD };
+  }
+  // Tek ondalık yeterli (kurum ölçeğinde %0,1 hassasiyet).
+  const ratePercent = Math.round((withoutVector / activeMembers) * 1000) / 10;
+  return { withoutVector, activeMembers, ratePercent, suppressed: false, minGroupSize: K_ANONYMITY_THRESHOLD };
+}
