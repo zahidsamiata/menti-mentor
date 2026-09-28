@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
-import { resolveCrossTenantTarget } from '../services/tenantSharing.js';
+import { canCrossTenantMatch } from '../services/tenantSharing.js';
 import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { sendNewChatMessageEmail } from '../services/emailService.js';
@@ -138,17 +138,25 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   }
 
   // Hedef mentör başka tenant'ta olabilir (shared pool). findUnique RLS'ten muaftır (bkz. db.ts);
-  // ardından resolveCrossTenantTarget paylaşım iznini zorlar — guard olmadan herhangi bir tenant'ın
-  // mentörüne konuşma açılabilirdi. AJ-103: paylaşım kapısı rol/aktiflik kontrolünden ÖNCE ve
-  // "hedef yok" ile AYNI yanıtı verir → paylaşımı kapalı kurumdaki kişinin durumu sızmaz.
-  // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından resolveCrossTenantTarget paylaşım iznini zorlar
-  const mentorRow = await prisma.user.findUnique({
+  // ardından canCrossTenantMatch paylaşım iznini zorlar — guard olmadan herhangi bir tenant'ın
+  // mentörüne konuşma açılabilirdi.
+  // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından canCrossTenantMatch paylaşım iznini zorlar
+  const mentor = await prisma.user.findUnique({
     where: { id: parsed.data.mentorUserId },
     select: { id: true, role: true, isActive: true, tenantId: true },
   });
-  const mentor = await resolveCrossTenantTarget(mentorRow, tenantId);
   if (!mentor || mentor.role !== 'MENTOR' || !mentor.isActive) {
     return res.status(400).json({ error: 'TARGET', message: 'Hedef kullanıcı aktif bir mentör olmalıdır.' });
+  }
+  const crossAllowed = await canCrossTenantMatch({
+    requesterTenantId: tenantId,
+    targetTenantId: mentor.tenantId,
+  });
+  if (!crossAllowed) {
+    return res.status(403).json({
+      error: 'SHARED_POOL_KAPALI',
+      message: 'Bu mentörün tenant havuzu kapalı olduğu için konuşma başlatılamaz.',
+    });
   }
 
   // KR-19: idari blok kontrolü — taraflardan HERHANGİ BİRİNİN tenant'ında (menti veya
