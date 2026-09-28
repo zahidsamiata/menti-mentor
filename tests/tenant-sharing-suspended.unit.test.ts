@@ -1,7 +1,7 @@
 /**
  * Y1-B9c · Askıdaki kurum kullanıcısına başka kurumdan istek açılamaz — DB'siz birim.
  * canCrossTenantMatch; conversationController.startConversation, requestController (USER hedef)
- * ve matchingController görünürlük uçlarının ortak kapısıdır → hepsi SHARED_POOL_KAPALI (jenerik) döner.
+ * ve matchingController görünürlük uçlarının ortak kapısıdır → hepsi "hedef yok" ile aynı jenerik yanıtı döner (AJ-103).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
