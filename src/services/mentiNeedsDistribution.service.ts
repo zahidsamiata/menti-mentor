@@ -54,14 +54,14 @@ export function buildMentiNeedsDistribution(
   // Aynı kişinin aynı seçeneği iki kez sayılmasın (şema dizi; doğrulama tekrarı engellemiyor).
   const respondents = answers.map((list) => new Set(list)).filter((set) => set.size > 0);
 
-  const denominator = applyKAnonymity(respondents.length);
+  const denominator = { count: respondents.length, suppressed: false }; // MUTASYON: k-anonimlik kaldırıldı
   if (denominator.suppressed) {
     return { respondentCount: 0, suppressed: true, minGroupSize: K_ANONYMITY_THRESHOLD, options: [] };
   }
 
   const options = MENTI_NEED_ORDER.map((need): MentiNeedCell => {
     const raw = respondents.filter((set) => set.has(need)).length;
-    const cell = applyKAnonymity(raw);
+    const cell = { count: raw, suppressed: false }; // MUTASYON: k-anonimlik kaldırıldı
     return {
       need,
       count: cell.count,
