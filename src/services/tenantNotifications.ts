@@ -17,6 +17,7 @@ import { logger } from './logger.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 import { send as sendEmail } from './emailService.js';
 import { escapeHtml } from './htmlEscape.js';
+import { findTenantAdminUsers } from './membership.js';
 
 export type TenantNotificationKind = 'APPROVED' | 'REJECTED' | 'CORRECTION_REQUESTED';
 
@@ -85,21 +86,14 @@ export function buildTenantNotification(args: {
 export async function notifyTenantVerification(args: TenantNotificationArgs): Promise<void> {
   try {
     // Kurum yöneticisini (ADMIN) + kurum adını bul — tenant-scoped, minimum alan.
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: args.tenantId },
-      select: {
-        name: true,
-        displayName: true,
-        users: {
-          where: { role: 'ADMIN', isActive: true },
-          select: USER_CONTACT_SELECT,
-          orderBy: { createdAt: 'asc' },
-          take: 1,
-        },
-      },
-    });
-
-    const admin = tenant?.users[0];
+    // AJ-105: ilk yönetici = bu kurumun en eski AKTİF ADMIN üyesi (User.role + ana kurum değil).
+    const [tenant, [admin]] = await Promise.all([
+      prisma.tenant.findUnique({
+        where: { id: args.tenantId },
+        select: { name: true, displayName: true },
+      }),
+      findTenantAdminUsers(args.tenantId, USER_CONTACT_SELECT),
+    ]);
     if (!tenant || !admin) {
       void logger.warn('EMAIL', 'Kurum bildirimi: yönetici bulunamadı — atlandı.', {
         tenantId: args.tenantId,

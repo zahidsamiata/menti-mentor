@@ -21,6 +21,7 @@ import { prisma } from '../db.js';
 import { logger } from './logger.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 import { maskNpsSample, type MaskedNpsSample, type NpsSample } from './mask.js';
+import { findTenantAdminUsers } from './membership.js';
 
 export type AlgorithmWeights = {
   sectorWeight: number;   // 0-1 (varsayılan: 0.60)
@@ -517,10 +518,8 @@ export async function rejectPendingAdjustment(tenantId: string): Promise<void> {
 }
 
 async function notifyAdminsAboutPendingAdjustment(tenantId: string, result: TuningResult): Promise<void> {
-  const admins = await prisma.user.findMany({
-    where: { tenantId, role: 'ADMIN', isActive: true },
-    select: USER_CONTACT_SELECT,
-  });
+  // AJ-105: alıcılar bu kurumun AKTİF ADMIN üyeleri (User.role + ana kurum değil).
+  const admins = await findTenantAdminUsers(tenantId, USER_CONTACT_SELECT);
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { displayName: true, name: true } });
   const tenantName = tenant?.displayName ?? tenant?.name ?? tenantId;
 

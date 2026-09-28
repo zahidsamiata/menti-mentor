@@ -49,7 +49,11 @@ vi.mock('../src/services/consentService.js', () => ({
   hasCurrentSignupConsent: vi.fn(),
 }));
 vi.mock('../src/services/userProfile.service.js', () => ({ ensureUserProfile: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('../src/services/membership.js', () => ({ ensureMembershipSafe: vi.fn().mockResolvedValue(undefined) }));
+// AJ-105: yönetici alıcıları findTenantAdminUsers'tan (üyelik tablosu) — aynı sahte liste.
+vi.mock('../src/services/membership.js', () => ({
+  ensureMembershipSafe: vi.fn().mockResolvedValue(undefined),
+  findTenantAdminUsers: (...a: unknown[]) => userFindMany(...a),
+}));
 
 import { register } from '../src/controllers/authController.js';
 

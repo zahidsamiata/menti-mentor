@@ -23,7 +23,8 @@ const { sendMailMock, feedbackReminderMock, draftReminderMock, prismaMock } = vi
     systemLog: { create: vi.fn().mockResolvedValue({}) },
     meeting: { findMany: vi.fn(), update: vi.fn().mockResolvedValue({}) },
     tenant: { findMany: vi.fn(), update: vi.fn().mockResolvedValue({}) },
-    user: { findFirst: vi.fn() },
+    // AJ-105: kurucu yönetici üyelik tablosundan (findTenantAdminUsers) — satır { user } şeklinde.
+    tenantMembership: { findMany: vi.fn() },
   },
 }));
 
@@ -140,11 +141,13 @@ describe('Taslak kurum hatırlatma cron — bayrak yakılmaz (U-16)', () => {
     draftReminderMock.mockReset();
     prismaMock.tenant.findMany.mockReset();
     prismaMock.tenant.update.mockClear();
-    prismaMock.user.findFirst.mockReset();
+    prismaMock.tenantMembership.findMany.mockReset();
     prismaMock.tenant.findMany.mockResolvedValue([
       { id: 'tn1', name: 'deneme', displayName: 'Deneme Kurumu', unsubscribeToken: 'unsub-1' },
     ]);
-    prismaMock.user.findFirst.mockResolvedValue({ id: 'adm1', fullName: 'Kurum Yöneticisi', email: 'yonetici@example.com' });
+    prismaMock.tenantMembership.findMany.mockResolvedValue([
+      { user: { id: 'adm1', fullName: 'Kurum Yöneticisi', email: 'yonetici@example.com' } },
+    ]);
   });
 
   it('mail gitmezse reminderEmailSentAt YAZILMAZ (sonraki cron tekrar dener)', async () => {

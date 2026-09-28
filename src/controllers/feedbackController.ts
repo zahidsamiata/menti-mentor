@@ -7,6 +7,7 @@ import { persistMentorQualityMultiplier } from '../services/scoring.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
+import { activeMemberRoleWhere } from '../services/membership.js';
 
 const FeedbackSchema = z.object({
   // Menti → Mentor (1-5)
@@ -206,7 +207,8 @@ export async function clearOrientationLock(req: RequestWithTenant, res: Response
   const userId = req.params['userId'] as string;
 
   const user = await prisma.user.findFirst({
-    where: { id: userId, tenantId: req.tenant.tenantId, role: 'MENTI' },
+    // AJ-105: "menti mi" bu kurumdaki üyelikten (User.role değil).
+    where: { id: userId, tenantId: req.tenant.tenantId, ...activeMemberRoleWhere(req.tenant.tenantId, 'MENTI') },
     select: { id: true, fullName: true, needsOrientation: true },
   });
   if (!user) return res.status(404).json({ error: 'NOT_FOUND', message: 'Menti bulunamadı.' });

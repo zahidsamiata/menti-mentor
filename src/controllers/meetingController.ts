@@ -10,6 +10,7 @@ import { validateRequest, sendValidationError } from '../middleware/validate.js'
 import { isPairBlocked } from '../services/blockList.js';
 import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { USER_CONTACT_SELECT, USER_IDENTITY_SELECT } from '../utils/userSelect.js';
+import { activeMemberRoleWhere } from '../services/membership.js';
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
@@ -223,11 +224,12 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
 
   const [mentor, menti] = await Promise.all([
     prisma.user.findFirst({
-      where:  { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR', isActive: true },
+      // AJ-105: rol bu kurumdaki üyelikten (User.role kişi-genel; başka kurumdaki rolü olabilir).
+      where:  { id: mentorId, tenantId: req.tenant.tenantId, isActive: true, ...activeMemberRoleWhere(req.tenant.tenantId, 'MENTOR') },
       select: USER_IDENTITY_SELECT,
     }),
     prisma.user.findFirst({
-      where:  { id: mentiId, tenantId: req.tenant.tenantId, role: 'MENTI', isActive: true },
+      where:  { id: mentiId, tenantId: req.tenant.tenantId, isActive: true, ...activeMemberRoleWhere(req.tenant.tenantId, 'MENTI') },
       select: { ...USER_IDENTITY_SELECT, needsOrientation: true },
     }),
   ]);
