@@ -420,11 +420,26 @@ export type RankedMentor = {
   isFaded: boolean;           // kart soluk mu? (KARAR-80/M7: kart HER ZAMAN kalır, yalnız soluklaşır)
 };
 
+// AJ-90: menti mentör havuzu sayfalaması. `total` = eşik sonrası TÜM uygun mentör sayısı
+// (sayfadan bağımsız); `offset` bu listede kaçıncı mentörden başlanacağı. Sıra
+// byScoreDescThenId ile kararlı (eşit skorda id artan) → ardışık sayfalar arasında tekrar/eksik
+// olmaz. offset tavanı MAX_MATCH_CANDIDATES: skorlanan aday sayısı bundan büyük olamaz.
+export type RankedMentorPage = {
+  items: RankedMentor[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export async function rankMentorsForMenti(args: {
   mentiId: string;
   mentiTenantId: string;
   limit?: number;
-}): Promise<{ items: RankedMentor[] }> {
+  offset?: number;
+}): Promise<RankedMentorPage> {
+  // limit verilmezse eski üst sınır (500) korunur — ağır zenginleştirme sınırsız büyümesin.
+  const limit = args.limit || MATCH_CANDIDATE_PAGE_SIZE;
+  const offset = args.offset ?? 0;
   // Menti'nin KENDİ profili — MENTI membership doğrulaması (tenant-başına rol kaynağı).
   const menti = await prisma.user.findFirst({
     where: {
@@ -435,7 +450,7 @@ export async function rankMentorsForMenti(args: {
     },
     select: { id: true, tenantId: true, sectorTags: true, discType: true, discVector: true },
   });
-  if (!menti) return { items: [] };
+  if (!menti) return { items: [], total: 0, limit, offset };
 
   // Eligible tenant listesi: kendi tenant'ı + her iki taraf da shared-pool ise diğerleri
   // (rankMentisForMentor ile AYNI cross-tenant güvenlik deseni).
@@ -534,8 +549,8 @@ export async function rankMentorsForMenti(args: {
   // durumuna (PS-10 boş-liste mesajı) yalnız GERÇEKTEN mentör yokken düşer, baraj yüzünden değil.
   const withinThreshold = aboveThreshold.length > 0 ? aboveThreshold : scored;
 
-  // limit verilmezse eski üst sınır (500) korunur — ağır zenginleştirme sınırsız büyümesin.
-  const top = withinThreshold.slice(0, args.limit || MATCH_CANDIDATE_PAGE_SIZE);
+  // AJ-90: yalnız istenen sayfa zenginleştirilir (müsaitlik/profil sorguları sayfa boyu kadar).
+  const top = withinThreshold.slice(offset, offset + limit);
 
   // AN-28: "randevu alınabilir mi" — en az bir aktif müsaitlik bloğu var mı, TEK toplu sorguyla
   // (N+1 yasak, CLAUDE.md "Koşullu Paralellik"). groupBy, mentör başına ayrı sorgu yerine tüm
@@ -589,5 +604,5 @@ export async function rankMentorsForMenti(args: {
     };
   });
 
-  return { items };
+  return { items, total: withinThreshold.length, limit, offset };
 }
