@@ -140,11 +140,10 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
     // AJ-78: tamamlama oranları — sorgular üyelikten başlar (AJ-40: db.ts RLS eklentisi üst düzey
     // `user` okumalarına ev kurumunu enjekte eder; misafir üye ancak üyelik tablosundan doğru sayılır).
     // Payda: aktif katılımcı üyeler.
-    prisma.tenantMembership.count({ where: participantWhere(tenantId) }),
-    // "Kaydını tamamlayan" = onaylı aktif (retentionMetrics.service.ts arz-talep sayımıyla aynı ölçüt).
-    prisma.tenantMembership.count({ where: participantWhere(tenantId, { approvalStatus: 'APPROVED' }) }),
-    // DISC tamamlama = değerlendirme bitiş damgası dolu.
-    prisma.tenantMembership.count({ where: participantWhere(tenantId, { discAssessmentCompletedAt: { not: null } }) }),
+    // MUTASYON: sayım üyelik yerine User (ev kurumu, User.role) üzerinden
+    prisma.user.count({ where: { tenantId, isActive: true, role: { in: ['MENTOR', 'MENTI'] } } }),
+    prisma.user.count({ where: { tenantId, isActive: true, role: { in: ['MENTOR', 'MENTI'] }, approvalStatus: 'APPROVED' } }),
+    prisma.user.count({ where: { tenantId, isActive: true, role: { in: ['MENTOR', 'MENTI'] }, discAssessmentCompletedAt: { not: null } } }),
     // Tamamlanan görüşme — kurum kapsamlı (görüşmenin kendi tenantId'si).
     prisma.meeting.count({ where: { tenantId, status: 'COMPLETED' } }),
   ]);
