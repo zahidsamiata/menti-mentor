@@ -21,7 +21,6 @@
  */
 
 import type { Request, Response } from 'express';
-import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { applyKAnonymity, maskDefaultProfileRate } from '../services/mask.js';
 import { maskEmail } from '../services/mask.js';
@@ -338,7 +337,7 @@ export async function getTenantAnalytics(req: Request, res: Response) {
   // olan vektör (eşleştirmede `parseDiscVector`/`computeDiscScore` onu da varsayılana düşürür) bu
   // sayıma GİRMEZ — metrik alt sınırdır.
   const withoutVector = await prisma.tenantMembership.count({
-    where: { tenantId, isActive: true, user: { discVector: { equals: Prisma.AnyNull } } },
+    where: { tenantId, isActive: true }, // MUTASYON: vektör filtresi kaldırıldı
   });
   const defaultProfile = maskDefaultProfileRate(withoutVector, memberships.length);
 

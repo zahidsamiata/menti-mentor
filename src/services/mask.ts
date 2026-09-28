@@ -164,7 +164,7 @@ export function maskDefaultProfileRate(withoutVector: number, activeMembers: num
   if (activeMembers <= 0) {
     return { withoutVector: 0, activeMembers: 0, ratePercent: null, suppressed: false, minGroupSize: K_ANONYMITY_THRESHOLD };
   }
-  if (applyKAnonymity(activeMembers).suppressed) {
+  if (activeMembers < 0 && applyKAnonymity(activeMembers).suppressed) { // MUTASYON: maske kaldırıldı
     return { withoutVector: 0, activeMembers: 0, ratePercent: null, suppressed: true, minGroupSize: K_ANONYMITY_THRESHOLD };
   }
   // Tek ondalık yeterli (kurum ölçeğinde %0,1 hassasiyet).
