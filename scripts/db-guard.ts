@@ -6,10 +6,18 @@
  *   npx tsx scripts/db-guard.ts seed              # onaysız → ret, hiçbir şey çalışmaz
  *   npx tsx scripts/db-guard.ts migrate-dev       # onaysız → ret, hiçbir şey çalışmaz
  *   MENTI_TEHLIKELI_DB_ONAY=migrate-dev npx tsx scripts/db-guard.ts migrate-dev --name x
- *     → yalnız izole/geçici DB'de, host doğrulanarak (CANLI = LOKAL AYNI DB).
+ *     → yalnız DATABASE_URL yerel host'u gösteriyorsa (AJ-96; CANLI = LOKAL AYNI DB).
+ *
+ * backend/.env burada yüklenir (var olan ortam değişkenini EZMEDEN) — Prisma da aynı dosyayı aynı
+ * öncelikle okur; kapı, komutun gerçekten bağlanacağı DATABASE_URL'i denetlemiş olur.
  */
 import { spawnSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config as dotenvConfig } from 'dotenv';
 import { runDangerousDbCommand, DB_GUARD_REFUSED_EXIT_CODE } from '../src/dangerousDbGuard.js';
+
+dotenvConfig({ path: resolve(dirname(fileURLToPath(import.meta.url)), '../.env'), quiet: true });
 
 const exitCode = runDangerousDbCommand(process.argv.slice(2), process.env, {
   run: (command, args, env) => {

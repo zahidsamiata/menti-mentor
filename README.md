@@ -35,7 +35,8 @@ npm run prisma:generate
 npm run prisma:migrate:status   # Salt-okuma: uygulanmış/bekleyen migration listesi
 # ⛔ `npm run prisma:migrate` (= `prisma migrate dev`) KORUMALIDIR (AJ-57): şema sapmasında DB'yi
 # SIFIRLAMAYI önerir, sıfırlama sonrası prisma/seed.ts kendiliğinden koşar (deleteMany). CANLI =
-# LOKAL AYNI DB → yalnız MENTI_TEHLIKELI_DB_ONAY=migrate-dev verilirse, izole/geçici DB'de çalışır.
+# LOKAL AYNI DB → yalnız MENTI_TEHLIKELI_DB_ONAY=migrate-dev verilirse VE DATABASE_URL yerel host
+# (localhost / 127.0.0.1 / ::1) ise çalışır; uzak/canlı adreste onay olsa da reddedilir (AJ-96).
 # Şema değişikliği: CLAUDE.md § Migration Kuralı — `IF NOT EXISTS` SQL + `npx prisma db execute`
 # + `npx prisma migrate resolve --applied <ad>` (KARAR "evet" + tarihli yedek sonrası).
 # Boş, izole bir DB'ye (host doğrulanmış) şema kurmak: `npx prisma migrate deploy` (sıfırlamaz,
@@ -451,7 +452,7 @@ npm run format           # Prettier
 npm run prisma:generate  # Prisma client yenile
 npm run prisma:migrate:status  # Salt-okuma: uygulanmış/bekleyen migration listesi
 # npm run prisma:migrate  # ⛔ KORUMALI (AJ-57) — `prisma migrate dev`; DB'yi sıfırlayıp seed koşturabilir.
-                         # Yalnız MENTI_TEHLIKELI_DB_ONAY=migrate-dev + izole DB. Şema değişikliği:
+                         # Yalnız MENTI_TEHLIKELI_DB_ONAY=migrate-dev + yerel host DB (AJ-96). Şema değişikliği:
                          # CLAUDE.md § Migration Kuralı (IF NOT EXISTS SQL + db execute + migrate resolve).
 npm run prisma:studio    # Prisma Studio GUI
 # npm run seed           # ⛔ ÇALIŞTIRMA — toplu deleteMany() (veri SİLER); CANLI=LOKAL AYNI DB. KORUMALI (AJ-57).

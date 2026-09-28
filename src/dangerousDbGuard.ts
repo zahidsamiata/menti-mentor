@@ -11,12 +11,19 @@
  * TAM eşitse çalıştırılır. Aksi hâlde Türkçe gerekçe basılır, komut ÇAĞRILMAZ, sıfır olmayan kodla
  * çıkılır.
  *
+ * AJ-96: onay tek başına yetmez — `requiresLocalDatabase` işaretli işlem (migrate-dev) ayrıca
+ * DATABASE_URL yerel host'u göstermiyorsa reddedilir (kural src/seedGuard.ts ile ortak:
+ * checkLocalDatabaseUrl). Onay değişkeninin adı ret mesajında KALIR: repo açık, ad zaten README'de;
+ * gizlemek koruma sağlamaz, asıl koruma host şartıdır.
+ *
  * Katmanlar:
  *   - scripts/db-guard.ts             → npm betikleri ve `prisma.seed` bu CLI'dan geçer.
  *   - prisma/seed-approval-gate.ts    → `tsx prisma/seed.ts` doğrudan çalıştırılsa da ilk import
  *                                       olarak bu kontrolü yapar (DB istemcisi oluşmadan).
  *   - src/seedGuard.ts (KR-01)        → seed.ts içinde ayrıca yerel host + SEED_ALLOW_DESTRUCTIVE ister.
  */
+
+import { checkLocalDatabaseUrl, type LocalDbHostCheck } from './seedGuard.js';
 
 export const DANGEROUS_DB_APPROVAL_ENV = 'MENTI_TEHLIKELI_DB_ONAY';
 
@@ -32,6 +39,11 @@ export interface DangerousDbOperation {
   risk: string;
   /** Bunun yerine ne yapılmalı — ret mesajında gösterilir. */
   saferPath: string;
+  /**
+   * true → onay olsa bile DATABASE_URL yerel host değilse ret (AJ-96). seed'de gerekmez:
+   * prisma/seed.ts kendi içinde aynı şartı ayrıca uygular (src/seedGuard.ts, KR-01).
+   */
+  requiresLocalDatabase?: boolean;
 }
 
 const LIVE_DB_WARNING =
@@ -62,6 +74,7 @@ export const DANGEROUS_DB_OPERATIONS: Readonly<Record<string, DangerousDbOperati
       '`npx prisma db execute --file <migration.sql> --schema prisma/schema.prisma` → ' +
       '`npx prisma migrate resolve --applied <migration-adı>` — yalnız ilgili KARAR "evet" + tarihli yedek sonrası. ' +
       '`prisma db push --accept-data-loss` YASAKTIR.',
+    requiresLocalDatabase: true,
   },
 });
 
@@ -75,6 +88,19 @@ export interface DbGuardEnv {
 
 function listOperations(): string {
   return Object.keys(DANGEROUS_DB_OPERATIONS).join(', ');
+}
+
+function describeNonLocalTarget(target: Exclude<LocalDbHostCheck, { ok: true }>): string {
+  switch (target.reason) {
+    case 'missing':
+      return 'DATABASE_URL tanımlı değil; hedef doğrulanamadı.';
+    case 'unparseable':
+      return 'DATABASE_URL çözümlenemedi; hedef doğrulanamadı.';
+    case 'host-param':
+      return 'DATABASE_URL "host" parametresi içeriyor; hedef doğrulanamadı.';
+    case 'not-local':
+      return `hedef host "${target.host}" yerel değil.`;
+  }
 }
 
 /** İşlem adının ve onay değişkeninin durumuna göre karar verir. Saf fonksiyon: hiçbir şey çalıştırmaz. */
@@ -92,6 +118,20 @@ export function checkDangerousDbApproval(operationName: string | undefined, env:
   }
 
   if (env[DANGEROUS_DB_APPROVAL_ENV] === operationName) {
+    if (operation.requiresLocalDatabase) {
+      const target = checkLocalDatabaseUrl(env['DATABASE_URL']);
+      if (!target.ok) {
+        return {
+          allowed: false,
+          message: [
+            `DB KİLİDİ: "${operationName}" çalıştırılmadı — onay verildi ama ${describeNonLocalTarget(target)}`,
+            'Onay yalnız yerel veritabanında (localhost / 127.0.0.1 / ::1) geçerlidir.',
+            LIVE_DB_WARNING,
+            `Güvenli yol: ${operation.saferPath}`,
+          ].join('\n'),
+        };
+      }
+    }
     return { allowed: true, operation };
   }
 
@@ -102,7 +142,9 @@ export function checkDangerousDbApproval(operationName: string | undefined, env:
       `Neden tehlikeli: ${operation.risk}`,
       LIVE_DB_WARNING,
       `Güvenli yol: ${operation.saferPath}`,
-      `Bilerek, izole/geçici bir veritabanında (host'u doğrulayarak) çalıştırmak için: ` +
+      `Bilerek, izole/geçici bir veritabanında çalıştırmak için` +
+        (operation.requiresLocalDatabase ? ' (yalnız yerel host — localhost / 127.0.0.1 / ::1)' : ' (host\'u doğrulayarak)') +
+        ': ' +
         `${DANGEROUS_DB_APPROVAL_ENV}=${operationName} ortam değişkenini ayarlayın.`,
     ].join('\n'),
   };
