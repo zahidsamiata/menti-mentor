@@ -11,6 +11,9 @@
  *  - IDOR: bir menti başka menti'nin uyum listesine erişemez (requireSelfOrAdmin → 403).
  *  - AJ-90: liste sayfalı (offset/limit) + total; sayfa sınırında tekrar/eksik yok (eşit skorlu
  *    adaylar dahil); başka (havuz dışı) kurumun mentörü total'e de sayfalara da girmez.
+ *  - AJ-66 · KARAR 4: kartta "Sertifikalı ✓" için isCertified — kişi-geneli (herhangi bir kurum
+ *    üyeliği sertifikalıysa true, yönetici havuzu rozetiyle aynı kural); paylaşımlı havuzdaki başka
+ *    kurum mentörünün sertifikası KENDİ üyeliğinden okunur; DTO'da başka yeni alan yok.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -144,6 +147,61 @@ describe('GET /mentis/:mentiId/mentor-matches — menti uyum kartı (KARAR 5 + I
       expect(p.total).toBe(40);
       expect(p.items.map((i) => i.mentorId)).not.toContain(outsider.id);
     }
+  });
+
+  // ─── AJ-66 · Sertifikalı rozeti (KARAR 4) ──────────────────────────────────
+  // Menti-facing DTO'nun TAM alan listesi — yeni alan eklenirse bilinçli güncellenmeli (sızıntı bekçisi).
+  const MENTI_FACING_KEYS = [
+    'compatibilityReason', 'isBookable', 'isCertified', 'isFaded', 'matchScore',
+    'mentorAvatarUrl', 'mentorId', 'mentorName', 'sectorTags', 'skills',
+  ];
+
+  async function certify(userId: string, tenantId: string) {
+    await testPrisma.tenantMembership.update({
+      where: { userId_tenantId: { userId, tenantId } },
+      data:  { isCertified: true, certificationStatus: 'CERTIFIED', certifiedAt: new Date() },
+    });
+  }
+
+  async function fetchItems(menti: { id: string; email: string; rawPassword: string }, tenantId: string) {
+    const { accessToken } = await loginAs(http, menti.email, menti.rawPassword);
+    const res = await http
+      .get(`/api/mentis/${menti.id}/mentor-matches?limit=200`)
+      .set(tenantHeaders(tenantId, accessToken))
+      .expect(200);
+    return (res.body as { items: Array<Record<string, unknown>> }).items;
+  }
+
+  it('AJ-66: sertifikalı mentör isCertified:true, sertifikasız false; DTO\'da başka yeni alan yok', async () => {
+    await testPrisma.tenant.update({ where: { id: tenant.id }, data: { minMatchScoreThreshold: 0 } });
+    const menti = await createMenti(tenant.id);
+    const certified   = await createMentor(tenant.id);
+    const uncertified = await createMentor(tenant.id);
+    await certify(certified.id, tenant.id);
+
+    const items = await fetchItems(menti, tenant.id);
+    const byId = new Map(items.map((i) => [i['mentorId'], i]));
+    expect(byId.get(certified.id)?.['isCertified']).toBe(true);
+    expect(byId.get(uncertified.id)?.['isCertified']).toBe(false);
+    for (const item of items) expect(Object.keys(item).sort()).toEqual(MENTI_FACING_KEYS);
+  });
+
+  it('AJ-66 kurumlar arası: havuzdaki B kurumu mentörünün sertifikası KENDİ (B) üyeliğinden okunur', async () => {
+    const poolA = await createTenant({ isSharedPoolActive: true });
+    const poolB = await createTenant({ isSharedPoolActive: true });
+    for (const t of [poolA, poolB]) {
+      await testPrisma.tenant.update({ where: { id: t.id }, data: { minMatchScoreThreshold: 0 } });
+    }
+    const menti = await createMenti(poolA.id);
+    const foreignCertified   = await createMentor(poolB.id);
+    const foreignUncertified = await createMentor(poolB.id);
+    await certify(foreignCertified.id, poolB.id);
+
+    const items = await fetchItems(menti, poolA.id);
+    const byId = new Map(items.map((i) => [i['mentorId'], i]));
+    // Mentinin kurumunda (A) üyeliği YOK — istek kurumuna bakan bir kural burada false derdi.
+    expect(byId.get(foreignCertified.id)?.['isCertified']).toBe(true);
+    expect(byId.get(foreignUncertified.id)?.['isCertified']).toBe(false);
   });
 
   it('AJ-90 negatif: geçersiz offset (negatif / tam sayı değil) → 400', async () => {

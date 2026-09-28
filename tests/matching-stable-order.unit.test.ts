@@ -64,6 +64,7 @@ function person(id: string, sectorTags: string[]) {
     timeCommitment: null,
     interactionStyle: null,
     expectationCategories: [],
+    memberships: [], // AJ-66: sertifikalı üyelik yok (iç içe select şekli)
   };
 }
 

@@ -59,6 +59,7 @@ function profile(id: string, tenantId: string) {
     id, tenantId, fullName: `Aday ${id}`, avatarUrl: null,
     sectorTags: ['teknoloji'], discType: 'C', discVector: null, skills: [],
     mentorVisibilityEnabled: true, timeCommitment: null, interactionStyle: null, expectationCategories: [],
+    memberships: [], // AJ-66: sertifikalı üyelik yok (iç içe select şekli)
   };
 }
 

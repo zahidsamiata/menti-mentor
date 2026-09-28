@@ -418,6 +418,9 @@ export type RankedMentor = {
   isProfileFaded: boolean;    // mentörün profili "çekirdek tamamlanma" eşiğini geçmemiş
   isBookable: boolean;        // en az bir aktif müsaitlik bloğu VAR ve görünürlük açık — randevu alınabilir
   isFaded: boolean;           // kart soluk mu? (KARAR-80/M7: kart HER ZAMAN kalır, yalnız soluklaşır)
+  // AJ-66 · KARAR 4: mentör herhangi bir kurumda sertifikalı mı (kişi-geneli). Menti DTO'suna
+  // geçer; ön yüz yalnız true'da "Sertifikalı ✓" gösterir (olumsuz etiket YOK).
+  isCertified: boolean;
 };
 
 // AJ-90: menti mentör havuzu sayfalaması. `total` = eşik sonrası TÜM uygun mentör sayısı
@@ -496,6 +499,17 @@ export async function rankMentorsForMenti(args: {
       discType: true,
       skills: true,
       mentorVisibilityEnabled: true,
+      // AJ-66 · KARAR 4 (sertifika rozeti herkese görünür, yalnız pozitif): sertifika kişi-GENELİDİR —
+      // mentör HERHANGİ bir kurumdaki üyeliğinde sertifikalıysa sertifikalı sayılır; yönetici havuzu
+      // rozetiyle AYNI kural (adminController adminListUsers `memberships` select'i).
+      // ⚠️ İÇ İÇE select KASITLI: üst düzey prisma.tenantMembership sorgusuna db.ts RLS eklentisi
+      // istek kurumunun tenantId'sini enjekte eder → paylaşımlı havuzdaki başka kurum mentörünün
+      // (sertifikası kendi kurumundaki üyelikte durur) rozeti kaybolurdu. Yalnız varlık okunur (id).
+      memberships: {
+        where:  { isCertified: true },
+        select: { id: true },
+        take:   1,
+      },
     },
     // Kararlı sıra (PS-01) + keyset sayfalama (AN-07): id artan, sayfa başına 500.
     orderBy: { id: 'asc' },
@@ -601,6 +615,7 @@ export async function rankMentorsForMenti(args: {
       isProfileFaded,
       isBookable,
       isFaded,
+      isCertified:     m.memberships.length > 0,
     };
   });
 

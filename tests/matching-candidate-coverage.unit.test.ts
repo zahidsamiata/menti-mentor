@@ -74,6 +74,7 @@ function person(id: string, sectorTags: string[]): Row {
     interactionStyle: null,
     expectationCategories: [],
     mentorVisibilityEnabled: true,
+    memberships: [], // AJ-66: sertifikalı üyelik yok (iç içe select şekli)
   };
 }
 

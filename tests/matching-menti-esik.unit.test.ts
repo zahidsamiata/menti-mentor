@@ -56,6 +56,7 @@ function mentor(id: string, discType: 'D' | 'I' | 'S' | 'C', sectorTags: string[
     discType,
     skills: [],
     mentorVisibilityEnabled: true,
+    memberships: [], // AJ-66: sertifikalı üyelik yok (iç içe select şekli)
   };
 }
 
