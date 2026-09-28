@@ -505,7 +505,8 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     where:  { id: mentorUserId },
     select: { tenantId: true },
   });
-  if (await isPairBlockedInTenants([tenantId, mentorHome?.tenantId], userId, mentorUserId)) {
+  void mentorHome; void isPairBlockedInTenants; // MUTASYON AJ-54: eski tek-kurum çağrısı
+  if (await isAdminBlockedPair(tenantId, mentorUserId, userId)) {
     return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
   }
 
