@@ -783,12 +783,14 @@ export async function oauthRedirect(req: Request, res: Response) {
 /**
  * GET /api/auth/:provider/callback — Provider'dan dönen authorization code'u işler.
  *
- * Başarı: frontend'e accessToken + refreshToken + isNewUser query parametreleriyle yönlendir.
+ * Başarı: yenileme anahtarı HttpOnly çereze yazılır, frontend'e yalnız gizli olmayan
+ * `isNewUser` bayrağıyla yönlendirilir. Frontend erişim anahtarını, sayfa yenilemesindeki
+ * sessiz girişle AYNI yoldan (`POST /api/auth/refresh`, çerezle) alır.
  * Hata: frontend'e error kodu ile yönlendir.
  *
- * Neden redirect? OAuth callback browser tablosunda gerçekleşir; SPA'ya mesaj
- * iletmenin standart yolu URL parametresidir. Frontend'in bu değerleri
- * LocalStorage'a taşıması ve URL'i temizlemesi gerekir.
+ * Neden erişim anahtarı adreste YOK? (AJ-73) Adresteki anahtar tarayıcı geçmişine, sunucu
+ * erişim günlüklerine ve Referer başlığına düşer. E-posta/şifre `login` ucu da anahtarı
+ * yanıt gövdesinde döndürür, adreste değil — iki giriş yolu aynı ilkeye bağlandı.
  */
 export async function oauthCallback(req: Request, res: Response) {
   const providerKey = req.params['provider'];
@@ -819,10 +821,7 @@ export async function oauthCallback(req: Request, res: Response) {
     const result = await handleOAuthCallback(profile, statePayload);
 
     setRefreshCookie(res, result.refreshToken);
-    const params = new URLSearchParams({
-      accessToken: result.accessToken,
-      isNewUser: String(result.isNewUser),
-    });
+    const params = new URLSearchParams({ isNewUser: String(result.isNewUser) });
     return res.redirect(`${config.oauth.frontendCallbackUrl}?${params.toString()}`);
   } catch (err) {
     if (err instanceof OAuthConflictError) {
