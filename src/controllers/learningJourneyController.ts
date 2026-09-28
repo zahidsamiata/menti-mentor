@@ -98,7 +98,9 @@ export async function recordStageProgress(req: RequestWithTenant, res: Response)
   if (!parsed.success) return parsed.response;
 
   // IDOR koruması: userId gövdeden DEĞİL oturumdan; tenant izolasyonu findVisibleStage'de.
-  const ok = await markStageProgress(req.auth.userId, req.tenant.tenantId, audience, parsed.data.stageId);
+  // MUTASYON M3: kimlik gövdeden alınıyor
+  const bodyUser = (req.body as { userId?: string } | undefined)?.userId;
+  const ok = await markStageProgress(bodyUser ?? req.auth.userId, req.tenant.tenantId, audience, parsed.data.stageId);
   if (!ok) {
     return res.status(404).json({
       error: 'ASAMA_BULUNAMADI',

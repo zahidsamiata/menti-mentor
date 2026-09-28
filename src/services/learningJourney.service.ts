@@ -260,8 +260,8 @@ export async function markStageProgress(
   audience: LearningAudience,
   stageId: string,
 ): Promise<boolean> {
-  const stage = await findVisibleStage(tenantId, audience, stageId);
-  if (!stage) return false;
+  // MUTASYON M2: görünürlük kapısı kaldırıldı
+  void audience;
 
   await prisma.tenantMembership.updateMany({
     where: { userId, tenantId, NOT: { learningJourneyStageIds: { has: stageId } } },
@@ -288,7 +288,8 @@ export function summarizeProgress(
   stages: Pick<PublicStage, 'id' | 'title'>[],
   savedStageIds: readonly string[],
 ): JourneyProgress {
-  const saved = new Set(savedStageIds);
+  // MUTASYON M1: kayıtlı ilerleme yok sayılıyor (eski davranış: her açılış baştan)
+  const saved = new Set<string>(savedStageIds.length < 0 ? savedStageIds : []);
   const completedStageIds = stages.filter((s) => saved.has(s.id)).map((s) => s.id);
   const nextIndex = stages.findIndex((s) => !saved.has(s.id));
   const next = nextIndex >= 0 ? stages[nextIndex] : undefined;
