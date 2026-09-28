@@ -204,9 +204,6 @@ const AdminUserListSchema = z.object({
   approvalStatus: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
-  // AJ-106: ada göre arama — seçim listeleri (ör. Çifti Engelle paneli) yalnız ilk sayfayı değil
-  // kurumdaki TÜM eşleşen üyeleri bulabilsin. Yalnız fullName üzerinde (e-posta aranmaz).
-  search: z.string().trim().min(1).max(100).optional(),
 });
 
 /** AJ-40: konuk üyede (ev-sahibi kurumu başka) gizlenen, başka kurum yöneticisinin kararı olan alanlar. */
@@ -223,7 +220,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   const parsed = validateRequest(AdminUserListSchema, req.query, res);
   if (!parsed.success) return parsed.response;
 
-  const { role, isActive, rematchOnly, approvalStatus, page, pageSize, search } = parsed.data;
+  const { role, isActive, rematchOnly, approvalStatus, page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
 
   // AJ-40: liste/filtre/toplam BU kurumun üyeliğinden (TenantMembership.role, CLAUDE.md "Veri
@@ -241,7 +238,6 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
       // filtreye girmez; aksi hâlde başka kurumun kararı filtre üzerinden sızar (aşağıda maskelenir).
       ...(rematchOnly && { rematchPriority: true, tenantId: req.tenant.tenantId }),
       ...(approvalStatus !== undefined && { approvalStatus }),
-      ...(search !== undefined && { fullName: { contains: search, mode: 'insensitive' as const } }),
     },
   };
 

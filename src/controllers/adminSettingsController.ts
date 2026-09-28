@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { Prisma } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { authenticateTenantAdminForParam } from '../middleware/tenantAdminAuth.js';
@@ -75,67 +74,6 @@ export async function updateTenantSettings(req: Request, res: Response) {
   });
 }
 
-// ─── blockedPairs yazımı: kayıp güncelleme koruması (AJ-106) ─────────────────
-// Dizi TEK JSON alanında durur ve her yazım dizinin tamamını yeniden yazar. Eskiden "oku →
-// değiştir → yaz" kilitsizdi: iki yönetici aynı anda engel koyarsa ikisi de ESKİ diziyi okuyup
-// kendi kaydını ekliyor, sonra yazan öncekinin kaydını siliyordu. Çözüm şema değiştirmeden
-// iyimser kontrol (optimistic concurrency): yazım `updateMany where { id, blockedPairs: okunan }`
-// ile yapılır; araya başka bir yazım girdiyse dizi değişmiştir, satır eşleşmez (count 0) → dizi
-// yeniden okunur ve değişiklik taze diziye uygulanır. Postgres, bekleyen UPDATE'in WHERE koşulunu
-// kilit bırakılınca YENİ satır üzerinde yeniden değerlendirir, yani iki eşzamanlı yazımdan yalnız
-// biri eşleşir. Koşul `updatedAt` değil dizinin KENDİSİ: `updatedAt` milisaniye çözünürlüklü —
-// aynı milisaniyedeki iki yazım aynı damgayı üretip korumayı delebilir; ayrıca dizi dışı bir
-// kurum ayarı değişikliği gereksiz yeniden denemeye yol açmaz. Projede `SELECT … FOR UPDATE`
-// deseni yok; bu yol ham SQL/tablo adı bağımlılığı ve etkileşimli işlem gerektirmez.
-const BLOCKED_PAIRS_WRITE_ATTEMPTS = 10;
-
-type BlockedPairsChange<T> =
-  | { write: true;  next: BlockedPairRecord[]; result: T }
-  | { write: false; result: T };
-
-type BlockedPairsOutcome<T> =
-  | { status: 'tenant_not_found' }
-  | { status: 'conflict' }
-  | { status: 'done'; result: T };
-
-async function changeBlockedPairs<T>(
-  tenantId: string,
-  change: (current: BlockedPairRecord[]) => BlockedPairsChange<T>,
-): Promise<BlockedPairsOutcome<T>> {
-  for (let attempt = 0; attempt < BLOCKED_PAIRS_WRITE_ATTEMPTS; attempt++) {
-    const tenant = await prisma.tenant.findUnique({
-      where:  { id: tenantId },
-      select: { blockedPairs: true },
-    });
-    if (!tenant) return { status: 'tenant_not_found' };
-
-    // sanitizeBlockedPairs: bozuk blob, self-block ve duplicate kayıtları temizler.
-    const decision = change(sanitizeBlockedPairs(tenant.blockedPairs));
-    if (!decision.write) return { status: 'done', result: decision.result };
-
-    const { count } = await prisma.tenant.updateMany({
-      where: {
-        id: tenantId,
-        // Alan hiç yazılmamışsa (NULL) JSON eşitliği yerine null filtresi gerekir.
-        blockedPairs: tenant.blockedPairs === null
-          ? { equals: Prisma.AnyNull }
-          : { equals: tenant.blockedPairs },
-      },
-      data:  { blockedPairs: decision.next },
-    });
-    if (count === 1) {
-      invalidateTenant(tenantId);
-      return { status: 'done', result: decision.result };
-    }
-  }
-  return { status: 'conflict' };
-}
-
-const BLOCKED_PAIRS_CONFLICT_BODY = {
-  error:   'ESZAMANLI_DEGISIKLIK',
-  message: 'Engel listesi şu anda başka bir yönetici tarafından değiştiriliyor. Lütfen tekrar deneyin.',
-} as const;
-
 // ─── POST /api/tenants/:id/block-pair ────────────────────────────────────────
 
 const BlockPairSchema = z.object({
@@ -173,48 +111,44 @@ export async function blockPair(req: Request, res: Response) {
     });
   }
 
-  type BlockResult =
-    | { kind: 'already_blocked' }
-    | { kind: 'blocked'; record: BlockedPairRecord; total: number };
-
-  const outcome = await changeBlockedPairs<BlockResult>(tenantId, (current) => {
-    // Yön bağımsız çakışma kontrolü: A→B veya B→A zaten varsa reddet
-    const alreadyBlocked = current.some(
-      (p) =>
-        (p.fromUserId === fromUserId && p.toUserId === toUserId) ||
-        (p.fromUserId === toUserId   && p.toUserId === fromUserId),
-    );
-    if (alreadyBlocked) return { write: false, result: { kind: 'already_blocked' } };
-
-    const record: BlockedPairRecord = {
-      fromUserId,
-      toUserId,
-      blockedAt: new Date().toISOString(),
-      blockedBy: payload.sub,
-    };
-    const next = [...current, record];
-    return { write: true, next, result: { kind: 'blocked', record, total: next.length } };
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { id: true, blockedPairs: true },
   });
-
-  if (outcome.status === 'tenant_not_found') {
+  if (!tenant) {
     return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
   }
-  if (outcome.status === 'conflict') return res.status(409).json(BLOCKED_PAIRS_CONFLICT_BODY);
-  if (outcome.result.kind === 'already_blocked') {
+
+  // sanitizeBlockedPairs: bozuk blob, self-block ve duplicate kayıtları temizler.
+  const current = sanitizeBlockedPairs(tenant.blockedPairs);
+
+  // Yön bağımsız çakışma kontrolü: A→B veya B→A zaten varsa reddet
+  const alreadyBlocked = current.some(
+    (p) =>
+      (p.fromUserId === fromUserId && p.toUserId === toUserId) ||
+      (p.fromUserId === toUserId   && p.toUserId === fromUserId),
+  );
+  if (alreadyBlocked) {
     return res.status(409).json({
       error:   'ENGEL_MEVCUT',
       message: 'Bu kullanıcı çifti zaten engellenmiş.',
     });
   }
-  const { record: newRecord, total } = outcome.result;
 
-  // Denetim izi (AJ-106) — unblockPair ile aynı desen (G1-14/G1-15): PII YOK, yalnız
-  // actorId + tenantId + (userId'lerden türeyen, isim İÇERMEYEN) pairId.
-  void logger.info('AUDIT', 'Çift engeli eklendi', {
-    actorId: payload.sub,
-    tenantId,
-    pairId: pairKey(fromUserId, toUserId),
+  const newRecord: BlockedPairRecord = {
+    fromUserId,
+    toUserId,
+    blockedAt: new Date().toISOString(),
+    blockedBy: payload.sub,
+  };
+
+  const updated = await prisma.tenant.update({
+    where: { id: tenantId },
+    data:  { blockedPairs: [...current, newRecord] },
+    select: { id: true, blockedPairs: true },
   });
+
+  invalidateTenant(tenantId);
 
   const fromUser = users.find((u) => u.id === fromUserId);
   const toUser   = users.find((u) => u.id === toUserId);
@@ -224,7 +158,7 @@ export async function blockPair(req: Request, res: Response) {
     blocked:  newRecord,
     fromUser: { id: fromUser!.id, fullName: fromUser!.fullName },
     toUser:   { id: toUser!.id,   fullName: toUser!.fullName   },
-    totalBlockedPairs: total,
+    totalBlockedPairs: Array.isArray(updated.blockedPairs) ? updated.blockedPairs.length : 0,
   });
 }
 
@@ -284,28 +218,34 @@ export async function unblockPair(req: Request, res: Response) {
   const { payload, tenantId } = ctx;
   const pairId = req.params['pairId'] as string;
 
-  // Yalnız BU tenant'ın kendi blockedPairs dizisi içinde arandığı için tenant
-  // izolasyonu doğal sağlanır: başka kurumun kaydı buradan asla bulunamaz (IDOR → 404).
-  // Yazım changeBlockedPairs ile: eşzamanlı bir engel ekleme, kaldırma yazımıyla ezilmez (AJ-106).
-  const outcome = await changeBlockedPairs<number | null>(tenantId, (current) => {
-    if (!current.some((p) => pairKey(p.fromUserId, p.toUserId) === pairId)) {
-      return { write: false, result: null };
-    }
-    const next = current.filter((p) => pairKey(p.fromUserId, p.toUserId) !== pairId);
-    return { write: true, next, result: next.length };
+  const tenant = await prisma.tenant.findUnique({
+    where:  { id: tenantId },
+    select: { id: true, blockedPairs: true },
   });
-
-  if (outcome.status === 'tenant_not_found') {
+  if (!tenant) {
     return res.status(404).json({ error: 'TENANT_BULUNAMADI', message: 'Kurum bulunamadı.' });
   }
-  if (outcome.status === 'conflict') return res.status(409).json(BLOCKED_PAIRS_CONFLICT_BODY);
-  if (outcome.result === null) {
+
+  // Yalnız BU tenant'ın kendi blockedPairs dizisi içinde arandığı için tenant
+  // izolasyonu doğal sağlanır: başka kurumun kaydı buradan asla bulunamaz (IDOR → 404).
+  const current = sanitizeBlockedPairs(tenant.blockedPairs);
+  const target  = current.find((p) => pairKey(p.fromUserId, p.toUserId) === pairId);
+
+  if (!target) {
     return res.status(404).json({
       error:   'ENGEL_BULUNAMADI',
       message: 'Belirtilen engel kaydı bu kurumda bulunamadı.',
     });
   }
-  const remainingCount = outcome.result;
+
+  const remaining = current.filter((p) => pairKey(p.fromUserId, p.toUserId) !== pairId);
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data:  { blockedPairs: remaining },
+  });
+
+  invalidateTenant(tenantId);
 
   // Denetim izi — updateTenantSettings ile aynı desen (G1-14/G1-15): PII YOK,
   // yalnız actorId + tenantId + (userId'lerden türeyen, isim İÇERMEYEN) pairId.
@@ -317,7 +257,7 @@ export async function unblockPair(req: Request, res: Response) {
 
   return res.json({
     message: 'Engel kaldırıldı.',
-    totalBlockedPairs: remainingCount,
+    totalBlockedPairs: remaining.length,
   });
 }
 
