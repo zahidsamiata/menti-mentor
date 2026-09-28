@@ -8,6 +8,8 @@
  *    GERÇEKTEN giden görüşmeleri sayar; mesaj gönderilemeyenleri ayrıca söyler.
  * 3. Taslak kurum hatırlatma cron'u (runDraftTenantReminder): mail gitmezse
  *    `reminderEmailSentAt` YAZILMAZ; giderse yazılır.
+ * 4. Otomatik geri bildirim hatırlatma cron'u (runFeedbackReminderCron, AJ-58): iki tarafa da
+ *    mail gitmezse `feedbackPrompted` YAZILMAZ ve sayılmaz; en az biri giderse yazılır.
  */
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import type { Response } from 'express';
@@ -19,7 +21,7 @@ const { sendMailMock, feedbackReminderMock, draftReminderMock, prismaMock } = vi
   draftReminderMock: vi.fn(),
   prismaMock: {
     systemLog: { create: vi.fn().mockResolvedValue({}) },
-    meeting: { findMany: vi.fn() },
+    meeting: { findMany: vi.fn(), update: vi.fn().mockResolvedValue({}) },
     tenant: { findMany: vi.fn(), update: vi.fn().mockResolvedValue({}) },
     user: { findFirst: vi.fn() },
   },
@@ -44,7 +46,7 @@ import {
   sendPendingFeedbackReminders,
   resetFeedbackReminderCooldown,
 } from '../src/controllers/feedbackController.js';
-import { runDraftTenantReminder } from '../src/services/cronScheduler.js';
+import { runDraftTenantReminder, runFeedbackReminderCron } from '../src/services/cronScheduler.js';
 
 const originalEmail = { ...config.email };
 
@@ -160,5 +162,40 @@ describe('Taslak kurum hatırlatma cron — bayrak yakılmaz (U-16)', () => {
       where: { id: 'tn1' },
       data: { reminderEmailSentAt: expect.any(Date) },
     });
+  });
+});
+
+describe('Otomatik geri bildirim hatırlatma cron — başarısız mail bayrağı yakmaz (AJ-58)', () => {
+  beforeEach(() => {
+    feedbackReminderMock.mockReset();
+    prismaMock.meeting.findMany.mockReset();
+    prismaMock.meeting.update.mockClear();
+    prismaMock.meeting.findMany.mockResolvedValue([{ ...meeting('mF'), endsAt: new Date() }]);
+  });
+
+  it('iki tarafa da mail gitmezse feedbackPrompted YAZILMAZ ve sayılmaz', async () => {
+    feedbackReminderMock.mockResolvedValue(false);
+    await expect(runFeedbackReminderCron()).resolves.toEqual({ sent: 0 });
+    expect(feedbackReminderMock).toHaveBeenCalledTimes(2);
+    expect(prismaMock.meeting.update).not.toHaveBeenCalled();
+  });
+
+  it('gönderimler fırlatırsa da feedbackPrompted YAZILMAZ', async () => {
+    feedbackReminderMock.mockRejectedValue(new Error('SMTP down'));
+    await expect(runFeedbackReminderCron()).resolves.toEqual({ sent: 0 });
+    expect(prismaMock.meeting.update).not.toHaveBeenCalled();
+  });
+
+  it('yalnız bir tarafa gittiyse feedbackPrompted yazılır ve sayılır', async () => {
+    feedbackReminderMock.mockImplementation(async (args: { toEmail: string }) => args.toEmail === 'mF-menti@example.com');
+    await expect(runFeedbackReminderCron()).resolves.toEqual({ sent: 1 });
+    expect(prismaMock.meeting.update).toHaveBeenCalledWith({ where: { id: 'mF' }, data: { feedbackPrompted: true } });
+  });
+
+  it('iki tarafa da gittiyse feedbackPrompted yazılır ve sayılır', async () => {
+    feedbackReminderMock.mockResolvedValue(true);
+    await expect(runFeedbackReminderCron()).resolves.toEqual({ sent: 1 });
+    expect(prismaMock.meeting.update).toHaveBeenCalledTimes(1);
+    expect(prismaMock.meeting.update).toHaveBeenCalledWith({ where: { id: 'mF' }, data: { feedbackPrompted: true } });
   });
 });
