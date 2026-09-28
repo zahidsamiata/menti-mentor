@@ -67,6 +67,8 @@ export async function getKpiDashboard(req: RequestWithTenant, res: Response) {
         successRate: stats.feedback.successRate,
       },
       activeJobListings: stats.activeJobListings,
+      // AJ-78: kayıt/DISC tamamlama oranları (pay VE payda k-anonim) + tamamlanan görüşme.
+      completion: stats.completion,
       mentiNeeds,
     },
   });
