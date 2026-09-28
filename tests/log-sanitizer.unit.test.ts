@@ -13,7 +13,7 @@ describe('sanitizeLogMeta — hassas anahtarlar', () => {
     const out = sanitizeLogMeta({
       email: 'ornek.kisi@example.com',
       toEmail: 'baska@example.org',
-      fullName: 'Ayşe Yılmaz',
+      fullName: 'Örnek Kullanıcı',
       password: 'p@ss',
       accessToken: 'eyJhbGciOi.abc.def',
       inviteToken: 'xyz',
@@ -28,7 +28,7 @@ describe('sanitizeLogMeta — hassas anahtarlar', () => {
     expect(out.discVector).toBe(REDACTED);
     const serialized = JSON.stringify(out);
     expect(serialized).not.toContain('ornek.kisi');
-    expect(serialized).not.toContain('Ayşe');
+    expect(serialized).not.toContain('Örnek Kullanıcı');
     expect(serialized).not.toContain('eyJhbGciOi');
   });
 
@@ -91,6 +91,6 @@ describe('scrubText', () => {
   });
 
   it('uzunluk sınırı olağan adresleri kaçırmaz', () => {
-    expect(scrubText('gönderilemedi: ayse.yilmaz+test@alt.ornek.com.tr')).not.toContain('ayse.yilmaz');
+    expect(scrubText('gönderilemedi: ornek.kullanici+test@alt.ornek.com.tr')).not.toContain('ornek.kullanici');
   });
 });

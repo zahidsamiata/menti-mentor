@@ -45,11 +45,11 @@ describe('sendMeetingRejectedEmail', () => {
   it('menti adını HTML olarak kaçırır (GV-15)', async () => {
     await sendMeetingRejectedEmail({
       toEmail: 'kisi@gercek-alan.org',
-      mentiName: 'Ali <b>x</b>',
+      mentiName: 'Kişi <b>x</b>',
       scheduledAt: new Date('2026-09-25T10:00:00Z'),
     });
     const { html } = sendMail.mock.calls[0]![0] as { html: string };
-    expect(html).toContain('Ali &lt;b&gt;x&lt;/b&gt;');
+    expect(html).toContain('Kişi &lt;b&gt;x&lt;/b&gt;');
     expect(html).not.toContain('<b>x</b>');
   });
 });

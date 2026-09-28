@@ -24,8 +24,8 @@ import * as email from '../src/services/emailService.js';
 import { escapeHtml, sanitizeHeaderText } from '../src/services/htmlEscape.js';
 import { buildTenantNotification } from '../src/services/tenantNotifications.js';
 
-const EVIL = 'Ali <b>"Kalın"</b> & Co';
-const EVIL_ESCAPED = 'Ali &lt;b&gt;&quot;Kalın&quot;&lt;/b&gt; &amp; Co';
+const EVIL = 'Kişi <b>"Kalın"</b> & Co';
+const EVIL_ESCAPED = 'Kişi &lt;b&gt;&quot;Kalın&quot;&lt;/b&gt; &amp; Co';
 const TO = 'kisi@gercek-alan.org';
 const DATE = new Date('2026-09-25T10:00:00Z');
 
@@ -47,7 +47,7 @@ describe('escapeHtml (saf)', () => {
     expect(escapeHtml(`<a href="x">'&'</a>`)).toBe('&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;');
   });
   it('normal Türkçe metni aynen bırakır', () => {
-    expect(escapeHtml('Ayşe Öğretmen — Çağ Derneği')).toBe('Ayşe Öğretmen — Çağ Derneği');
+    expect(escapeHtml('Örnek Kişi Öğretmen — Çağ Derneği')).toBe('Örnek Kişi Öğretmen — Çağ Derneği');
   });
   it('null/undefined boş dize, sayı metin olur', () => {
     expect(escapeHtml(null)).toBe('');
@@ -72,23 +72,23 @@ describe('GV-15: her gönderim fonksiyonu kullanıcı metnini kaçırır', () =>
   beforeEach(() => sendMail.mockClear());
 
   it('sendMeetingRequestEmail', async () => {
-    await email.sendMeetingRequestEmail({ toEmail: TO, mentorName: 'Mentör Ayşe', mentiName: EVIL, scheduledAt: DATE });
+    await email.sendMeetingRequestEmail({ toEmail: TO, mentorName: 'Örnek Mentör', mentiName: EVIL, scheduledAt: DATE });
     const html = lastHtml();
     expectEscaped(html);
-    expect(html).toContain('Merhaba Mentör Ayşe,');
+    expect(html).toContain('Merhaba Örnek Mentör,');
   });
 
   it('sendMeetingApprovalEmail', async () => {
-    await email.sendMeetingApprovalEmail({ toEmail: TO, mentiName: 'Menti Can', mentorName: EVIL, scheduledAt: DATE });
+    await email.sendMeetingApprovalEmail({ toEmail: TO, mentiName: 'Örnek Menti', mentorName: EVIL, scheduledAt: DATE });
     const html = lastHtml();
     expectEscaped(html);
-    expect(html).toContain('Merhaba Menti Can,');
+    expect(html).toContain('Merhaba Örnek Menti,');
   });
 
   it('sendNewChatMessageEmail', async () => {
-    await email.sendNewChatMessageEmail({ toEmail: TO, recipientName: 'Zeynep', senderName: EVIL });
+    await email.sendNewChatMessageEmail({ toEmail: TO, recipientName: 'Alıcı Kişi', senderName: EVIL });
     expectEscaped(lastHtml());
-    expect(lastHtml()).toContain('Merhaba Zeynep,');
+    expect(lastHtml()).toContain('Merhaba Alıcı Kişi,');
   });
 
   it('sendAdminNewUserNotification (ad + bilinmeyen rol kodu kaçırılır, bilinen rol Türkçe)', async () => {
@@ -110,10 +110,10 @@ describe('GV-15: her gönderim fonksiyonu kullanıcı metnini kaçırır', () =>
     expectEscaped(lastHtml());
 
     await email.sendUserApprovalNotification({
-      toEmail: TO, userName: 'Deniz', approved: false, rejectionReason: EVIL,
+      toEmail: TO, userName: 'Başvuran Kişi', approved: false, rejectionReason: EVIL,
     });
     expectEscaped(lastHtml());
-    expect(lastHtml()).toContain('Merhaba Deniz,');
+    expect(lastHtml()).toContain('Merhaba Başvuran Kişi,');
   });
 
   it('sendPasswordResetEmail (ad kaçırılır, href attribute-güvenli)', async () => {
@@ -124,7 +124,7 @@ describe('GV-15: her gönderim fonksiyonu kullanıcı metnini kaçırır', () =>
     expect(href).toContain('/reset-password?token=abc%22def%3Cx%3E%26y');
     expect(href).not.toMatch(/[<>"]/);
     // Normal hex token aynen görünür.
-    await email.sendPasswordResetEmail({ toEmail: TO, userName: 'Ali', rawToken: 'deadbeef' });
+    await email.sendPasswordResetEmail({ toEmail: TO, userName: 'Deneme Kullanıcı', rawToken: 'deadbeef' });
     expect(lastHtml()).toContain('reset-password?token=deadbeef');
   });
 
@@ -171,11 +171,11 @@ describe('GV-15: her gönderim fonksiyonu kullanıcı metnini kaçırır', () =>
   });
 
   it('sendNudgeReminderEmail (yönetici notu + kurum adı)', async () => {
-    await email.sendNudgeReminderEmail({ toEmail: TO, recipientName: 'Ece', tenantName: EVIL, message: EVIL });
+    await email.sendNudgeReminderEmail({ toEmail: TO, recipientName: 'Hatırlatılan Kişi', tenantName: EVIL, message: EVIL });
     const html = lastHtml();
     expect(html.split(EVIL_ESCAPED).length - 1).toBe(2);
     expect(html).not.toContain('<b>');
-    expect(html).toContain('Merhaba Ece,');
+    expect(html).toContain('Merhaba Hatırlatılan Kişi,');
   });
 
   it('sendFeedbackReminderEmail', async () => {

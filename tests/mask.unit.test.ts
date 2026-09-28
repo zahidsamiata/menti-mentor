@@ -28,11 +28,11 @@ describe('maskEmail', () => {
 
 describe('maskName — kişi adı yalnız ilk harf', () => {
   it('yalnız ilk harfi gösterir', () => {
-    expect(maskName('Zeynep')).toBe('Z***');
+    expect(maskName('Deneme')).toBe('D***');
   });
 
   it('baştaki/sondaki boşluğu kırpar, ilk gerçek harfi alır', () => {
-    expect(maskName('  ali  ')).toBe('a***');
+    expect(maskName('  ornek  ')).toBe('o***');
   });
 
   it('boş/whitespace/undefined → ***', () => {
@@ -43,9 +43,9 @@ describe('maskName — kişi adı yalnız ilk harf', () => {
   });
 
   it('tam ad response ham dönmez (kanıt: giriş çıktıya eşit değil)', () => {
-    const raw = 'Mehmet Yilmaz';
+    const raw = 'Deneme Kullanici';
     expect(maskName(raw)).not.toBe(raw);
-    expect(maskName(raw)).not.toContain('ehmet');
+    expect(maskName(raw)).not.toContain('eneme');
   });
 });
 
