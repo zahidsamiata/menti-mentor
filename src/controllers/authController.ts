@@ -159,6 +159,11 @@ export async function register(req: Request, res: Response) {
     where: { email },
     select: { id: true, fullName: true },
   });
+  // AJ-104: bcrypt, kayıtlı e-posta dalından ÖNCE hesaplanır (komşu uç selfServeController.register
+  // ile aynı desen): kayıtlı dal hash'i atlarsa yanıt süresi belirgin kısalır ve "bu e-posta kayıtlı"
+  // bilgisi zamanlamadan okunabilir. Böylece iki dal da aynı maliyetli yolu izler.
+  const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
   if (existing) {
     // E-posta numaralandırmasını önle: kayıtlı ve kayıtsız e-posta için aynı yanıt
     void sendAlreadyRegisteredEmail({ toEmail: email, userName: existing.fullName });
@@ -167,8 +172,6 @@ export async function register(req: Request, res: Response) {
       user: null,
     });
   }
-
-  const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
   // KVKK: rızasız kayıt olmamalı → user.create + tipli rıza (AYDINLATMA + ACIK_RIZA) AYNI
   // transaction'da atomik. kvkkConsentAt legacy ispat olarak dual-write edilir (G1-07).
