@@ -21,8 +21,9 @@
  */
 
 import type { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
-import { applyKAnonymity } from '../services/mask.js';
+import { applyKAnonymity, maskDefaultProfileRate } from '../services/mask.js';
 import { maskEmail } from '../services/mask.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { ACTIVE_KVKK_CONSENT_SELECT, hasActiveKvkkConsent } from '../services/consentIndicator.js';
@@ -331,11 +332,22 @@ export async function getTenantAnalytics(req: Request, res: Response) {
     .sort((a, b) => b.count - a.count);
   const suppressedGroups = Object.keys(tally).length - visible.length;
 
+  // AJ-79 (md.111): varsayılana düşen profil oranı. Tanım: aktif üyeliği olup DISC vektörü
+  // HİÇ OLMAYAN (SQL NULL ya da JSON null) kullanıcı. Yalnız varlık filtresiyle SAYILIR — ham vektör
+  // uygulamaya OKUNMAZ (dosya başı KVKK kuralı). Bu yüzden şekli bozuk ya da confidence'ı eksik/0
+  // olan vektör (eşleştirmede `parseDiscVector`/`computeDiscScore` onu da varsayılana düşürür) bu
+  // sayıma GİRMEZ — metrik alt sınırdır.
+  const withoutVector = await prisma.tenantMembership.count({
+    where: { tenantId, isActive: true, user: { discVector: { equals: Prisma.AnyNull } } },
+  });
+  const defaultProfile = maskDefaultProfileRate(withoutVector, memberships.length);
+
   await audit('VIEW_TENANT_ANALYTICS', tenantId, req);
 
   return res.json({
     totalWithDisc: visible.reduce((sum, d) => sum + d.count, 0),
     discDistribution: visible,
     suppressedGroups,
+    defaultProfile,
   });
 }
