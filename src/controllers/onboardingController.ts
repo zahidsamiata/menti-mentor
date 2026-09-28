@@ -4,6 +4,11 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { socialUrlSchema } from '../services/socialUrl.js';
 import { validateRequest } from '../middleware/validate.js';
+import {
+  DiscResultCardWriteSchema,
+  DiscVectorWriteSchema,
+  toValidatedJson,
+} from '../services/jsonFieldSchemas.js';
 
 // ─── Sektor Tag Sanitizasyonu (userController.ts ile aynı kural seti) ─────────
 const SECTOR_TAG_SCHEMA = z
@@ -493,8 +498,10 @@ export async function submitDiscTest(req: RequestWithTenant, res: Response) {
     where: { id: req.auth.userId },
     data: {
       discType:       result.dominant,
-      discVector:     persistedDiscVector,
-      discResultCard,
+      // AJ-95a: iki psikometrik Json alanı yazımdan ÖNCE doğrulanır (strict: karta ham vektör
+      // gömülemez — AJ-21). Geçersizse fırlatır → global hata işleyici günlükler, yazım yapılmaz.
+      discVector:     toValidatedJson('discVector', DiscVectorWriteSchema, persistedDiscVector),
+      discResultCard: toValidatedJson('discResultCard', DiscResultCardWriteSchema, discResultCard),
     },
     select: {
       id:            true,
