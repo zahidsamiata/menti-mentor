@@ -99,13 +99,23 @@ export async function getActiveMembershipRole(userId: string, tenantId: string):
  * Kurum yöneticisi bildirim alıcıları: bu kurumda AKTİF ADMIN üyeliği olan, hesabı aktif kişiler.
  * `User.role = ADMIN` + ana kurum DEĞİL — misafir üye olarak yönetici olan kişi de alır; üyelikte
  * rolü düşürülmüş kişi almaz. Sıra: en eski hesap önce (ilk yönetici = kurucu).
+ *
+ * AJ-116: reddedilmiş (approvalStatus = REJECTED) hesap da almaz — erişim kapısıyla
+ * (membershipAccess.ts `decideMembershipAccess`: REJECTED → erişim yok) ve yönetici sayımıyla
+ * (adminController `listAdmins`, AJ-01) AYNI koşul. Panele giremeyen kişiye kurum bildirimi
+ * (kişi verisi içeren e-posta) gitmemeli. PENDING bilerek elenmez: kapı da engellemiyor.
  */
 export async function findTenantAdminUsers<S extends Prisma.UserSelect>(
   tenantId: string,
   select: S,
 ): Promise<Prisma.UserGetPayload<{ select: S }>[]> {
   const rows = await prisma.tenantMembership.findMany({
-    where:   { tenantId, role: 'ADMIN', isActive: true, user: { isActive: true } },
+    where:   {
+      tenantId,
+      role:     'ADMIN',
+      isActive: true,
+      user:     { isActive: true, approvalStatus: { not: 'REJECTED' } },
+    },
     select:  { user: { select } },
     orderBy: { user: { createdAt: 'asc' } },
   });
