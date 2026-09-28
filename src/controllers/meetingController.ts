@@ -172,12 +172,11 @@ const CreateMeetingSchema = z.object({
   endsAt:      z.string().datetime({ offset: true }).optional(),
 });
 
-async function checkOrientationLock(mentiId: string, res: Response): Promise<boolean> {
-  const menti = await prisma.user.findUnique({
-    where:  { id: mentiId },
-    select: { needsOrientation: true },
-  });
-  if (menti?.needsOrientation) {
+// AJ-74: kilit, kurum-kapsamlı sorguyla BULUNMUŞ menti kaydından okunur (kendi sorgusu yok).
+// Eskiden kimlikle kurum filtresiz ayrı sorgu atılıyor ve 404 kontrolünden ÖNCE koşuyordu →
+// başka kurumdaki kaydın kilit durumu 403/404 farkından çıkarılabiliyordu.
+function rejectIfOrientationLocked(menti: { needsOrientation: boolean }, res: Response): boolean {
+  if (menti.needsOrientation) {
     res.status(403).json({
       error:   'ORYANTASYON_KILIDI',
       message: 'Bu menti oryantasyon kilidi nedeniyle yeni görüşme oluşturamaz.',
@@ -200,8 +199,6 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
     return res.status(403).json({ error: 'YETKI_YETERSIZ', message: 'Yalnızca kendi adınıza görüşme talebi oluşturabilirsiniz.' });
   }
 
-  if (await checkOrientationLock(mentiId, res)) return;
-
   const [mentor, menti] = await Promise.all([
     prisma.user.findFirst({
       where:  { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR', isActive: true },
@@ -209,12 +206,14 @@ export async function createMeeting(req: RequestWithTenant, res: Response) {
     }),
     prisma.user.findFirst({
       where:  { id: mentiId, tenantId: req.tenant.tenantId, role: 'MENTI', isActive: true },
-      select: USER_IDENTITY_SELECT,
+      select: { ...USER_IDENTITY_SELECT, needsOrientation: true },
     }),
   ]);
 
   if (!mentor) return res.status(404).json({ error: 'NOT_FOUND', message: 'Mentor bulunamadı.' });
   if (!menti)  return res.status(404).json({ error: 'NOT_FOUND', message: 'Menti bulunamadı.' });
+
+  if (rejectIfOrientationLocked(menti, res)) return;
 
   // KR-19: idari blok — varlık ifşası yok, jenerik hata.
   if (await isAdminBlockedPair(req.tenant.tenantId, mentor.id, menti.id)) {
