@@ -31,6 +31,12 @@ import { prisma } from '../db.js';
 import { logger } from './logger.js';
 import { deleteLocalAvatar } from './avatarStorage.js';
 import { revokeConsent } from './consentService.js';
+import {
+  MEMBERSHIP_EXPORT_SELECT,
+  membershipExportWhere,
+  type MembershipExport,
+  type MembershipExportScope,
+} from './gdprMembershipExport.js';
 
 const JsonNull = Prisma.JsonNull;
 
@@ -312,10 +318,24 @@ export type UserDataExport = {
   consents: Array<Record<string, unknown>>;
   /** Yalnız SAYI — mesaj içeriği KARŞI TARAFI da içerir, dışa aktarılmaz (PII sızıntısı önlemi). */
   messageCount: number;
+  /**
+   * AJ-124: kurum üyelikleri (rol, sertifika, öğrenme yolculuğu, katılım tarihi). Kapsam
+   * `membershipScope`'a göre: kendi isteğinde TÜM kurumlar, yönetici isteğinde yalnız o kurum.
+   * Alan listesi + hariç tutma gerekçeleri: gdprMembershipExport.ts.
+   */
+  memberships: MembershipExport[];
 };
 
-export async function exportUserData(userId: string, tenantId: string): Promise<UserDataExport> {
-  const [user, responses, feedbackLogs, matchRequests, consents, messageCount] = await Promise.all([
+/**
+ * @param membershipScope 'all' yalnız kişinin KENDİ isteğinde verilir (self-servis). Varsayılan
+ *   'requestTenant' — güvenli taraf: başka biri dışa aktarırken kişinin diğer kurum üyelikleri sızmaz.
+ */
+export async function exportUserData(
+  userId: string,
+  tenantId: string,
+  membershipScope: MembershipExportScope = 'requestTenant',
+): Promise<UserDataExport> {
+  const [user, responses, feedbackLogs, matchRequests, consents, messageCount, memberships] = await Promise.all([
     prisma.user.findFirst({
       where: { id: userId, tenantId },
       select: {
@@ -345,6 +365,12 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
     }),
     // Yalnız kendi gönderdiği mesajların SAYISI — içerik dışa aktarılmaz (karşı taraf PII'si).
     prisma.message.count({ where: { senderUserId: userId } }),
+    // AJ-124: yalnız BU kişinin üyelik satırları (userId filtresi) — explicit select, sır/hash yok.
+    prisma.tenantMembership.findMany({
+      where: membershipExportWhere(userId, tenantId, membershipScope),
+      select: MEMBERSHIP_EXPORT_SELECT,
+      orderBy: { createdAt: 'asc' },
+    }),
   ]);
 
   if (!user) {
@@ -362,6 +388,7 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
     matchRequests: matchRequests as Array<Record<string, unknown>>,
     consents: consents as Array<Record<string, unknown>>,
     messageCount,
+    memberships,
   };
 }
 
