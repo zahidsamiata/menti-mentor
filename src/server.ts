@@ -30,6 +30,7 @@ import { ensureUploadDir } from './services/avatarStorage.js';
 import { getHealthStatus } from './services/health.js';
 import { verifyTransporter } from './services/emailService.js';
 import { logger } from './services/logger.js';
+import { captureError, initErrorMonitor } from './services/errorMonitor.js';
 import sjtScoringRoutes from './routes/sjtScoringRoutes.js';
 import suspicionRoutes from './routes/suspicionRoutes.js';
 import agreementRoutes from './routes/agreementRoutes.js';
@@ -37,6 +38,9 @@ import learningJourneyRoutes from './routes/learningJourneyRoutes.js';
 import learningJourneyAdminRoutes from './routes/learningJourneyAdminRoutes.js';
 import conversationRoutes from './routes/conversationRoutes.js';
 import type { RequestHandler } from 'express';
+
+// DK-01 (KARAR-27 → A): dış hata izleme. SENTRY_DSN yoksa hiçbir şey yapmaz (SDK yüklenmez).
+void initErrorMonitor();
 
 const app = express();
 
@@ -195,10 +199,12 @@ process.on('uncaughtException', (err) => {
     message: err.message,
     stack: err.stack,
   });
+  captureError(err, { source: 'uncaughtException' });
 });
 process.on('unhandledRejection', (reason) => {
   void logger.error('SYSTEM', 'unhandledRejection', {
     message: reason instanceof Error ? reason.message : String(reason),
     stack: reason instanceof Error ? reason.stack : undefined,
   });
+  captureError(reason, { source: 'unhandledRejection' });
 });
