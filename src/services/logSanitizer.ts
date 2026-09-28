@@ -117,3 +117,44 @@ function sanitizeValue(value: unknown, depth: number, seen: WeakSet<object>): un
 export function sanitizeLogMeta(meta: Record<string, unknown>): Record<string, unknown> {
   return sanitizeValue(meta, 0, new WeakSet()) as Record<string, unknown>;
 }
+
+// ─── DK-03 · hata iz kaydı (stack) süzgeci ─────────────────────────────────────
+//
+// Neden: KARAR-24 → B (PO 2026-09-21) — bir 500'ün tam iz kaydı platform paneline "kişisel veri
+// temizlenmiş" olarak açılır. Stack'in İLK satırı hata mesajıdır ve mesaj; Prisma çağrı dökümü
+// (`data: { fullName: "…", email: "…" }`), istek URL'si (`?token=…`), `Bearer …` başlığı ya da
+// telefon numarası taşıyabilir. `scrubText` yalnız e-postayı maskeler; iz kaydı panele açıldığı
+// için burada daha geniş (ve bilinçli olarak AGRESİF) bir süzgeç uygulanır. Dosya yolu + satır
+// numarası (teşhisin kendisi) AYNEN kalır.
+//
+// Her desen üst sınırlı tekrar kullanır (karesel süre/ReDoS yok — `EMAIL_PATTERN` notuna bkz.).
+
+/** Panele gidecek iz kaydının üst sınırı — aşırı uzun metin kesilir. */
+export const TRACE_MAX_LENGTH = 16_000;
+const TRACE_TRUNCATED = '…[kesildi]';
+
+/** JWT (üç base64url parçası, başlık `eyJ` ile başlar). */
+const JWT_PATTERN = /eyJ[A-Za-z0-9_-]{4,2048}\.[A-Za-z0-9_-]{4,4096}\.[A-Za-z0-9_-]{0,1024}/g;
+/** `Authorization: Bearer <değer>` biçimi. */
+const BEARER_PATTERN = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,4096}/gi;
+/** URL sorgu parametresi DEĞERİ (`?anahtar=` / `&anahtar=` sonrası) — anahtar teşhis için kalır. */
+const QUERY_VALUE_PATTERN = /([?&][A-Za-z0-9_.%[\]-]{1,64}=)[^&\s#'"`)<>]{1,2048}/g;
+/** Çift tırnaklı metin — Prisma çağrı dökümündeki alan değerleri (ad, e-posta, serbest metin). */
+const DOUBLE_QUOTED_PATTERN = /"(?:[^"\\\n]|\\.){1,500}"/g;
+/** Telefon (ve benzeri uzun rakam dizisi: kart no, TCKN, IP). 10–25 rakam, arada boşluk/nokta/tire. */
+const PHONE_PATTERN = /(?<![A-Za-z0-9_+])\+?\d(?:[ .-]?\d){9,24}(?![A-Za-z0-9_])/g;
+
+/**
+ * Hata iz kaydını (stack veya hata mesajı) panele gösterilebilir hâle getirir: JWT, Bearer/Basic
+ * değeri, URL sorgu değerleri, çift tırnaklı değerler, e-posta ve telefon/uzun rakam dizileri
+ * `[gizli]` (e-posta: `maskEmail`) olur. Saf fonksiyon — `tests/dk03-error-trace.unit.test.ts`.
+ */
+export function scrubStackTrace(text: string): string {
+  const bounded = text.length > TRACE_MAX_LENGTH ? `${text.slice(0, TRACE_MAX_LENGTH)}${TRACE_TRUNCATED}` : text;
+  const withoutSecrets = bounded
+    .replace(JWT_PATTERN, REDACTED)
+    .replace(BEARER_PATTERN, (_m, scheme: string) => `${scheme} ${REDACTED}`)
+    .replace(QUERY_VALUE_PATTERN, (_m, prefix: string) => `${prefix}${REDACTED}`)
+    .replace(DOUBLE_QUOTED_PATTERN, `"${REDACTED}"`);
+  return scrubText(withoutSecrets).replace(PHONE_PATTERN, REDACTED);
+}

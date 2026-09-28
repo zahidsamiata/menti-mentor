@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { logger } from '../services/logger.js';
 import { maskUrlForLog } from '../services/logUrl.js';
+import { scrubStackTrace } from '../services/logSanitizer.js';
 import type { RequestWithTenant } from '../types.js';
 
 export function notFoundHandler(_req: Request, res: Response) {
@@ -18,8 +19,10 @@ export function globalErrorHandler(
   // KVKK/log kuralı: yalnız userId + tenantId — e-posta/ad ASLA loglanmaz.
   const r = req as Partial<RequestWithTenant>;
   void logger.error('HTTP', 'Beklenmedik sunucu hatası', {
-    message: err instanceof Error ? err.message : String(err),
-    stack: err instanceof Error ? err.stack : undefined,
+    // DK-03: iz kaydı platform paneline açıldığı için (KARAR-24 → B) mesaj + stack yazılmadan
+    // ÖNCE geniş süzgeçten geçer (JWT, sorgu değeri, tırnaklı değer, telefon, e-posta).
+    message: scrubStackTrace(err instanceof Error ? err.message : String(err)),
+    stack: err instanceof Error && err.stack ? scrubStackTrace(err.stack) : undefined,
     url: maskUrlForLog(req.originalUrl), // GV-14: davet/OAuth/abonelik token'ı günlüğe düşmesin
     method: req.method,
     userId: r.auth?.userId,
