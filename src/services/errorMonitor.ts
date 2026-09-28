@@ -47,6 +47,26 @@ let activeSdk: ErrorMonitorSdk | null = null;
 
 const SDK_PROCESS_HANDLERS = new Set(['OnUncaughtException', 'OnUnhandledRejection']);
 
+/**
+ * Sentry v11'de veri toplamayı `sendDefaultPii` DEĞİL `dataCollection` yönetir ve varsayılanları AÇIKTIR
+ * (`@sentry/core` `resolveDataCollectionOptions`: userInfo/cookies/httpHeaders/httpBodies/urlQueryParams/
+ * stackFrameVariables hepsi `true`). Bu yüzden her alan açıkça kapatılır; `sendDefaultPii: false` yalnız
+ * eski sürümlere karşı ek güvence olarak kalır. Kaynak kod bağlam satırları (`frameContextLines`) teşhis
+ * için açık kalır — `beforeSend` onları da metin olarak süzer.
+ */
+export const DATA_COLLECTION_OFF = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: false,
+  httpBodies: [] as string[],
+  urlQueryParams: false,
+  stackFrameVariables: false,
+  databaseQueryData: false,
+  queues: false,
+  graphQL: { document: false, variables: false },
+  genAI: { inputs: false, outputs: false },
+};
+
 const defaultLoadSdk = async (): Promise<ErrorMonitorSdk> =>
   (await import('@sentry/node')) as unknown as ErrorMonitorSdk;
 
@@ -56,6 +76,7 @@ export function buildSdkOptions(dsn: string, environment?: string, release?: str
     dsn,
     environment,
     release,
+    dataCollection: DATA_COLLECTION_OFF,
     sendDefaultPii: false,
     // Yerel değişken değerleri yığın çerçevelerine eklenmez (kişisel veri taşıyabilir).
     includeLocalVariables: false,

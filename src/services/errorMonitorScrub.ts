@@ -49,6 +49,8 @@ export interface ScrubbableRequest {
 
 export interface ScrubbableEvent {
   message?: string;
+  /** Sunucu olaylarında "YÖNTEM /yol" — yol parçasında token/kimlik taşınabilir. */
+  transaction?: string;
   request?: ScrubbableRequest;
   user?: { id?: string | number; email?: string; ip_address?: string | null; username?: string };
   exception?: {
@@ -71,17 +73,39 @@ export function scrubMonitorText(text: string): string {
   return scrubText(text).replace(JWT_IN_TEXT, REDACTED).replace(AUTH_SCHEME_IN_TEXT, `$1 ${REDACTED}`);
 }
 
-/** Tam URL ya da yol+sorgu biçimindeki adresi maskeler; sorgu değerleri TAMAMEN düşer. */
+// Uzun, opak yol parçası (en az 20 karakter, rakam içeren base64url/hex): token ya da kayıt kimliği
+// olabilir (ör. cuid). Hangi uçta ne taşındığı bilinmeden dış servise çıkmasın diye gizlenir.
+const OPAQUE_SEGMENT = /^(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}$/;
+
+function maskOpaqueSegments(path: string): string {
+  return path
+    .split('/')
+    .map((segment) => (OPAQUE_SEGMENT.test(segment) ? REDACTED : segment))
+    .join('/');
+}
+
+/**
+ * Tam URL ya da yol+sorgu biçimindeki adresi maskeler: sorgu ve # kısmı TAMAMEN düşer; yolda davet
+ * token'ı (GV-14 `maskUrlForLog`), JWT biçimli ve uzun opak parçalar (token/kimlik) gizlenir.
+ */
 export function scrubMonitorUrl(url: string): string {
-  const q = url.indexOf('?');
-  const base = q === -1 ? url : url.slice(0, q);
-  // Yol içindeki token'lar (davet bağlantısı, JWT biçimli parça) GV-14 maskesiyle gizlenir.
-  // Tam URL (şema+host) verilirse yol kısmını ayırıp maskeler.
+  const cut = url.search(/[?#]/);
+  const base = cut === -1 ? url : url.slice(0, cut);
   const schemeEnd = base.indexOf('://');
-  if (schemeEnd === -1) return scrubMonitorText(maskUrlForLog(base));
-  const pathStart = base.indexOf('/', schemeEnd + 3);
+  const pathStart = schemeEnd === -1 ? 0 : base.indexOf('/', schemeEnd + 3);
   if (pathStart === -1) return base;
-  return scrubMonitorText(base.slice(0, pathStart) + maskUrlForLog(base.slice(pathStart)));
+  const path = maskOpaqueSegments(maskUrlForLog(base.slice(pathStart)));
+  return scrubMonitorText(base.slice(0, pathStart) + path);
+}
+
+const TRANSACTION_WITH_METHOD = /^([A-Z]{3,7}) (\S.*)$/;
+
+/** Olay işlem adı ("GET /api/invitations/<token>/join" ya da yalın yol) — yol kısmı maskelenir. */
+export function scrubTransaction(transaction: string): string {
+  const match = TRANSACTION_WITH_METHOD.exec(transaction);
+  if (match) return `${match[1]} ${scrubMonitorUrl(match[2])}`;
+  if (transaction.startsWith('/') || transaction.includes('://')) return scrubMonitorUrl(transaction);
+  return scrubMonitorText(transaction);
 }
 
 function scrubRecord(record: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -146,6 +170,7 @@ export function scrubEvent<T extends ScrubbableEvent>(event: T): T {
   const out: T = { ...event };
 
   if (typeof out.message === 'string') out.message = scrubMonitorText(out.message);
+  if (typeof out.transaction === 'string') out.transaction = scrubTransaction(out.transaction);
   if (out.logentry) {
     out.logentry = {
       ...out.logentry,

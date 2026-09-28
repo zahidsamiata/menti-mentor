@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { logger } from '../services/logger.js';
 import { maskUrlForLog } from '../services/logUrl.js';
 import { captureError } from '../services/errorMonitor.js';
+import { scrubMonitorUrl } from '../services/errorMonitorScrub.js';
 import type { RequestWithTenant } from '../types.js';
 
 export function notFoundHandler(_req: Request, res: Response) {
@@ -29,7 +30,8 @@ export function globalErrorHandler(
   // DK-01: dış hata izleme (SENTRY_DSN yoksa no-op). Olay ayrıca `errorMonitorScrub` süzgecinden geçer.
   captureError(err, {
     source: 'http',
-    url: maskUrlForLog(req.originalUrl),
+    // Dış servise giden adres: sorgu tamamen düşer, token/kimlik parçaları gizlenir (SystemLog'dan sıkı).
+    url: scrubMonitorUrl(req.originalUrl),
     method: req.method,
     userId: r.auth?.userId,
     tenantId: r.tenant?.tenantId,

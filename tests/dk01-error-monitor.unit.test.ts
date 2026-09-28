@@ -9,14 +9,22 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as Sentry from '@sentry/node';
 import {
+  DATA_COLLECTION_OFF,
   buildSdkOptions,
   captureError,
   initErrorMonitor,
   resetErrorMonitorForTest,
   type ErrorMonitorSdk,
 } from '../src/services/errorMonitor.js';
-import { scrubBreadcrumb, scrubEvent, type ScrubbableEvent } from '../src/services/errorMonitorScrub.js';
+import {
+  scrubBreadcrumb,
+  scrubEvent,
+  scrubMonitorUrl,
+  scrubTransaction,
+  type ScrubbableEvent,
+} from '../src/services/errorMonitorScrub.js';
 
 const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJ1LTEifQ.c2lnbmF0dXJlLWRlZ2VyaQ';
 const EMAIL = 'ornek.kisi@example.com';
@@ -183,5 +191,56 @@ describe('beforeSend süzgeci — kişisel veri düşer', () => {
     const out = scrubBreadcrumb({ category: 'console', message: `Bearer ${JWT}`, data: { arguments: [EMAIL] } });
     expect(out.data).toBeUndefined();
     expect(out.message).toBe('Bearer [gizli]');
+  });
+});
+
+describe('7b — Sentry v11 dataCollection (asıl veri toplama anahtarı)', () => {
+  it('buildSdkOptions: dataCollection alanlarının hepsi kapalı', () => {
+    const options = buildSdkOptions('https://k@o1.ingest.sentry.io/1');
+    expect(options.dataCollection).toEqual(DATA_COLLECTION_OFF);
+    expect(DATA_COLLECTION_OFF).toMatchObject({
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+      urlQueryParams: false,
+      stackFrameVariables: false,
+    });
+  });
+
+  it('gerçek @sentry/node istemcisi çözümlenmiş toplama seçeneklerini KAPALI görür', async () => {
+    const client = Sentry.init({
+      ...(buildSdkOptions('https://k@o1.ingest.sentry.io/1') as Sentry.NodeOptions),
+      defaultIntegrations: false,
+      transport: () => ({ send: async () => ({}), flush: async () => true }),
+    });
+    const resolved = client!.getDataCollectionOptions();
+    await client!.close();
+    expect(resolved.userInfo).toBe(false);
+    expect(resolved.cookies).toBe(false);
+    expect(resolved.httpHeaders).toEqual({ request: false, response: false });
+    expect(resolved.httpBodies).toEqual([]);
+    expect(resolved.urlQueryParams).toBe(false);
+    expect(resolved.stackFrameVariables).toBe(false);
+  });
+});
+
+describe('7b — işlem adı (transaction) ve adres süzgeci', () => {
+  it('davet token\'lı işlem adı maskelenir: "GET /api/invitations/<token>/join"', () => {
+    const out = scrubEvent({ transaction: 'GET /api/invitations/davet-gizli-123/join' });
+    expect(out.transaction).toBe('GET /api/invitations/[gizli]/join');
+  });
+
+  it('işlem adındaki kimlik/JWT parçaları ve sorgu gizlenir', () => {
+    expect(scrubTransaction(`POST /api/meetings/ckz9x1abc0000qwerty123456/cancel?token=abc`)).toBe(
+      'POST /api/meetings/[gizli]/cancel',
+    );
+    expect(scrubTransaction(`/api/x/${JWT}`)).toBe('/api/x/[gizli]');
+    expect(scrubTransaction(`hata ${EMAIL}`)).not.toContain('ornek.kisi');
+  });
+
+  it('scrubMonitorUrl: sorgu ve # tamamen düşer; kısa, anlamlı yol parçaları kalır', () => {
+    expect(scrubMonitorUrl('/api/tenants/unsubscribe?token=abc#x')).toBe('/api/tenants/unsubscribe');
+    expect(scrubMonitorUrl('/api/users/me/profile')).toBe('/api/users/me/profile');
   });
 });
