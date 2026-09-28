@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
-import { rankMentisForMentor, rankMentorsForMenti, type RankedMenti, type RankedMentor } from '../services/matching.js';
+import { rankMentisForMentor, rankMentorsForMenti, MAX_MATCH_CANDIDATES, type RankedMenti, type RankedMentor } from '../services/matching.js';
 import { canCrossTenantMatch } from '../services/tenantSharing.js';
 import { validateRequest } from '../middleware/validate.js';
 import { rejectIfCallerNotApproved } from '../middleware/approvalGate.js';
@@ -100,6 +100,8 @@ function buildMentiFacingMentorItem(m: RankedMentor) {
 
 const MentorMatchQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
+  // AJ-90: sayfalama — kaçıncı mentörden başlanacağı. Tavan: skorlanabilen aday tavanı.
+  offset: z.coerce.number().int().min(0).max(MAX_MATCH_CANDIDATES).optional(),
 });
 
 // GET /mentis/:mentiId/mentor-matches — menti, kendisine uygun mentörleri uyum skoruyla görür.
@@ -117,10 +119,17 @@ export async function getRankedMentorsForMenti(req: RequestWithTenant, res: Resp
     mentiId,
     mentiTenantId: req.tenant.tenantId,
     limit: parsed.data.limit,
+    offset: parsed.data.offset,
   });
 
   // GÜVENLİK: iç RankedMentor (discScore taşır) DOĞRUDAN dönmez — menti-safe DTO'ya map edilir.
-  return res.json({ items: result.items.map(buildMentiFacingMentorItem) });
+  // AJ-90: total/limit/offset EK alanlardır — yalnız `items` okuyan eski çağıranlar kırılmaz.
+  return res.json({
+    items:  result.items.map(buildMentiFacingMentorItem),
+    total:  result.total,
+    limit:  result.limit,
+    offset: result.offset,
+  });
 }
 
 const OptInSchema = z.object({
