@@ -35,7 +35,12 @@ const unitInterval = z.number().min(0).max(1);
 
 /** Kart metinleri için üst sınır — sunucu sabitlerinden gelir; sınır bomba/enjeksiyon koruması. */
 const MAX_CARD_TEXT = 2000;
-const MAX_ENNEAGRAM_LABEL = 20;
+/**
+ * Enneagram etiketi üst sınırı (ör. "8w7"). Tek kaynak: hem yazım şeması (`enneagramWing`) hem
+ * mizaç testi istek şeması (`temperamentController`) bunu kullanır — istek bu sınırı aşarsa
+ * yazım kapısında 500 yerine istekte 400 döner (AJ-109).
+ */
+export const MAX_ENNEAGRAM_LABEL = 20;
 const MAX_CARD_STRENGTHS = 10;
 
 /**

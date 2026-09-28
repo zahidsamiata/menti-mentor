@@ -4,12 +4,17 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { analyzeTemperament } from '../services/temperamentAnalysis.js';
 import { validateRequest } from '../middleware/validate.js';
-import { TemperamentResultWriteSchema, toValidatedJson } from '../services/jsonFieldSchemas.js';
+import { MAX_ENNEAGRAM_LABEL, TemperamentResultWriteSchema, toValidatedJson } from '../services/jsonFieldSchemas.js';
 
 const QuestionAnswerSchema = z.object({
   questionId: z.number().int().min(1).max(7),
   selectedDisc: z.enum(['D', 'I', 'S', 'C']),
-  selectedEnneagram: z.string().optional(),
+  // AJ-109: sınır yazım şemasındaki enneagramWing sınırıyla aynı (tek kaynak); aşan etiket
+  // hesap sonrası yazım kapısında 500 veriyordu, artık istekte 400.
+  selectedEnneagram: z
+    .string()
+    .max(MAX_ENNEAGRAM_LABEL, `Enneagram etiketi en fazla ${MAX_ENNEAGRAM_LABEL} karakter olabilir.`)
+    .optional(),
 });
 
 const TemperamentTestBodySchema = z.object({
