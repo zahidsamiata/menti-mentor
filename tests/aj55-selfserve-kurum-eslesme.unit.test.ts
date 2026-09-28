@@ -6,7 +6,8 @@
  * Ölçüt (her dört uç için):
  *  - A kurumunun yöneticisi B kurumunun `:id`'siyle → 403 YETKI_YOK + uca özel mesaj, veritabanına HİÇ gidilmez;
  *  - kendi kurumunun `:id`'si → eşleşme geçer, işlem kendi kurum kimliğiyle yapılır;
- *  - kurum yöneticisi olmayan rol (MENTOR) → 403, veritabanına gidilmez.
+ *  - kurumda yönetici olmayan üye (üyelik rolü MENTOR) → 403 UYELIK_BULUNAMADI, veritabanına gidilmez
+ *    (AJ-118: ret artık anahtardaki role claim'inden YETKI_YOK değil, üyelik rolünden UYELIK_BULUNAMADI).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -32,7 +33,13 @@ vi.mock('../src/db.js', () => ({
 
 vi.mock('../src/middleware/membershipAccess.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/middleware/membershipAccess.js')>();
-  return { ...actual, resolveMembershipAccess: vi.fn().mockResolvedValue({ ok: true, role: 'ADMIN' }) };
+  // AJ-118: yöneticilik kararı üyelik rolünden verilir (anahtardaki role claim'inden değil) — bu yüzden
+  // sahte üyelik kişiye göre döner: 'mentor-1' kurumda MENTOR üyedir, diğerleri ADMIN.
+  return {
+    ...actual,
+    resolveMembershipAccess: vi.fn(async (userId: string) =>
+      (userId === 'mentor-1' ? { ok: true, role: 'MENTOR' } : { ok: true, role: 'ADMIN' })),
+  };
 });
 
 vi.mock('../src/services/tenantCache.js', () => ({
@@ -169,12 +176,12 @@ describe('AJ-55 — self-serve kurum-yönetici uçları: URL kurumu = oturum kur
       expect(JSON.stringify(dbCall.mock.calls[0])).not.toContain(OTHER_TENANT);
     });
 
-    it(`${c.name}: kurum yöneticisi olmayan rol (MENTOR) → 403, veritabanına hiç gidilmez`, async () => {
+    it(`${c.name}: kurumda yönetici olmayan üye (üyelik MENTOR) → 403, veritabanına hiç gidilmez`, async () => {
       const res = fakeRes();
       await c.handler(fakeReq({ id: OWN_TENANT }, c.body, mentorToken), res as unknown as Response);
 
       expect(res.statusCode).toBe(403);
-      expect((res.body as { error: string }).error).toBe('YETKI_YOK');
+      expect((res.body as { error: string }).error).toBe('UYELIK_BULUNAMADI');
       expectNoDbCall();
     });
   }

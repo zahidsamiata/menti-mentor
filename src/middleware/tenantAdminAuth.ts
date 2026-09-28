@@ -10,12 +10,13 @@ import { getCachedTenant } from '../services/tenantCache.js';
  * (self-serve onboarding/davet/önizleme ve kurum ayarları: `/api/tenants/:id/...`).
  *
  * Neden ayrı yardımcı: bu uçlar `requireTenant` zincirinden geçmez; eskiden her controller kendi
- * `extractAdminPayload`'ını tutuyordu ve yalnız JWT imzası + `role === 'ADMIN'` bakıyordu. Token
+ * `extractAdminPayload`'ını tutuyordu ve yalnız JWT imzası + anahtardaki `role === 'ADMIN'` bakıyordu. Token
  * ömrü boyunca, kurumdaki üyeliği kapatılmış (TenantMembership.isActive=false) ya da rolü
  * düşürülmüş bir yönetici kurum ayarlarını değiştirmeye devam edebiliyordu (GV-11).
  *
  * `requireTenant` (tenant.ts adım 4) ile AYNI kural uygulanır:
  *  - kurum-içi rol/erişim kaynağı `TenantMembership` (userId + tokenın tenantId'si) — `User.role` değil;
+ *    anahtardaki `role` claim'i (= User.role) ön-kontrol olarak da KULLANILMAZ (AJ-118);
  *  - üyelik aktif DEĞİLSE veya üyelik rolü ADMIN DEĞİLSE 403;
  *  - hesap pasif / reddedilmişse 401 (GV-10; kural `membershipAccess.ts`'te, iki kapı ortak kullanır);
  *  - anahtarın oturumu (sid → RefreshToken) çıkışla kapatıldıysa 401 (AJ-31, aynı ortak kural);
@@ -35,8 +36,12 @@ export async function authenticateTenantAdmin(
     return null;
   }
 
+  // AJ-118: anahtardaki `role` kişi-genel `User.role`'dür; kurum-içi yöneticilik kararı YALNIZ aşağıdaki
+  // üyelik rolünden (access.role) verilir. Eskiden burada `payload.role !== 'ADMIN'` ön-kontrolü vardı:
+  // üyelikte ADMIN ama User.role'ü MENTOR/MENTI kişi (AJ-115 sonrası yönetici panelini görür) bu uçlardan
+  // reddediliyordu. Geçersiz anahtar ve platform anahtarı (aud) reddi aynen korunur.
   const payload = verifyToken(token);
-  if (!payload || payload.role !== 'ADMIN' || payload.aud !== undefined) {
+  if (!payload || payload.aud !== undefined) {
     res.status(403).json({ error: 'YETKI_YOK', message: 'Bu işlem için yönetici yetkisi gereklidir.' });
     return null;
   }
