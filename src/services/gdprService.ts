@@ -334,62 +334,87 @@ const EXPORT_PROFILE_SELECT = {
 } as const satisfies Prisma.UserSelect;
 
 /**
- * Dışa aktarılan kişinin profil + üyelik kaydını okur.
+ * Dışa aktarılan görüşme geri bildirimi alanları. AJ-125: kendi isteğinde ('all') de AYNI küme —
+ * karşı tarafın kimliği (mentorId/mentiId) ve kişisel verisi bugünkü çıktıdan FAZLA verilmez.
+ */
+const EXPORT_FEEDBACK_LOG_SELECT = {
+  phase: true, starRating: true, npsScore: true, difficulty: true, createdAt: true,
+} as const satisfies Prisma.FeedbackLogSelect;
+
+/** Dışa aktarılan eşleşme isteği alanları (kişinin GÖNDERDİĞİ istekler) — iki kapsamda da aynı. */
+const EXPORT_MATCH_REQUEST_SELECT = {
+  targetType: true, targetId: true, createdAt: true,
+} as const satisfies Prisma.MatchRequestSelect;
+
+type ExportFeedbackLog = Prisma.FeedbackLogGetPayload<{ select: typeof EXPORT_FEEDBACK_LOG_SELECT }>;
+
+/**
+ * Dışa aktarılan kişinin profil + üyelik + görüşme geri bildirimi + eşleşme isteği kayıtlarını okur.
  *
  * 'all' (YALNIZ kişinin KENDİ isteği — controller userId'yi oturumdan/kendi-kontrolünden verir):
  *   Kurum filtresi (src/db.ts RLS eklentisi) BİLİNÇLİ olarak aşılır — `findUnique` eklentinin
- *   READ_OPS'u dışındadır ve iç içe `memberships` seçimi ayrı bir üst düzey sorgu olmadığı için
- *   filtrelenmez. NEDEN: KVKK Md.11 erişim hakkı kişinin TÜM kurum üyeliklerini kapsar; ayrıca
- *   kişi ev kurumu dışındaki (misafir üyesi olduğu) kurumun oturumundayken de kendi kaydı
- *   bulunabilmeli (önceden `{ id, tenantId: istek kurumu }` araması bulamıyor → 500). Sorgu yalnız
- *   `where: { id: userId }` ile tek kişiye bağlı; başka kişinin satırı dönemez.
+ *   READ_OPS'u dışındadır ve iç içe seçimler (`memberships`, AJ-125: `feedbackLogs_as_mentor`,
+ *   `feedbackLogs_as_menti`, `requestsSent`) ayrı bir üst düzey sorgu olmadığı için filtrelenmez.
+ *   NEDEN: KVKK Md.11 erişim hakkı kişinin TÜM kurumlardaki kaydını kapsar (misafir üyelik: kişi
+ *   başka kurumda da geri bildirim/eşleşme isteği üretebilir — AJ-125, 7b #296 madde 5); ayrıca
+ *   kişi ev kurumu dışındaki kurumun oturumundayken de kendi kaydı bulunabilmeli (AJ-124). Sorgu
+ *   yalnız `where: { id: userId }` ile tek kişiye bağlı; ilişkiler yalnız o kişinin taraf olduğu
+ *   satırları getirir, başka kişinin satırı dönemez. Seçilen alanlar yönetici yoluyla AYNI.
  * 'requestTenant' (yönetici başkasını dışa aktarıyor): DEĞİŞMEDİ — kişi istek kurumunun kaydı
- *   olmalı (`findFirst { id, tenantId }`), üyelik yalnız o kurumdaki.
+ *   olmalı (`findFirst { id, tenantId }`), üyelik/geri bildirim/istek yalnız o kurumdaki
+ *   (üst düzey findMany → eklenti tenantId filtresi).
  */
 async function findExportSubject(userId: string, tenantId: string, scope: MembershipExportScope) {
   if (scope === 'all') {
-    // eslint-disable-next-line no-restricted-syntax -- AJ-124: kişinin KENDİ KVKK dışa aktarımı; tüm kurum üyelikleri bilinçli olarak okunur, sorgu yalnız kendi id'sine bağlı (bkz. üstteki yorum).
-    return prisma.user.findUnique({
+    // eslint-disable-next-line no-restricted-syntax -- AJ-124/AJ-125: kişinin KENDİ KVKK dışa aktarımı; tüm kurumlardaki üyelik, geri bildirim ve eşleşme isteği bilinçli olarak okunur, sorgu yalnız kendi id'sine bağlı (bkz. üstteki yorum).
+    const own = await prisma.user.findUnique({
       where: { id: userId },
       select: {
         ...EXPORT_PROFILE_SELECT,
         memberships: { select: MEMBERSHIP_EXPORT_SELECT, orderBy: { createdAt: 'asc' } },
+        feedbackLogs_as_mentor: { select: EXPORT_FEEDBACK_LOG_SELECT },
+        feedbackLogs_as_menti: { select: EXPORT_FEEDBACK_LOG_SELECT },
+        requestsSent: { select: EXPORT_MATCH_REQUEST_SELECT },
       },
     });
+    if (!own) return null;
+    const { feedbackLogs_as_mentor, feedbackLogs_as_menti, requestsSent, ...rest } = own;
+    const feedbackLogs: ExportFeedbackLog[] = [...feedbackLogs_as_mentor, ...feedbackLogs_as_menti];
+    return { ...rest, feedbackLogs, matchRequests: requestsSent };
   }
-  const [user, memberships] = await Promise.all([
+  const [user, memberships, feedbackLogs, matchRequests] = await Promise.all([
     prisma.user.findFirst({ where: { id: userId, tenantId }, select: EXPORT_PROFILE_SELECT }),
     prisma.tenantMembership.findMany({
       where: { userId, tenantId },
       select: MEMBERSHIP_EXPORT_SELECT,
       orderBy: { createdAt: 'asc' },
     }),
+    prisma.feedbackLog.findMany({
+      where: { OR: [{ mentorId: userId }, { mentiId: userId }] },
+      select: EXPORT_FEEDBACK_LOG_SELECT,
+    }),
+    prisma.matchRequest.findMany({
+      where: { requesterUserId: userId },
+      select: EXPORT_MATCH_REQUEST_SELECT,
+    }),
   ]);
-  return user ? { ...user, memberships } : null;
+  return user ? { ...user, memberships, feedbackLogs, matchRequests } : null;
 }
 
 /**
  * @param membershipScope 'all' yalnız kişinin KENDİ isteğinde verilir (self-servis). Varsayılan
- *   'requestTenant' — güvenli taraf: başka biri dışa aktarırken kişinin diğer kurum üyelikleri sızmaz.
+ *   'requestTenant' — güvenli taraf: başka biri dışa aktarırken kişinin diğer kurum kayıtları sızmaz.
  */
 export async function exportUserData(
   userId: string,
   tenantId: string,
   membershipScope: MembershipExportScope = 'requestTenant',
 ): Promise<UserDataExport> {
-  const [subject, responses, feedbackLogs, matchRequests, consents, messageCount] = await Promise.all([
+  const [subject, responses, consents, messageCount] = await Promise.all([
     findExportSubject(userId, tenantId, membershipScope),
     prisma.userResponse.findMany({
       where: { userId },
       select: { questionId: true, value: true, createdAt: true },
-    }),
-    prisma.feedbackLog.findMany({
-      where: { OR: [{ mentorId: userId }, { mentiId: userId }] },
-      select: { phase: true, starRating: true, npsScore: true, difficulty: true, createdAt: true },
-    }),
-    prisma.matchRequest.findMany({
-      where: { requesterUserId: userId },
-      select: { targetType: true, targetId: true, createdAt: true },
     }),
     // Rıza denetim izi (kendi verisi) — Consent tenant-scope DIŞI, userId ile global.
     prisma.consent.findMany({
@@ -404,7 +429,7 @@ export async function exportUserData(
   if (!subject) {
     throw new GdprUserNotFoundError();
   }
-  const { memberships, ...user } = subject;
+  const { memberships, feedbackLogs, matchRequests, ...user } = subject;
 
   void logger.info('SYSTEM', 'KVKK: Kullanıcı veri dışa aktarımı yapıldı', { userId, tenantId });
 
