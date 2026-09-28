@@ -1114,6 +1114,11 @@ model TenantMembership {
   // Sertifika deneme döngüsü + yönetici bildirimi (mentör; createdAt = "sertifika açıldı" anı)
   certWrongTopics     String[]  @default([]) // Son denemede geçilemeyen konular — sonraki denemede ağırlıklandırılır
   certAdminNotifiedAt DateTime? // STK yöneticisine "mentör geride kaldı" bildirimi yapıldı mı (bir kez)
+  // Günlük deneme sınırı (madde 158 · I-08): Türkiye takvim günü başına en fazla 2 sınav.
+  // certLastAttemptAt = son değerlendirilen denemenin anı; certDayAttempts = o gündeki deneme
+  // sayısı. Son deneme başka günse sayaç 0 sayılır (certAttemptWindow.ts). null = I-08 öncesi.
+  certDayAttempts     Int?
+  certLastAttemptAt   DateTime?
 
   // Öğrenme Yolculuğu tamamlanma anı (rol bazlı: mentör yolculuğu ≠ menti yolculuğu).
   // null = henüz tamamlanmadı. Sertifika puanından bağımsız — keşif akışıdır.
