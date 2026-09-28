@@ -39,6 +39,7 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
     // Hedef mentör başka tenant'ta olabilir (shared pool). findUnique RLS'ten muaftır
     // (bkz. db.ts) — cross-tenant bulur; ardından canCrossTenantMatch paylaşım iznini zorlar.
     // Guard olmadan bu, herhangi bir tenant'ın mentörüne talep gönderilmesine izin verirdi.
+    // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından canCrossTenantMatch paylaşım iznini zorlar
     const target = await prisma.user.findUnique({
       where: { id: parsed.data.targetId },
       select: { id: true, role: true, isActive: true, tenantId: true },

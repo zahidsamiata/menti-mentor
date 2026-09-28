@@ -399,6 +399,7 @@ async function triggerWaitingRoomNotificationIfNeeded(
   const { prisma } = await import('../db.js');
 
   // Zaten bildirim gönderilmişse çık (idempotency)
+  // eslint-disable-next-line no-restricted-syntax -- kişinin kendi kaydı: userId çağıran uçta oturumdan (req.auth.userId) gelir
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {

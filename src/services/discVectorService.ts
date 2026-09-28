@@ -175,6 +175,7 @@ export async function recalcDiscVector(userId: string, tenantId: string): Promis
  * Tip-güvenli parse: JSON → DiscVector | null
  */
 export async function getDiscVector(userId: string): Promise<DiscVector | null> {
+  // eslint-disable-next-line no-restricted-syntax -- id ile tekil okuma, yalnız discVector; şu an çağıranı yok — yeni çağıran kullanıcının kendi ya da aynı kurumdan olduğunu kendisi doğrulamalı
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { discVector: true },

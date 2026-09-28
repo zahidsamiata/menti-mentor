@@ -104,6 +104,7 @@ async function emailRecipientIfCaughtUp(
     },
   });
   if (unreadBefore > 0) return; // zaten okunmamış var → tekrar mail atma
+  // eslint-disable-next-line no-restricted-syntax -- alıcı kimliği doğrulanmış konuşmanın tarafıdır (paylaşılan havuzda başka kurumda olabilir); yalnız iletişim alanları, e-posta bildirimi için
   const recipient = await prisma.user.findUnique({
     where: { id: recipientId },
     select: USER_CONTACT_SELECT,
@@ -139,6 +140,7 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   // Hedef mentör başka tenant'ta olabilir (shared pool). findUnique RLS'ten muaftır (bkz. db.ts);
   // ardından canCrossTenantMatch paylaşım iznini zorlar — guard olmadan herhangi bir tenant'ın
   // mentörüne konuşma açılabilirdi.
+  // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından canCrossTenantMatch paylaşım iznini zorlar
   const mentor = await prisma.user.findUnique({
     where: { id: parsed.data.mentorUserId },
     select: { id: true, role: true, isActive: true, tenantId: true },
@@ -232,7 +234,9 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   // yukarıda doğrulandığı için 403 varlık ifşa etmez; jenerik metin, blok bilgisi sızmaz.
   // Okuma (getMessages/listConversations) bilinçli olarak açık bırakıldı — ürün kararı.
   const [mentorUser, mentiUser] = await Promise.all([
+    // eslint-disable-next-line no-restricted-syntax -- taraflığı doğrulanmış konuşmanın mentörünün ana kurumu (başka kurumda olabilir); yalnız tenantId seçilir, idari blok kontrolü için
     prisma.user.findUnique({ where: { id: convo.mentorUserId }, select: { tenantId: true } }),
+    // eslint-disable-next-line no-restricted-syntax -- taraflığı doğrulanmış konuşmanın mentisinin ana kurumu (başka kurumda olabilir); yalnız tenantId seçilir, idari blok kontrolü için
     prisma.user.findUnique({ where: { id: convo.mentiUserId }, select: { tenantId: true } }),
   ]);
   const blocked = await isPairBlockedInTenants(
