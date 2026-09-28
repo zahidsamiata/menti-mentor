@@ -6,6 +6,10 @@
  * learningJourneyCompletedAt, hasKvkkConsent) tek bir kullanıcının detayına iniyor. Yeni PII
  * kategorisi YOK — bkz. `platformTenantController.ts` getTenantUserDetail üst yorumu.
  *
+ * AJ-88: hasKvkkConsent artık `Consent` tablosundaki AKTİF (revokedAt=null) ACIK_RIZA satırından
+ * okunur — eski `User.kvkkConsentAt` DEĞİL. Geri çekilmiş rıza → false; eski alan dolu ama
+ * Consent kaydı yok → false (yeni kaynak kazanır). Üye listesi (getTenantMembers) de aynı kaynak.
+ *
  * Negatif testler: tenant ADMIN JWT → 403 (platform admin değil) · başka kurumun kullanıcısı
  * bu kurum yolundan → 404 (IDOR/kurum sızıntısı yok) · denetim kaydı (SystemLog AUDIT) yazılıyor.
  */
@@ -14,6 +18,7 @@ import { agent, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createMentor, createMenti } from './helpers/factories.js';
 import { signToken, PLATFORM_AUDIENCE } from '../src/middleware/jwtAuth.js';
+import { recordSignupConsent, revokeConsent } from '../src/services/consentService.js';
 
 function platformCookie(): string {
   const token = signToken(
@@ -126,5 +131,79 @@ describe('F-24: GET /api/platform/tenants/:id/users/:userId', () => {
     // PII (ad/e-posta/DISC) log meta'sına ASLA konmaz.
     expect(JSON.stringify(meta)).not.toContain(menti.fullName);
     expect(JSON.stringify(meta)).not.toContain(menti.email);
+  });
+
+  describe('AJ-88: hasKvkkConsent kaynağı = aktif ACIK_RIZA (Consent tablosu)', () => {
+    async function detail(tenantId: string, userId: string): Promise<boolean> {
+      const res = await http
+        .get(`/api/platform/tenants/${tenantId}/users/${userId}`)
+        .set('Cookie', platformCookie())
+        .expect(200);
+      return res.body.hasKvkkConsent as boolean;
+    }
+
+    async function memberFlag(tenantId: string, userId: string): Promise<boolean> {
+      const res = await http
+        .get(`/api/platform/tenants/${tenantId}/members`)
+        .set('Cookie', platformCookie())
+        .expect(200);
+      const member = (res.body.members as Array<{ id: string; hasKvkkConsent: boolean }>).find((m) => m.id === userId);
+      expect(member).toBeDefined();
+      return member!.hasKvkkConsent;
+    }
+
+    it('aktif rıza (kayıt akışı AYDINLATMA+ACIK_RIZA) → true (detay + üye listesi)', async () => {
+      const tenant = await createTenant();
+      const menti = await createMenti(tenant.id);
+      await recordSignupConsent({ userId: menti.id }, 'FORM');
+
+      expect(await detail(tenant.id, menti.id)).toBe(true);
+      expect(await memberFlag(tenant.id, menti.id)).toBe(true);
+    });
+
+    it('negatif: rıza geri çekilmiş (eski kvkkConsentAt hâlâ dolu) → false (detay + üye listesi)', async () => {
+      const tenant = await createTenant();
+      const menti = await createMenti(tenant.id);
+      await testPrisma.user.update({ where: { id: menti.id }, data: { kvkkConsentAt: new Date() } });
+      await recordSignupConsent({ userId: menti.id }, 'FORM');
+      await revokeConsent({ userId: menti.id }, 'ACIK_RIZA');
+
+      expect(await detail(tenant.id, menti.id)).toBe(false);
+      expect(await memberFlag(tenant.id, menti.id)).toBe(false);
+    });
+
+    it('negatif: yalnız AYDINLATMA aktif (ACIK_RIZA geri çekilmiş) → false', async () => {
+      const tenant = await createTenant();
+      const menti = await createMenti(tenant.id);
+      await recordSignupConsent({ userId: menti.id }, 'FORM');
+      await revokeConsent({ userId: menti.id }, 'ACIK_RIZA');
+
+      const aydinlatma = await testPrisma.consent.count({
+        where: { userId: menti.id, type: 'AYDINLATMA', revokedAt: null },
+      });
+      expect(aydinlatma).toBe(1);
+      expect(await detail(tenant.id, menti.id)).toBe(false);
+    });
+
+    it('negatif: hiç Consent kaydı yok ama eski kvkkConsentAt dolu → false (yeni kaynak kazanır)', async () => {
+      const tenant = await createTenant();
+      const menti = await createMenti(tenant.id);
+      await testPrisma.user.update({ where: { id: menti.id }, data: { kvkkConsentAt: new Date() } });
+
+      expect(await detail(tenant.id, menti.id)).toBe(false);
+      expect(await memberFlag(tenant.id, menti.id)).toBe(false);
+    });
+
+    it('yanıtta Consent satırı sızmaz (yalnız boolean döner)', async () => {
+      const tenant = await createTenant();
+      const menti = await createMenti(tenant.id);
+      await recordSignupConsent({ userId: menti.id }, 'FORM');
+
+      const res = await http
+        .get(`/api/platform/tenants/${tenant.id}/users/${menti.id}`)
+        .set('Cookie', platformCookie())
+        .expect(200);
+      expect(res.body).not.toHaveProperty('consents');
+    });
   });
 });
