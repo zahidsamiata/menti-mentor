@@ -41,7 +41,7 @@ const MEETING_STATUSES = [
 type Role = (typeof ROLES)[number];
 type MeetingStatusStr = (typeof MEETING_STATUSES)[number];
 
-const PAGE_SIZE = 50;
+export const PAGE_SIZE = 50;
 
 /** Denetim kaydını veri gönderilmeden ÖNCE yaz (loglanmadan gösterme). Ortak yardımcıya delege eder. */
 async function audit(
@@ -169,7 +169,9 @@ export async function getTenantMembers(req: Request, res: Response) {
       where,
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
-      orderBy: { createdAt: 'asc' },
+      // AJ-119: eşit createdAt'te sıra belirsizdi → offset sayfalamasında sayfa sınırında
+      // üye tekrar eder/kaybolur. İkincil anahtar id (birincil yönle aynı) sırayı tekil kılar.
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: {
         id: true,
         role: true,
@@ -286,7 +288,8 @@ export async function getTenantMeetings(req: Request, res: Response) {
       where,
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
-      orderBy: { startsAt: 'desc' },
+      // AJ-119: eşit startsAt'te kararlı sayfalama için ikincil anahtar id (birincil yönle aynı).
+      orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
       select: {
         id: true,
         startsAt: true,
