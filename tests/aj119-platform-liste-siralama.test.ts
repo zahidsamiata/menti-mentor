@@ -10,8 +10,10 @@
  * gelir, bir diğeri hiç gelmez. İkincil anahtar `id` (birincil yönle aynı) sırayı tekil kılar.
  * Desen: AJ-107 (konuşma listesi, tests/aj107-conversation-list-order.test.ts).
  *
- * Test: bir sayfadan fazla (PAGE_SIZE + 1) eşit damgalı kayıt; kimlikler beklenen sıranın TERSİ
- * yönde eklenir (fiziksel sıra beklenenle örtüşmesin). İki sayfa art arda gezilir: birleşik liste
+ * Test: bir sayfadan fazla (PAGE_SIZE + 1) eşit damgalı kayıt; kimlikler KARIŞIK sırayla eklenir
+ * (önce çift, sonra tek indisler) — ne ileri ne geri fiziksel/indeks sırası beklenen sıraya denk
+ * gelmesin (Meeting [tenantId, startsAt] indeksi geri taranınca eşit damgalar ters ekleme sırasıyla
+ * gelir; ters sırayla ekleme mutasyonu yakalamıyordu). İki sayfa art arda gezilir: birleşik liste
  * beklenen tam sıraya eşit olmalı — tekrar yok, kayıp yok.
  */
 
@@ -34,6 +36,12 @@ function platformCookie(): string {
 const RECORD_COUNT = PLATFORM_PAGE_SIZE + 1; // bir sayfadan fazlası → sayfa sınırı oluşur
 const SAME_INSTANT = new Date('2026-09-01T10:00:00.000Z');
 const pad = (i: number): string => String(i).padStart(3, '0');
+
+/** Önce çift, sonra tek indisler: ekleme sırası ne artan ne azalan id sırasına eşit olur. */
+function interleavedInsertOrder(count: number): number[] {
+  const indices = Array.from({ length: count }, (_, i) => i);
+  return [...indices.filter((i) => i % 2 === 0), ...indices.filter((i) => i % 2 === 1)];
+}
 
 async function fetchTwoPages<T>(
   http: TestAgent,
@@ -75,8 +83,8 @@ describe('AJ-119 · platform üye listesi — eşit createdAt kararlı sayfalama
         isActive: true,
       })),
     });
-    // Üyelik kimlikleri ekleme sırasıyla AZALAN; beklenen sıra (id asc) ekleme sırasının tersi.
-    for (const i of [...indices].reverse()) {
+    // Üyelikler karışık sırayla eklenir; beklenen sıra id artan.
+    for (const i of interleavedInsertOrder(RECORD_COUNT)) {
       await testPrisma.tenantMembership.create({
         data: {
           id: `aj119-mem-${pad(i)}`,
@@ -118,8 +126,8 @@ describe('AJ-119 · platform toplantı listesi — eşit startsAt kararlı sayfa
     const menti = await createMenti(tenantId);
 
     const indices = Array.from({ length: RECORD_COUNT }, (_, i) => i);
-    // Kimlikler ekleme sırasıyla ARTAN; beklenen sıra (id desc) ekleme sırasının tersi.
-    for (const i of indices) {
+    // Toplantılar karışık sırayla eklenir; beklenen sıra id azalan.
+    for (const i of interleavedInsertOrder(RECORD_COUNT)) {
       await testPrisma.meeting.create({
         data: {
           id: `aj119-meet-${pad(i)}`,
