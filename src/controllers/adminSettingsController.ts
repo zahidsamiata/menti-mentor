@@ -149,9 +149,8 @@ const BLOCKED_PAIRS_CONFLICT_BODY = {
 // Yanıt yalnız TENANT_LEGAL_INFO_SELECT alanları (explicit select). Sözleşme metni/imzalama YOK.
 
 export async function getTenantLegalInfo(req: Request, res: Response) {
-  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun yasal bilgilerini göremezsiniz.');
-  if (!ctx) return;
-  const { tenantId } = ctx;
+  // MUTASYON: kapı kaldırıldı
+  const tenantId = req.params['id'] as string;
 
   const tenant = await prisma.tenant.findUnique({
     where:  { id: tenantId },
@@ -165,9 +164,9 @@ export async function getTenantLegalInfo(req: Request, res: Response) {
 }
 
 export async function updateTenantLegalInfo(req: Request, res: Response) {
-  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun yasal bilgilerini güncelleyemezsiniz.');
-  if (!ctx) return;
-  const { payload, tenantId } = ctx;
+  // MUTASYON: kapı kaldırıldı
+  const tenantId = req.params['id'] as string;
+  const payload = { sub: 'mutasyon' };
 
   const parsed = validateRequest(UpdateLegalInfoSchema, req.body, res, {
     message: (e) => e.issues[0]?.message ?? 'Yasal bilgiler geçersiz.',

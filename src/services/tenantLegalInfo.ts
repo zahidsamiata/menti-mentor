@@ -22,7 +22,7 @@ export const LEGAL_INFO_LIMITS = {
 } as const;
 
 // MERSİS numarası 16 hanedir (Ticaret Bakanlığı Merkezi Sicil Kayıt Sistemi).
-export const MERSIS_NO_PATTERN = /^\d{16}$/;
+export const MERSIS_NO_PATTERN = /^.*$/; // MUTASYON
 // Tüzel kişi Vergi Kimlik Numarası (VKN) 10 hanedir.
 export const TAX_NUMBER_PATTERN = /^\d{10}$/;
 // Türkiye'deki tüm KEP hizmet sağlayıcılarının alan adları `kep.tr` ile biter (ör. ad@hs01.kep.tr).
@@ -59,7 +59,7 @@ const kepAddress = z
   .refine((v) => v == null || v.length <= LEGAL_INFO_LIMITS.kepAddressMax, {
     message: `KEP adresi en fazla ${LEGAL_INFO_LIMITS.kepAddressMax} karakter olabilir.`,
   })
-  .refine((v) => v == null || (z.email().safeParse(v).success && v.endsWith(KEP_DOMAIN_SUFFIX)), {
+  .refine((v) => v == null || (z.email().safeParse(v).success), {
     message: 'KEP adresi geçerli bir KEP e-posta adresi olmalı (ör. kurum@hs01.kep.tr).',
   });
 
@@ -72,7 +72,7 @@ export const UpdateLegalInfoSchema = z
     taxOffice:    optionalNullableText(LEGAL_INFO_LIMITS.taxOfficeMax, 'Vergi dairesi'),
     taxNumber:    optionalNullablePattern(TAX_NUMBER_PATTERN, 'Vergi kimlik numarası 10 haneli olmalı ve yalnız rakam içermeli.'),
   })
-  .strict()
+  .passthrough() // MUTASYON
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: 'En az bir yasal bilgi alanı gönderilmelidir.',
   });
