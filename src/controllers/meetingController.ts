@@ -71,6 +71,24 @@ function getCtx(req: RequestWithTenant): { userId: string; tenantId: string } | 
   return { userId, tenantId };
 }
 
+// AJ-113: randevu anında mentörün hâlâ randevu alabilir olduğunu doğrular — hesabı aktif
+// (User.isActive) ve istek kurumunda AKTİF MENTOR üyeliği var (TenantMembership.role, User.role
+// DEĞİL — bir kullanıcı farklı kurumlarda farklı rolde olabilir). Neden gerekli: müsaitlik blokları
+// mentör pasifleşince ya da kurumdan çıkarılınca pasifleşmiyor; yalnız bloklara bakan randevu ucu
+// bu mentöre eski bloklarla talep açtırıyordu. Üyelik kuralı komşu saveAvailability ile aynıdır
+// (müsaitliği yalnız istek kurumunda MENTOR üyeliği olan tanımlayabilir); burada ek olarak üyelik
+// ve hesap aktifliği de aranır. Aynı kurum sorgusu (userId_tenantId) — kurum dışı veri okunmaz.
+async function isBookableMentorInTenant(tenantId: string, mentorUserId: string): Promise<boolean> {
+  const membership = await prisma.tenantMembership.findUnique({
+    where:  { userId_tenantId: { userId: mentorUserId, tenantId } },
+    select: { role: true, isActive: true, user: { select: { isActive: true } } },
+  });
+  return !!membership
+    && membership.role === UserRole.MENTOR
+    && membership.isActive
+    && membership.user.isActive;
+}
+
 // KR-19: idari blok kontrolü — randevu oluşturma yolları (createMeeting/bookMeeting) hiçbir
 // zaman blockedPairs'ı okumuyordu, yönetici tarafından engellenmiş çift randevu alabiliyordu
 // (kod-inceleme-2026-09-24.md D4). Bu tek-kurum yardımcısını YALNIZ createMeeting kullanır:
@@ -512,11 +530,17 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   // startsAt/endsAt DB'de mutlak UTC anı olarak saklanır (doğru); yalnızca pencere
   // karşılaştırması blok saat dilimine çevrilir. Gün filtresini UTC'de yapmak da yanlış
   // olurdu (gece yarısı gün kayması) → tüm aktif bloklar çekilir, gün+saat blok diliminde eşlenir.
-  const availability = await prisma.availabilityBlock.findMany({
-    where: { tenantId, userId: mentorUserId, isActive: true },
-  });
+  // AJ-113: mentör pasif ya da istek kurumunda aktif MENTOR üyeliği yoksa eski blokları yok
+  // sayılır ve talep müsaitlik yanıtıyla AYNI 409'la durur — engel/üyelik/hesap durumu bu
+  // yanıttan ayırt edilemez (AJ-100 sırası: engel ancak talep gerçekten oluşacakken bakılır).
+  const [availability, mentorBookable] = await Promise.all([
+    prisma.availabilityBlock.findMany({
+      where: { tenantId, userId: mentorUserId, isActive: true },
+    }),
+    isBookableMentorInTenant(tenantId, mentorUserId),
+  ]);
 
-  const fitsAvailability = availability.some((blk) => {
+  const fitsAvailability = mentorBookable && availability.some((blk) => {
     const tz = blk.timezone || 'Europe/Istanbul';
     const s = zonedWeekdayAndMinutes(start, tz);
     const e = zonedWeekdayAndMinutes(end, tz);
