@@ -100,6 +100,9 @@ describe('AJ-30 · OAuth dönüş hata kodu hesabın durumunu ayırt ettirmez', 
     refreshTokenCreate.mockResolvedValue({});
     const url = await googleCallbackRedirect({ approvalStatus: 'APPROVED', isActive: true, authProvider: 'GOOGLE' });
     expect(url.searchParams.get('error')).toBeNull();
-    expect(url.searchParams.get('accessToken')).toBeTruthy();
+    // AJ-73: oturum artık adresteki anahtarla değil, yenileme çereziyle kurulur.
+    expect(url.searchParams.get('accessToken')).toBeNull();
+    expect(url.searchParams.get('isNewUser')).toBe('false');
+    expect(refreshTokenCreate).toHaveBeenCalledTimes(1);
   });
 });
