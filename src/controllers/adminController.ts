@@ -31,6 +31,7 @@ import {
   WEIGHT_CHANGE_AUDIT_MESSAGE,
 } from '../services/algorithmTuner.js';
 import { computeHealthMetrics } from '../services/retentionMetrics.service.js';
+import { findTenantMember } from '../services/tenantMember.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { wasRecentlyNudged, sendNudge, NUDGE_COOLDOWN_HOURS } from '../services/nudgeService.js';
 import { validateRequest } from '../middleware/validate.js';
@@ -154,18 +155,18 @@ export async function nudgeUser(req: RequestWithTenant, res: Response) {
   const targetId = req.params['id'] as string;
   const tenantId = req.tenant.tenantId;
 
-  // Tenant izolasyonu: hedef bu tenant'ın üyesi olmalı.
-  const target = await prisma.user.findFirst({
-    where: { id: targetId, tenantId },
-    select: { id: true, email: true, fullName: true, role: true, isActive: true },
-  });
-  if (!target || !target.isActive) {
+  // Tenant izolasyonu: hedef bu kurumda AKTİF üyeliği olan kişi olmalı. AJ-56: üyelikten aranır —
+  // ev-sahibi kurumu başka olan (misafir) üye de bu kurumun üyesidir; hatırlatma bu kuruma özgü bir
+  // işlemdir (kişi-genel alan yazmaz). Rol kontrolü bu kurumdaki üyelik rolüyle yapılır.
+  const member = await findTenantMember(tenantId, targetId, { id: true, email: true, fullName: true, isActive: true });
+  const target = member?.user;
+  if (!member || !target || !target.isActive) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Üye bulunamadı.' });
   }
   if (target.id === req.auth.userId) {
     return res.status(400).json({ error: 'GECERSIZ_HEDEF', message: 'Kendinize hatırlatma gönderemezsiniz.' });
   }
-  if (target.role === 'ADMIN') {
+  if (member.memberRole === 'ADMIN') {
     return res.status(400).json({ error: 'GECERSIZ_HEDEF', message: 'Yalnızca mentör/menti üyelere hatırlatma gönderilebilir.' });
   }
 
@@ -300,11 +301,13 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
   ];
   const nameById = new Map<string, string>();
   if (adminIds.length > 0) {
-    const admins = await prisma.user.findMany({
-      where: { id: { in: adminIds }, tenantId: req.tenant.tenantId },
-      select: { id: true, fullName: true },
+    // AJ-56: üyelikten — ev-sahibi kurumu başka olan (misafir) yöneticinin adı da çözülür; kurum
+    // filtresi üyelik satırında (yalnız bu kurumun üyeleri → çapraz-kurum isim sızmaz).
+    const admins = await prisma.tenantMembership.findMany({
+      where: { tenantId: req.tenant.tenantId, userId: { in: adminIds } },
+      select: { user: { select: { id: true, fullName: true } } },
     });
-    for (const a of admins) nameById.set(a.id, a.fullName);
+    for (const { user: a } of admins) nameById.set(a.id, a.fullName);
   }
 
   // #7 Aşama 1: Kişi-bazlı KALİTE PUANI (qualityMultiplier) — YALNIZ yönetici görür (KVKK, §5:
@@ -797,11 +800,10 @@ export async function rejectUser(req: RequestWithTenant, res: Response) {
 export async function getCoachingSuggestions(req: RequestWithTenant, res: Response) {
   const userId = req.params['id'] as string;
 
-  const user = await prisma.user.findFirst({
-    where: { id: userId, tenantId: req.tenant.tenantId },
-    select: { id: true, fullName: true },
-  });
-  if (!user) {
+  // AJ-56: üyelikten — misafir üye (ev-sahibi kurumu başka) için de bu kurumdaki koçluk önerisi
+  // okunur (salt okuma, kişi-genel alan yazmaz). Bu kurumda üyeliği olmayan → 404.
+  const member = await findTenantMember(req.tenant.tenantId, userId, { id: true });
+  if (!member) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
   }
 

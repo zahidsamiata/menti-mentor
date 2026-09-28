@@ -73,14 +73,19 @@ export async function computeHealthMetrics(
 
   // ── Pasif üye: onaylı aktif, X gündür giriş yok. Hiç giriş yapmamış (null) ise
   //    yalnızca kayıt tarihi de eşiği geçtiyse say (yeni üyeye ödemesiz süre tanı). ──
+  // AJ-56: mentorlessWhere gibi ÜYELİKTEN başlar — ev-sahibi kurumu başka olan (misafir) aktif üye de
+  // bu kurumun pasif üyesi sayılır; gösterilen rol bu kurumdaki üyelik rolüdür.
   const passiveWhere = {
     tenantId,
     isActive: true,
-    approvalStatus: 'APPROVED' as const,
-    OR: [
-      { lastLoginAt: { lt: passiveCutoff } },
-      { lastLoginAt: null, createdAt: { lt: passiveCutoff } },
-    ],
+    user: {
+      isActive: true,
+      approvalStatus: 'APPROVED' as const,
+      OR: [
+        { lastLoginAt: { lt: passiveCutoff } },
+        { lastLoginAt: null, createdAt: { lt: passiveCutoff } },
+      ],
+    },
   };
 
   const [
@@ -98,11 +103,11 @@ export async function computeHealthMetrics(
       orderBy: { user: { createdAt: 'asc' } }, // en uzun bekleyen üstte
       take: DRILLDOWN_CAP,
     }),
-    prisma.user.count({ where: passiveWhere }),
-    prisma.user.findMany({
+    prisma.tenantMembership.count({ where: passiveWhere }),
+    prisma.tenantMembership.findMany({
       where: passiveWhere,
-      select: { id: true, fullName: true, role: true, lastLoginAt: true, createdAt: true },
-      orderBy: { lastLoginAt: { sort: 'asc', nulls: 'first' } }, // en pasif üstte
+      select: { role: true, user: { select: { id: true, fullName: true, lastLoginAt: true, createdAt: true } } },
+      orderBy: { user: { lastLoginAt: { sort: 'asc', nulls: 'first' } } }, // en pasif üstte
       take: DRILLDOWN_CAP,
     }),
     // Ölü eşleşme adayları: X gün+ önce onaylanmış opt-in'ler
@@ -144,6 +149,9 @@ export async function computeHealthMetrics(
     },
     mentorlessMenti: { count: mentorlessCount, items: mentorlessItems.map((m) => m.user) },
     deadMatches: { count: deadAll.length, items: deadItems },
-    passiveMembers: { count: passiveCount, items: passiveItems },
+    passiveMembers: {
+      count: passiveCount,
+      items: passiveItems.map(({ role, user }) => ({ ...user, role })),
+    },
   };
 }
