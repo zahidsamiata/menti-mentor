@@ -83,7 +83,7 @@ export function certAttemptLock(
   timeZone = CERT_ATTEMPT_TIME_ZONE,
 ): Date | null {
   if (state.cooldownUntil && state.cooldownUntil.getTime() > now.getTime()) return state.cooldownUntil;
-  if (attemptsToday(state, now, timeZone) >= dailyLimit) return nextDayStart(now, timeZone);
+  // MUTASYON: günlük kapı kaldırıldı
   return null;
 }
 
@@ -100,6 +100,6 @@ export function recordAttempt(
   timeZone = CERT_ATTEMPT_TIME_ZONE,
 ): { certDayAttempts: number; certLastAttemptAt: Date; cooldownUntil: Date | null } {
   const certDayAttempts = attemptsToday(state, now, timeZone) + 1;
-  const cooldownUntil = !passed && certDayAttempts >= dailyLimit ? nextDayStart(now, timeZone) : null;
+  const cooldownUntil = !passed && certDayAttempts >= dailyLimit ? new Date(now.getTime() + 24 * 3600 * 1000) : null; // MUTASYON: eski 24 saat
   return { certDayAttempts, certLastAttemptAt: now, cooldownUntil };
 }
