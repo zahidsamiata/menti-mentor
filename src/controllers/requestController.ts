@@ -53,6 +53,9 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
     // KR-19b: idari blok eşleşme isteğini de durdurur (önceden yalnız startConversation
     // kontrol ediyordu — K5-Y2 denetimi). startConversation ile AYNI kural: iki tarafın
     // tenant'ı, yön bağımsız. Varlık ifşası yok: jenerik 403, blok bilgisi sızdırılmaz.
+    // Varsayım (AJ-100): istek kurumu = talep sahibinin ana kurumu. Neden güvenli: requester
+    // yukarıda `tenantId: istek kurumu` ile bulundu (yalnız üye olan 404 alır), ana kurumu ayrıca
+    // okunmaz. Randevu talebi (bookMeeting) bunu sorguyla zorlamadığı için orada ayrıca okunur.
     if (await isPairBlockedInTenants([req.tenant.tenantId, target.tenantId], requester.id, target.id)) {
       return res.status(403).json({
         error: 'ISLEM_YAPILAMIYOR',

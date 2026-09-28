@@ -158,6 +158,9 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   // randevu talebi (meetingController.bookMeeting, AJ-54) ve liste sıralaması
   // (matching.ts buildListBlockedSet — havuz kurumlarının blokları dahil) için de geçerlidir.
   // Varlık ifşası YOK: blok bilgisi kullanıcıya sızdırılmaz, jenerik hata döner.
+  // Varsayım (AJ-100): istek kurumu = mentinin ana kurumu. Neden güvenli: menti yukarıda
+  // `tenantId: istek kurumu` ile bulundu (yalnız üye olan menti 404 alır), ana kurumu ayrıca
+  // okunmaz. Randevu talebi (bookMeeting) bunu sorguyla zorlamadığı için orada ayrıca okunur.
   if (await isPairBlockedInTenants([tenantId, mentor.tenantId], mentiId, mentor.id)) {
     return res.status(403).json({
       error: 'ISLEM_YAPILAMIYOR',
