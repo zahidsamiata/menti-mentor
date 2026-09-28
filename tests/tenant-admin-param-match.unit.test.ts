@@ -14,6 +14,7 @@ import type { Request, Response } from 'express';
 const tenantUpdate     = vi.fn();
 const tenantFindUnique = vi.fn();
 const userFindMany     = vi.fn();
+const membershipFindMany = vi.fn();
 
 vi.mock('../src/db.js', () => ({
   prisma: {
@@ -22,6 +23,8 @@ vi.mock('../src/db.js', () => ({
       findUnique: (...a: unknown[]) => tenantFindUnique(...a),
     },
     user: { findMany: (...a: unknown[]) => userFindMany(...a) },
+    // AJ-114: blockPair iki kişiyi kurum üyeliğinden doğrular.
+    tenantMembership: { findMany: (...a: unknown[]) => membershipFindMany(...a) },
   },
 }));
 
@@ -111,6 +114,7 @@ describe('AJ-44 — adminSettings uçları: URL kurumu ≠ oturum kurumu → 403
     tenantUpdate.mockReset();
     tenantFindUnique.mockReset();
     userFindMany.mockReset();
+    membershipFindMany.mockReset();
   });
 
   for (const c of cases) {
@@ -123,6 +127,7 @@ describe('AJ-44 — adminSettings uçları: URL kurumu ≠ oturum kurumu → 403
       expect(tenantUpdate).not.toHaveBeenCalled();
       expect(tenantFindUnique).not.toHaveBeenCalled();
       expect(userFindMany).not.toHaveBeenCalled();
+      expect(membershipFindMany).not.toHaveBeenCalled();
     });
   }
 
