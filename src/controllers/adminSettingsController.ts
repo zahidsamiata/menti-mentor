@@ -160,11 +160,18 @@ export async function blockPair(req: Request, res: Response) {
     });
   }
 
-  // Her iki kullanıcının aynı tenant'a ait olduğunu doğrula
-  const users = await prisma.user.findMany({
-    where: { id: { in: [fromUserId, toUserId] }, tenantId },
-    select: { id: true, fullName: true },
+  // Her iki kullanıcının BU kurumda AKTİF üyeliği olduğunu doğrula (AJ-114).
+  // Neden üyelik, `User.tenantId` değil: seçim listesi (GET /api/admin/users) kurum üyeliğinden
+  // gelir; ana kurumu başka olan misafir üye listede görünür ama `User.tenantId` ile aranınca
+  // "bu kurumda bulunamadı" dönüyordu. Eşleştirme de bu kurumun engel listesini misafir üyede
+  // okuyor (services/blockList.ts) — engel koyabilmek aynı kaynaktan doğrulanmalı. Kurum-içi
+  // üyelik kaynağı `TenantMembership`dir (CLAUDE.md "Veri Modeli"); pasif üyelik sayılmaz.
+  // `fullName` iç içe `user` seçiminden gelir (üst düzey RLS yalnız üyelik sorgusuna uygulanır).
+  const memberships = await prisma.tenantMembership.findMany({
+    where:  { tenantId, isActive: true, userId: { in: [fromUserId, toUserId] } },
+    select: { user: { select: { id: true, fullName: true } } },
   });
+  const users = memberships.map((m) => m.user);
 
   if (users.length !== 2) {
     return res.status(404).json({
