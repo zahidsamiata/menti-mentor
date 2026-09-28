@@ -1,7 +1,8 @@
 /**
  * Sertifika deneme döngüsü (sınav seviyesi) + ağırlıklı tekrar.
  *
- * - 2 başarısız denemeden sonra 24s bekleme (cooldown).
+ * - Türkiye takvim gününde en fazla 2 deneme (madde 158 · I-08); günün 2. denemesi de
+ *   kalınırsa mola ertesi gün 00:00'a kadar (eski "2 başarısızda 24 saat" kuralının yerine).
  * - Bekleme sırasında yeni deneme COOLDOWN_ACTIVE ile reddedilir (sayaç artmaz).
  * - Başarısız denemede geçilemeyen konular certWrongTopics'e yazılır.
  * - getCertificationQuestions(priorityTopics) yanlış konuları başa alır (ağırlık).
@@ -19,6 +20,7 @@ import {
 } from '../src/services/certification.service.js';
 import type { Tenant } from '@prisma/client';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
 const SCORE_BY_KEY: Record<string, number> = { A: 3, B: 2, C: 1, D: 0 };
 
 async function createCertQuestion(code: string, topic: string, variant = 'A') {
@@ -91,10 +93,10 @@ describe('Sertifika deneme döngüsü', () => {
   it('cooldown dolunca yeni deneme geçerse sertifika + temizlik', async () => {
     await evaluateCertification(mentorId, tenant.id, failAll);
     await evaluateCertification(mentorId, tenant.id, failAll); // cooldown set
-    // Beklemeyi geçmişe çek (süre doldu senaryosu)
+    // Beklemeyi geçmişe çek (süre doldu senaryosu): mola bitti + son deneme dün.
     await testPrisma.tenantMembership.update({
       where: { userId_tenantId: { userId: mentorId, tenantId: tenant.id } },
-      data:  { cooldownUntil: new Date(Date.now() - 1000) },
+      data:  { cooldownUntil: new Date(Date.now() - 1000), certLastAttemptAt: new Date(Date.now() - DAY_MS) },
     });
 
     const r = await evaluateCertification(mentorId, tenant.id, passAll);
@@ -106,9 +108,9 @@ describe('Sertifika deneme döngüsü', () => {
     expect(m!.certWrongTopics).toEqual([]); // temizlendi
   });
 
-  it('config: attemptsBeforeCooldown ve cooldownHours tek kaynakta', () => {
+  it('config: günlük hak ve gün saat dilimi tek kaynakta', () => {
     expect(CERT_CONFIG.attemptsBeforeCooldown).toBe(2);
-    expect(CERT_CONFIG.cooldownHours).toBe(24);
+    expect(CERT_CONFIG.attemptDayTimeZone).toBe('Europe/Istanbul');
   });
 
   it('ağırlıklı tekrar: yanlış konular getCertificationQuestions listesinin başında', async () => {
@@ -230,5 +232,104 @@ describe('Tekrar sınavda yanlış konu farklı sahneyle gelir (HTTP)', () => {
       .set(tenantHeaders(tenant.id, otherToken))
       .expect(200);
     expect(res.body.cooldownUntil).not.toBeNull();
+  });
+});
+
+// ── I-08 (madde 158): Türkiye takvim gününde en fazla 2 deneme ─────────────────
+// Günlük sayaç TenantMembership.certDayAttempts + certLastAttemptAt; gün = Europe/Istanbul.
+describe('I-08 · günde en fazla 2 deneme (HTTP + servis)', () => {
+  let tenant: Tenant;
+  let mentorId: string;
+  let token: string;
+
+  const where = () => ({ userId_tenantId: { userId: mentorId, tenantId: tenant.id } });
+  const membership = () => testPrisma.tenantMembership.findUnique({ where: where() });
+  const certify = (answers: typeof failAll) =>
+    agent().post('/api/scoring/certify').set(tenantHeaders(tenant.id, token)).send({ answers });
+
+  /** İstanbul'da ertesi günün 00:00'ı (UTC+3, yaz saati yok). */
+  function nextIstanbulMidnight(from: Date): string {
+    const ist = new Date(from.getTime() + 3 * 60 * 60 * 1000);
+    return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1) - 3 * 60 * 60 * 1000)
+      .toISOString();
+  }
+
+  beforeEach(async () => {
+    await cleanDb();
+    await seedPool();
+    tenant = await createTenant();
+    const mentor = await createMentor(tenant.id);
+    mentorId = mentor.id;
+    token = (await loginAs(agent(), mentor.email, mentor.rawPassword)).accessToken;
+  });
+
+  it('aynı gün 3. deneme 409 COOLDOWN_ACTIVE; mola ertesi gün 00:00 İstanbul; sayaç artmaz', async () => {
+    const first = await certify(failAll).expect(200);
+    expect(first.body.cooldownUntil).toBeNull();
+    const second = await certify(failAll).expect(200);
+    const expectedEnd = nextIstanbulMidnight(new Date());
+    expect(second.body.cooldownUntil).toBe(expectedEnd);
+
+    const third = await certify(passAll).expect(409);
+    expect(third.body.error).toBe('COOLDOWN_ACTIVE');
+    expect(third.body.message).toMatch(/günde en fazla 2 deneme/);
+    expect(third.body.cooldownUntil).toBe(expectedEnd);
+
+    const m = await membership();
+    expect(m!.certAttempts).toBe(2);
+    expect(m!.certDayAttempts).toBe(2);
+    expect(m!.isCertified).toBe(false);
+  });
+
+  it('geçen deneme de günlük hakka sayılır: başarısız + geçti → aynı gün 3. deneme reddedilir', async () => {
+    await certify(failAll).expect(200);
+    const passed = await certify(passAll).expect(200);
+    expect(passed.body.passed).toBe(true);
+    expect(passed.body.cooldownUntil).toBeNull(); // geçene mola yazılmaz
+
+    const third = await certify(failAll).expect(409);
+    expect(third.body.error).toBe('COOLDOWN_ACTIVE');
+    const m = await membership();
+    expect(m!.certAttempts).toBe(2);
+    expect(m!.isCertified).toBe(true); // 3. deneme sertifikayı düşüremedi
+    // Soru ucu da kilidi gösterir (sayfa yeniden açılınca AJ-60 metni).
+    const exam = await agent().get('/api/scoring/certification/questions')
+      .set(tenantHeaders(tenant.id, token)).expect(200);
+    expect(exam.body.cooldownUntil).toBe(nextIstanbulMidnight(new Date()));
+  });
+
+  it('son deneme dünse sayaç sıfırlanır: bugün 1. deneme mola başlatmaz (eski 24s kuralı başlatırdı)', async () => {
+    await certify(failAll).expect(200);
+    // Dünkü tek deneme — eski kuralda bugünkü deneme "2. başarısız" sayılıp 24 saat mola verirdi.
+    await testPrisma.tenantMembership.update({
+      where: where(), data: { certLastAttemptAt: new Date(Date.now() - DAY_MS - 60_000) },
+    });
+    const today = await certify(failAll).expect(200);
+    expect(today.body.attempts).toBe(2);
+    expect(today.body.cooldownUntil).toBeNull();
+    const m = await membership();
+    expect(m!.certDayAttempts).toBe(1);
+  });
+
+  it('I-08 öncesi yazılmış 24 saatlik mola (günlük alanlar boş) aynen geçerli', async () => {
+    const legacyEnd = new Date(Date.now() + 20 * 60 * 60 * 1000);
+    await testPrisma.tenantMembership.update({
+      where: where(), data: { certAttempts: 2, cooldownUntil: legacyEnd, certDayAttempts: null, certLastAttemptAt: null },
+    });
+    const res = await certify(passAll).expect(409);
+    expect(res.body.cooldownUntil).toBe(legacyEnd.toISOString());
+  });
+
+  it('eşzamanlı iki gönderim günün son hakkını aşamaz (biri değerlendirilir, biri reddedilir)', async () => {
+    await evaluateCertification(mentorId, tenant.id, failAll); // bugün 1
+    const results = await Promise.all([
+      evaluateCertification(mentorId, tenant.id, failAll),
+      evaluateCertification(mentorId, tenant.id, failAll),
+    ]);
+    const reasons = results.map((r) => r.failReason).sort();
+    expect(reasons).toEqual(['BELOW_THRESHOLD', 'COOLDOWN_ACTIVE']);
+    const m = await membership();
+    expect(m!.certAttempts).toBe(2);
+    expect(m!.certDayAttempts).toBe(2);
   });
 });

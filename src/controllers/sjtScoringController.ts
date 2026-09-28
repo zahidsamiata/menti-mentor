@@ -13,7 +13,9 @@ import {
   setCertificationTopic,
   getTopicsOverview,
   CertTopicError,
+  CERT_CONFIG,
 } from '../services/certification.service.js';
+import { certAttemptLock } from '../services/certAttemptWindow.js';
 import { validateRequest } from '../middleware/validate.js';
 import { rejectIfCallerNotApproved } from '../middleware/approvalGate.js';
 
@@ -181,7 +183,10 @@ export async function certQuestionsHandler(req: RequestWithTenant, res: Response
   }
   const membership = await prisma.tenantMembership.findUnique({
     where:  { userId_tenantId: { userId: req.auth.userId, tenantId: req.tenant.tenantId } },
-    select: { certWrongTopics: true, certAttempts: true, cooldownUntil: true },
+    select: {
+      certWrongTopics: true, certAttempts: true, cooldownUntil: true,
+      certDayAttempts: true, certLastAttemptAt: true,
+    },
   });
   const retryTopics = membership?.certWrongTopics ?? [];
   const questions = await getCertificationQuestions(
@@ -189,9 +194,12 @@ export async function certQuestionsHandler(req: RequestWithTenant, res: Response
     retryTopics,
     membership?.certAttempts ?? 0,
   );
-  // Süresi geçmiş mola "yok" sayılır (evaluateCertification ile aynı kural).
-  const cooldownEnd = membership?.cooldownUntil;
-  const cooldownUntil = cooldownEnd && cooldownEnd.getTime() > Date.now() ? cooldownEnd.toISOString() : null;
+  // Kilit kuralı evaluateCertification ile AYNI fonksiyondan (certAttemptLock): süren mola
+  // ya da bugünkü hak dolmuşsa ertesi gün 00:00 (madde 158); süresi geçmiş mola "yok" sayılır.
+  const lockEnd = membership
+    ? certAttemptLock(membership, new Date(), CERT_CONFIG.attemptsBeforeCooldown)
+    : null;
+  const cooldownUntil = lockEnd ? lockEnd.toISOString() : null;
   return res.status(200).json({ questions, retryTopics, cooldownUntil });
 }
 
@@ -255,7 +263,7 @@ export async function certifyHandler(req: RequestWithTenant, res: Response) {
   if (result.failReason === 'COOLDOWN_ACTIVE') {
     return res.status(409).json({
       error: 'COOLDOWN_ACTIVE',
-      message: 'Bekleme süresi henüz dolmadı; yeni deneme için lütfen bekleyin.',
+      message: 'Bekleme süresi henüz dolmadı (günde en fazla 2 deneme); yeni deneme için lütfen bekleyin.',
       cooldownUntil: result.cooldownUntil,
     });
   }
