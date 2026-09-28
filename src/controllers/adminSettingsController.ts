@@ -164,7 +164,7 @@ export async function blockPair(req: Request, res: Response) {
 
 // ─── GET /api/tenants/:id/block-pairs ────────────────────────────────────────
 // E-3d: admin panelinde koyduğu engelleri GÖREBİLSİN diye — `blockPair` ile
-// aynı auth zinciri (authenticateTenantAdmin) + tenant eşleşmesi. `pairId`
+// aynı kapı (authenticateTenantAdminForParam: yönetici kimliği + URL `:id` = oturum kurumu). `pairId`
 // (bkz. services/blockList.ts pairKey) DELETE ucunda kaydı bulmak için kullanılır.
 
 export async function listBlockedPairs(req: Request, res: Response) {
