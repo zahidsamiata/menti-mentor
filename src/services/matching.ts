@@ -501,7 +501,7 @@ export async function rankMentorsForMenti(args: {
       mentorVisibilityEnabled: true,
       // AJ-66 · KARAR 4 (sertifika rozeti herkese görünür, yalnız pozitif): sertifika kişi-GENELİDİR —
       // mentör HERHANGİ bir kurumdaki üyeliğinde sertifikalıysa sertifikalı sayılır; yönetici havuzu
-      // rozetiyle AYNI kural (adminController listMembers `memberships` select'i).
+      // rozetiyle AYNI kural (adminController adminListUsers `memberships` select'i).
       // ⚠️ İÇ İÇE select KASITLI: üst düzey prisma.tenantMembership sorgusuna db.ts RLS eklentisi
       // istek kurumunun tenantId'sini enjekte eder → paylaşımlı havuzdaki başka kurum mentörünün
       // (sertifikası kendi kurumundaki üyelikte durur) rozeti kaybolurdu. Yalnız varlık okunur (id).

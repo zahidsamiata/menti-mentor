@@ -2,7 +2,7 @@
  * AJ-66 · Menti mentör kartında "Sertifikalı ✓" — DB'siz birim.
  *
  * KARAR 4 (tasarim-kararlari-admin.md): sertifika rozeti HERKESE görünür, yalnız pozitif.
- * Kural yönetici havuzu rozetiyle AYNI (adminController listMembers): sertifika kişi-GENELİDİR —
+ * Kural yönetici havuzu rozetiyle AYNI (adminController adminListUsers): sertifika kişi-GENELİDİR —
  * mentörün herhangi bir kurumdaki üyeliği sertifikalıysa isCertified=true.
  *
  * Güvence altına alınanlar:
