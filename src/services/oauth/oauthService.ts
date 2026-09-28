@@ -28,6 +28,7 @@ import { recordSignupConsent } from '../consentService.js';
 import { hashRefreshToken } from '../refreshToken.js';
 import type { OAuthCallbackResult, OAuthStatePayload, OAuthUserProfile } from './oauthTypes.js';
 import { USER_CONTACT_SELECT } from '../../utils/userSelect.js';
+import { logger } from '../logger.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 
@@ -147,7 +148,12 @@ async function handleNewUser(
   // Admin "onaya bak" bildirimi yalnız onay bekleyen kayıtta (form kaydıyla aynı).
   // Arka planda — giriş akışını yavaşlatmamalı.
   if (approvalStatus === 'PENDING') {
-    void notifyAdmins(tenant, newUser.fullName, state.role);
+    // Yakalanmayan ret (ör. DB kilitlenmesi) Node'da süreci düşürür → her zaman yakala.
+    void notifyAdmins(tenant, newUser.fullName, state.role).catch((err) =>
+      void logger.error('SYSTEM', 'OAuth kayıt yönetici bildirimi gönderilemedi', {
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
   }
 
   const { accessToken, refreshToken } = await issueTokenPair(
