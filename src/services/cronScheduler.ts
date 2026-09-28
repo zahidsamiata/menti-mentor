@@ -268,8 +268,16 @@ export async function runFeedbackReminderCron(): Promise<{ sent: number }> {
 
     let sent = 0;
     for (const m of pendingMeetings) {
-      await sendFeedbackReminderEmail({ toEmail: m.mentor.email, recipientName: m.mentor.fullName, meetingId: m.id, scheduledAt: m.startsAt }).catch(() => null);
-      await sendFeedbackReminderEmail({ toEmail: m.menti.email,  recipientName: m.menti.fullName,  meetingId: m.id, scheduledAt: m.startsAt }).catch(() => null);
+      const mentorOk = await sendFeedbackReminderEmail({ toEmail: m.mentor.email, recipientName: m.mentor.fullName, meetingId: m.id, scheduledAt: m.startsAt }).catch(() => false);
+      const mentiOk  = await sendFeedbackReminderEmail({ toEmail: m.menti.email,  recipientName: m.menti.fullName,  meetingId: m.id, scheduledAt: m.startsAt }).catch(() => false);
+      // AJ-58 (U-16 deseni, taslak kurum cron'u ile aynı): iki taraftan hiçbirine mail GERÇEKTEN
+      // gitmediyse feedbackPrompted YAZILMAZ ve sayılmaz — hatırlatma boşa yakılmasın.
+      // Yeniden deneme sınırlıdır: cron günde bir koşar ve sorgu yalnız son
+      // FEEDBACK_REMINDER_DAYS_MAX gün içinde biten toplantıları alır → en fazla ~7 deneme.
+      if (!mentorOk && !mentiOk) {
+        void logger.warn('EMAIL', `Geri bildirim hatırlatması hiçbir tarafa gönderilemedi — işaretlenmedi: ${m.id}`);
+        continue;
+      }
       await prisma.meeting.update({ where: { id: m.id }, data: { feedbackPrompted: true } });
       sent++;
     }
