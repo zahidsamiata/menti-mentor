@@ -61,6 +61,12 @@ function stats(overrides: Partial<KpiStats['feedback']> = {}): KpiStats {
       ...overrides,
     },
     activeJobListings: 0,
+    completion: {
+      registration: { completed: 9, eligible: 11, percent: 82, suppressed: false },
+      disc: { completed: 0, eligible: 0, percent: null, suppressed: true },
+      completedMeetings: 6,
+      minGroupSize: 3,
+    },
   };
 }
 

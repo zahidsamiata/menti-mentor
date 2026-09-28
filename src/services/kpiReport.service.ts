@@ -10,6 +10,7 @@
  * kişi bazlı puan bu servisten hiçbir zaman dönmez.
  */
 
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { applyKAnonymity, K_ANONYMITY_THRESHOLD } from './mask.js';
 import type { CsvCell } from './csv.js';
@@ -23,12 +24,61 @@ export interface KpiNpsPhase {
   suppressed: boolean;
 }
 
+/**
+ * AJ-78: bir tamamlama oranı (pay/payda). k-anonimlik PAY ve PAYDA için ayrı ayrı uygulanır:
+ * payda eşik altındaysa küçük grupta oran kişiyi ele verir; pay eşik altındaysa ("3 kişiden 1'i")
+ * yine 1-2 kişinin durumu okunur. İkisinden biri eşik altında → sayılar 0, yüzde null.
+ */
+export interface KpiCompletionRate {
+  /** Tamamlayan kişi sayısı. Gizliyse 0. */
+  completed: number;
+  /** Paydadaki kişi sayısı (kurumda aktif mentör + menti üyesi). Gizliyse 0. */
+  eligible: number;
+  /** Tam sayıya yuvarlı yüzde. Gizliyse null. */
+  percent: number | null;
+  suppressed: boolean;
+}
+
+export interface KpiCompletion {
+  /** "Kaydını tamamlayan üye": onaylı (approvalStatus APPROVED) aktif katılımcı / aktif katılımcı. */
+  registration: KpiCompletionRate;
+  /** DISC değerlendirmesini bitiren (discType dolu) aktif katılımcı / aktif katılımcı. */
+  disc: KpiCompletionRate;
+  /** Kurumda COMPLETED durumundaki görüşme sayısı (kişi değil olay sayımı — aktif eşleşme gibi gizlenmez). */
+  completedMeetings: number;
+  /** Ekran "en az N kişi" metnini sabitten kurabilsin diye. */
+  minGroupSize: number;
+}
+
+/**
+ * Tamamlama oranlarının paydası: kurumdaki aktif MENTOR/MENTI üyelikleri (kurum-içi rol,
+ * TenantMembership.role — CLAUDE.md "Veri Modeli"). Yönetici üyelikleri katılımcı değildir:
+ * DISC ve kayıt akışını yaşamaz, paydaya girerse oranları anlamsız biçimde düşürür/yükseltir.
+ */
+const COMPLETION_PARTICIPANT_ROLES = ['MENTOR', 'MENTI'] as const;
+
+/** Pay/paydadan k-anonim tamamlama oranı (saf — DB yok). */
+export function buildCompletionRate(rawCompleted: number, rawEligible: number): KpiCompletionRate {
+  const eligible = applyKAnonymity(rawEligible);
+  const completed = applyKAnonymity(rawCompleted);
+  if (eligible.suppressed || completed.suppressed) {
+    return { completed: 0, eligible: 0, percent: null, suppressed: true };
+  }
+  return {
+    completed: completed.count,
+    eligible: eligible.count,
+    percent: Math.round((completed.count * 100) / eligible.count),
+    suppressed: false,
+  };
+}
+
 export interface KpiStats {
   totalActiveUsers: number;
   usersByRole: Record<string, number>;
   matching: { activeMatches: number; pendingOptIns: number; rematchPriorityUsers: number };
   feedback: { totalFeedbackLogs: number; npsByPhase: KpiNpsPhase[]; successRate: number | null };
   activeJobListings: number;
+  completion: KpiCompletion;
 }
 
 export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
@@ -41,6 +91,10 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
     avgNpsByPhase,
     rematchUsers,
     activeJobListings,
+    participants,
+    approvedParticipants,
+    discCompletedParticipants,
+    completedMeetings,
   ] = await Promise.all([
     // AJ-01: kurum-içi sayım TenantMembership.role üzerinden (CLAUDE.md "Veri Modeli") —
     // User.role değil. Bir kullanıcı bu kurumda farklı, başka kurumda farklı rolde olabilir.
@@ -82,6 +136,20 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
 
     // Aktif iş ilanları
     prisma.jobListing.count({ where: { tenantId, isActive: true } }),
+
+    // AJ-78: tamamlama oranları — sorgular üyelikten başlar (AJ-40: db.ts RLS eklentisi üst düzey
+    // `user` okumalarına ev kurumunu enjekte eder; misafir üye ancak üyelik tablosundan doğru sayılır).
+    // Payda: aktif katılımcı üyeler.
+    prisma.tenantMembership.count({ where: participantWhere(tenantId) }),
+    // "Kaydını tamamlayan" = onaylı aktif (retentionMetrics.service.ts arz-talep sayımıyla aynı ölçüt).
+    prisma.tenantMembership.count({ where: participantWhere(tenantId, { approvalStatus: 'APPROVED' }) }),
+    // DISC tamamlama = baskın tip yazılmış (discType dolu): DISC'i bitiren her yol (onboardingController
+    // submitDisc, adaptiveTestEngine, temperamentController) yazar; platform kurum analizi de aynı ölçüt.
+    // `discAssessmentCompletedAt` KULLANILMAZ: yalnız onay bekleyen (PENDING) kullanıcıda, yönetici
+    // bildirimi için dolar (questionController) — davetle onaylı gelen kullanıcıda hiç dolmaz.
+    prisma.tenantMembership.count({ where: participantWhere(tenantId, { discType: { not: null } }) }),
+    // Tamamlanan görüşme — kurum kapsamlı (görüşmenin kendi tenantId'si).
+    prisma.meeting.count({ where: { tenantId, status: 'COMPLETED' } }),
   ]);
 
   // V-05 k-anonimlik: eşiğin altındaki yanıta dayanan ortalama gösterilmez (küçük kurumda
@@ -110,6 +178,22 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
     matching: { activeMatches, pendingOptIns, rematchPriorityUsers: rematchUsers },
     feedback: { totalFeedbackLogs, npsByPhase, successRate },
     activeJobListings,
+    completion: {
+      registration: buildCompletionRate(approvedParticipants, participants),
+      disc: buildCompletionRate(discCompletedParticipants, participants),
+      completedMeetings,
+      minGroupSize: K_ANONYMITY_THRESHOLD,
+    },
+  };
+}
+
+/** Kurumdaki aktif katılımcı üyelikleri; `user` koşulu ek süzgeçle (onay, DISC) daraltılabilir. */
+function participantWhere(tenantId: string, userFilter: Prisma.UserWhereInput = {}): Prisma.TenantMembershipWhereInput {
+  return {
+    tenantId,
+    isActive: true,
+    role: { in: [...COMPLETION_PARTICIPANT_ROLES] },
+    user: { isActive: true, ...userFilter },
   };
 }
 
@@ -119,6 +203,11 @@ export async function computeKpiStats(tenantId: string): Promise<KpiStats> {
 export const SUPPRESSED_CELL_TEXT = `gizli (<${K_ANONYMITY_THRESHOLD})`;
 const SUPPRESSED_NOTE =
   `Gizlilik için en az ${K_ANONYMITY_THRESHOLD} yanıt gerekir; kişilerin puanı tek tek okunamasın diye gösterilmiyor.`;
+
+const SUPPRESSED_GROUP_NOTE =
+  `Gizlilik için hem grupta hem tamamlayanlarda en az ${K_ANONYMITY_THRESHOLD} kişi gerekir; kişilerin durumu tek tek okunamasın diye gösterilmiyor.`;
+const REGISTRATION_DEFINITION = 'Aktif mentör ve mentilerden hesabı onaylanmış olanlar (onay kullanıcı düzeyindedir — kuruma özel değildir).';
+const DISC_DEFINITION = 'Aktif mentör ve mentilerden DISC değerlendirmesini bitirenler.';
 
 export const KPI_CSV_HEADER = ['Bölüm', 'Metrik', 'Değer', 'Açıklama'] as const;
 
@@ -176,6 +265,18 @@ export function buildKpiReportRows(stats: KpiStats, meta: KpiReportMeta): CsvCel
   );
 
   add('İş ilanları', 'Aktif iş ilanı', stats.activeJobListings);
+
+  // AJ-78: tamamlama oranları — gizli hücre NPS'teki gibi açık "gizli" metniyle (0 ile karışmasın).
+  const addRate = (metric: string, rate: KpiCompletionRate, definition: string) => {
+    if (rate.suppressed) {
+      add('Tamamlama', metric, SUPPRESSED_CELL_TEXT, SUPPRESSED_GROUP_NOTE);
+    } else {
+      add('Tamamlama', metric, rate.percent ?? '', `${rate.completed}/${rate.eligible} kişi. ${definition}`);
+    }
+  };
+  addRate('Kaydını tamamlayan üye (%)', stats.completion.registration, REGISTRATION_DEFINITION);
+  addRate('DISC tamamlama (%)', stats.completion.disc, DISC_DEFINITION);
+  add('Tamamlama', 'Tamamlanan görüşme', stats.completion.completedMeetings);
   return rows;
 }
 
