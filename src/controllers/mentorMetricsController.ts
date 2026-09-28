@@ -10,6 +10,7 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { MeetingStatus } from '@prisma/client';
+import { maskNpsSample } from '../services/mask.js';
 
 // "Aktif menti" = mentörle iptal/bekleme dışı (gerçekleşen ya da planlanan) görüşmesi olan menti.
 const ACTIVE_MENTI_STATUSES = [
@@ -22,7 +23,12 @@ export interface MentorMetricsResponse {
   pendingRequests: number;
   completedMeetings: number;
   activeMentis: number;
+  /** AJ-99: yanıt sayısı k-anonimlik eşiğinin altındaysa null (npsSuppressed=true). */
   avgNps: number | null;
+  /** AJ-99: ortalama k-anonimlik gereği gizlendi mi (ekran "gizli (<N yanıt)" gösterir). */
+  npsSuppressed: boolean;
+  /** AJ-99: gizleme eşiği (K_ANONYMITY_THRESHOLD) — ekran metni sabitten kurulsun diye. */
+  npsMinSampleSize: number;
   totalMentoringHours: number;
   isCertified: boolean;
   activeMentees: { id: string; fullName: string }[];
@@ -33,20 +39,27 @@ export interface MentorMetricsResponse {
  * - totalMentoringHours: dakika toplamı saate yuvarlanır (P-11). Veri yoksa 0.
  * - isCertified: üyelik yoksa false (P-12).
  * - activeMentis sayısı ≡ activeMentees liste uzunluğu (P-13; ikisi de aynı groupBy'dan gelir).
+ * - avgNps: AJ-99 — kurum ekranlarındaki k-anonimlik kuralı (maskNpsSample, eşik 3) burada da
+ *   uygulanır. Tek-iki mentisi olan mentör ortalamadan o kişinin puanını birebir okuyabilirdi;
+ *   puanı kimin verdiği bilinirse menti dürüst puan vermekten çekinir. Yanıt sayısı yanıta girmez.
  */
 export function buildMentorMetricsResponse(input: {
   pendingRequests: number;
   completedMeetings: number;
   activeMentees: { id: string; fullName: string }[];
   avgNpsRaw: number | null;
+  npsSampleSize: number;
   totalDurationMin: number | null;
   isCertified: boolean;
 }): MentorMetricsResponse {
+  const nps = maskNpsSample({ avgNps: input.avgNpsRaw, sampleSize: input.npsSampleSize });
   return {
     pendingRequests: input.pendingRequests,
     completedMeetings: input.completedMeetings,
     activeMentis: input.activeMentees.length,
-    avgNps: input.avgNpsRaw !== null ? Math.round(input.avgNpsRaw) : null,
+    avgNps: nps.avgNps !== null ? Math.round(nps.avgNps) : null,
+    npsSuppressed: nps.suppressed,
+    npsMinSampleSize: nps.minSampleSize,
     totalMentoringHours: Math.round((input.totalDurationMin ?? 0) / 60),
     isCertified: input.isCertified,
     activeMentees: input.activeMentees,
@@ -98,6 +111,7 @@ export async function getMentorDashboardMetrics(req: RequestWithTenant, res: Res
       prisma.feedbackLog.aggregate({
         where: { tenantId, mentorId, npsScore: { not: null } },
         _avg: { npsScore: true },
+        _count: { npsScore: true },
       }),
       // P-11: yalnız tamamlanan görüşmelerin süresi "yapılmış mentörlük" sayılır.
       prisma.meeting.aggregate({
@@ -127,6 +141,7 @@ export async function getMentorDashboardMetrics(req: RequestWithTenant, res: Res
       completedMeetings,
       activeMentees,
       avgNpsRaw: npsAgg._avg.npsScore,
+      npsSampleSize: npsAgg._count.npsScore,
       totalDurationMin: durationAgg._sum.durationMin,
       isCertified: membership?.isCertified ?? false,
     }),

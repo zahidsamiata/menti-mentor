@@ -5,18 +5,21 @@
  *  - P-11: totalMentoringHours = dakika toplamı / 60, yuvarlanmış; veri yoksa 0.
  *  - P-12: isCertified — üyelik yoksa false.
  *  - P-13: activeMentis sayısı ≡ activeMentees liste uzunluğu (sayı ↔ liste tutarlı).
+ *  - AJ-99: NPS ortalaması k-anonimlik eşiğinin (3) altında dönmez (npsSuppressed=true).
  *
  * Tek başına koşum: npx vitest run tests/mentor-metrics.unit.test.ts --reporter=verbose
  */
 
 import { describe, it, expect } from 'vitest';
 import { buildMentorMetricsResponse } from '../src/controllers/mentorMetricsController.js';
+import { K_ANONYMITY_THRESHOLD } from '../src/services/mask.js';
 
 const base = {
   pendingRequests: 0,
   completedMeetings: 0,
   activeMentees: [] as { id: string; fullName: string }[],
   avgNpsRaw: null as number | null,
+  npsSampleSize: 0,
   totalDurationMin: null as number | null,
   isCertified: false,
 };
@@ -65,7 +68,7 @@ describe('buildMentorMetricsResponse — P-13 aktif menti listesi', () => {
 
 describe('buildMentorMetricsResponse — mevcut alanlar korunur', () => {
   it('avgNps yuvarlanır, null geçer', () => {
-    expect(buildMentorMetricsResponse({ ...base, avgNpsRaw: 7.6 }).avgNps).toBe(8);
+    expect(buildMentorMetricsResponse({ ...base, avgNpsRaw: 7.6, npsSampleSize: 3 }).avgNps).toBe(8);
     expect(buildMentorMetricsResponse({ ...base, avgNpsRaw: null }).avgNps).toBeNull();
   });
 
@@ -73,5 +76,28 @@ describe('buildMentorMetricsResponse — mevcut alanlar korunur', () => {
     const out = buildMentorMetricsResponse({ ...base, pendingRequests: 3, completedMeetings: 5 });
     expect(out.pendingRequests).toBe(3);
     expect(out.completedMeetings).toBe(5);
+  });
+});
+
+describe('buildMentorMetricsResponse — AJ-99 NPS k-anonimlik maskesi', () => {
+  it.each([1, 2])('n=%i yanıtta ortalama DÖNMEZ, gizli işaretlenir', (n) => {
+    const out = buildMentorMetricsResponse({ ...base, avgNpsRaw: 9.4, npsSampleSize: n });
+    expect(out.avgNps).toBeNull();
+    expect(out.npsSuppressed).toBe(true);
+    expect(out.npsMinSampleSize).toBe(K_ANONYMITY_THRESHOLD);
+    // Ne ortalama ne de gerçek yanıt sayısı yanıta sızar.
+    expect(JSON.stringify(out)).not.toContain('9');
+  });
+
+  it('n=3 yanıtta ortalama döner (eşik dahil)', () => {
+    const out = buildMentorMetricsResponse({ ...base, avgNpsRaw: 7.6, npsSampleSize: 3 });
+    expect(out.avgNps).toBe(8);
+    expect(out.npsSuppressed).toBe(false);
+  });
+
+  it('hiç yanıt yoksa gizli değil, yalnız veri yok (null)', () => {
+    const out = buildMentorMetricsResponse({ ...base, avgNpsRaw: null, npsSampleSize: 0 });
+    expect(out.avgNps).toBeNull();
+    expect(out.npsSuppressed).toBe(false);
   });
 });
