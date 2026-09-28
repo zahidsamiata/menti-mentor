@@ -7,7 +7,7 @@ import { prisma } from '../db.js';
 import { logoUrlSchema } from '../services/logoUrl.js';
 import { passwordSchema } from '../services/passwordPolicy.js';
 import { signToken, TOKEN_TYPES } from '../middleware/jwtAuth.js';
-import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
+import { authenticateTenantAdmin, authenticateTenantAdminForParam } from '../middleware/tenantAdminAuth.js';
 import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { ensureMembership } from '../services/membership.js';
@@ -374,17 +374,9 @@ const UpdateOnboardingSchema = z
   .strict();
 
 export async function updateOnboarding(req: Request, res: Response) {
-  const payload = await authenticateTenantAdmin(req, res);
-  if (!payload) return;
-
-  const tenantId = req.params['id'] as string;
-
-  if (payload.tenantId !== tenantId) {
-    return res.status(403).json({
-      error:   'YETKI_YOK',
-      message: 'Başka bir kurumun onboarding adımını güncelleyemezsiniz.',
-    });
-  }
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun onboarding adımını güncelleyemezsiniz.');
+  if (!ctx) return;
+  const { tenantId } = ctx;
 
   const parsed = validateRequest(UpdateOnboardingSchema, req.body, res);
   if (!parsed.success) return parsed.response;
@@ -476,6 +468,10 @@ export async function resubmitTenantApplication(req: Request, res: Response) {
 
 // ─── GET /api/tenants/:slug/preview ──────────────────────────────────────────
 
+// AJ-55: bu uç `authenticateTenantAdminForParam` KULLANMAZ — URL'de kurum kimliği değil `slug` var;
+// eşleşme ancak slug → kurum çözüldükten sonra yapılabilir (aşağıda `payload.tenantId !== tenant.id`).
+// Kimlik yine oturumdan gelir, URL yalnız eşleştirilir. Tek slug-ucu olduğu için ayrı yardımcı açılmadı;
+// ikinci bir `/:slug/...` kurum-yönetici ucu eklenirse eşleşmeyi `tenantAdminAuth.ts`'e taşı.
 export async function getTenantPreview(req: Request, res: Response) {
   const payload = await authenticateTenantAdmin(req, res);
   if (!payload) return;
@@ -585,17 +581,9 @@ const CreateInvitationSchema = z.object({
 });
 
 export async function createInvitation(req: Request, res: Response) {
-  const payload = await authenticateTenantAdmin(req, res);
-  if (!payload) return;
-
-  const tenantId = req.params['id'] as string;
-
-  if (payload.tenantId !== tenantId) {
-    return res.status(403).json({
-      error:   'YETKI_YOK',
-      message: 'Başka bir kurumun davet linkini oluşturamazsınız.',
-    });
-  }
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun davet linkini oluşturamazsınız.');
+  if (!ctx) return;
+  const { tenantId } = ctx;
 
   const parsed = validateRequest(CreateInvitationSchema, req.body, res);
   if (!parsed.success) return parsed.response;
@@ -735,13 +723,9 @@ const SaveTemplateSchema = z.object({
 
 // GET /api/tenants/:id/invitation-templates
 export async function getInvitationTemplates(req: Request, res: Response) {
-  const payload = await authenticateTenantAdmin(req, res);
-  if (!payload) return;
-
-  const tenantId = req.params['id'] as string;
-  if (payload.tenantId !== tenantId) {
-    return res.status(403).json({ error: 'YETKI_YOK' });
-  }
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun davet şablonlarını göremezsiniz.');
+  if (!ctx) return;
+  const { tenantId } = ctx;
 
   const templates = await prisma.invitationTemplate.findMany({ where: { tenantId } });
   return res.json({ items: templates });
@@ -749,13 +733,9 @@ export async function getInvitationTemplates(req: Request, res: Response) {
 
 // PUT /api/tenants/:id/invitation-templates
 export async function saveInvitationTemplate(req: Request, res: Response) {
-  const payload = await authenticateTenantAdmin(req, res);
-  if (!payload) return;
-
-  const tenantId = req.params['id'] as string;
-  if (payload.tenantId !== tenantId) {
-    return res.status(403).json({ error: 'YETKI_YOK' });
-  }
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun davet şablonunu kaydedemezsiniz.');
+  if (!ctx) return;
+  const { tenantId } = ctx;
 
   const parsed = validateRequest(SaveTemplateSchema, req.body, res);
   if (!parsed.success) return parsed.response;
