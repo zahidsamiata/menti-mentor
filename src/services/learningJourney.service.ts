@@ -163,22 +163,14 @@ export async function buildStageList(
 }
 
 /**
- * Tek bir seçimin sonucunu döner (outcome + feedback). PUAN YOK.
- * Aşamanın bu tenant'a görünür ve doğru audience'ta olduğunu doğrular (IDOR/izolasyon).
- *
- * ⚠️ Öğrenme yolculuğu cevapları kişilik profilini BESLEMEZ (madde 145). Yön verilen seçim
- * saf kişilik sinyali değildir (kullanıcı geri bildirimi görüp beklenen tepkiyi seçebilir) —
- * bu yüzden bu yol SALT-OKUMADIR; UserProfile/ocean/discVector'a YAZMAZ. Kişilik ölçümü
- * yalnız 39 senaryodan gelir. Regresyon: `tests/learning-journey.test.ts` (madde 145 koruma testi).
- *
- * @returns ChoiceResult veya null (aşama/seçenek bulunamadı ya da erişim yok)
+ * Aşama bu tenant'a ve bu audience'a görünür mü (aktif · global ya da bu kurumun · gizlenmemiş)?
+ * Seçim ve ilerleme yolları AYNI kapıyı kullanır (IDOR/tenant izolasyonu tek yerde).
  */
-export async function resolveChoice(
+async function findVisibleStage(
   tenantId: string,
   audience: LearningAudience,
   stageId: string,
-  choiceKey: string,
-): Promise<ChoiceResult | null> {
+): Promise<{ id: string; choices: unknown } | null> {
   const stage = await prisma.learningStage.findFirst({
     where: {
       id: stageId,
@@ -196,6 +188,28 @@ export async function resolveChoice(
     select: { id: true },
   });
   if (isHidden) return null;
+  return stage;
+}
+
+/**
+ * Tek bir seçimin sonucunu döner (outcome + feedback). PUAN YOK.
+ * Aşamanın bu tenant'a görünür ve doğru audience'ta olduğunu doğrular (IDOR/izolasyon).
+ *
+ * ⚠️ Öğrenme yolculuğu cevapları kişilik profilini BESLEMEZ (madde 145). Yön verilen seçim
+ * saf kişilik sinyali değildir (kullanıcı geri bildirimi görüp beklenen tepkiyi seçebilir) —
+ * bu yüzden bu yol SALT-OKUMADIR; UserProfile/ocean/discVector'a YAZMAZ. Kişilik ölçümü
+ * yalnız 39 senaryodan gelir. Regresyon: `tests/learning-journey.test.ts` (madde 145 koruma testi).
+ *
+ * @returns ChoiceResult veya null (aşama/seçenek bulunamadı ya da erişim yok)
+ */
+export async function resolveChoice(
+  tenantId: string,
+  audience: LearningAudience,
+  stageId: string,
+  choiceKey: string,
+): Promise<ChoiceResult | null> {
+  const stage = await findVisibleStage(tenantId, audience, stageId);
+  if (!stage) return null;
 
   const choice = parseChoices(stage.choices).find((c) => c.key === choiceKey);
   if (!choice) return null;
@@ -228,6 +242,61 @@ export async function markJourneyCompleted(
     data: { learningJourneyCompletedAt: now },
   });
   return { completedAt: now };
+}
+
+// ─── Kalıcı ilerleme (P-08) ──────────────────────────────────────────────────
+
+/**
+ * Bir aşamayı "geçildi" olarak kaydeder (kişinin KENDİ üyeliğinde; rol/kurum bazlı).
+ * Yalnız aşama id'si tutulur — seçilen şık TUTULMAZ (madde 145: kişilik sinyali değil).
+ * İdempotent + atomik: `has` koşullu `push` → aynı aşama iki kez eklenmez, eşzamanlı çağrı
+ * diğerinin kaydını ezmez.
+ *
+ * @returns false → aşama bu kişiye görünür değil (yok / başka kurumun / gizli / başka audience)
+ */
+export async function markStageProgress(
+  userId: string,
+  tenantId: string,
+  audience: LearningAudience,
+  stageId: string,
+): Promise<boolean> {
+  const stage = await findVisibleStage(tenantId, audience, stageId);
+  if (!stage) return false;
+
+  await prisma.tenantMembership.updateMany({
+    where: { userId, tenantId, NOT: { learningJourneyStageIds: { has: stageId } } },
+    data: { learningJourneyStageIds: { push: stageId } },
+  });
+  return true;
+}
+
+/** Panel/sayfa için ilerleme özeti (saf — DB'siz test edilir). */
+export interface JourneyProgress {
+  /** Görünür aşamalardan geçilenlerin id'leri (aşama sırasıyla). */
+  completedStageIds: string[];
+  /** Geçilen görünür aşama sayısı. */
+  completedStages: number;
+  /** Sıradaki (ilk geçilmemiş) aşama; hepsi geçildiyse null. index 0-tabanlıdır. */
+  nextStage: { id: string; title: string; index: number } | null;
+}
+
+/**
+ * Kayıtlı id'leri bugünkü görünür aşama listesiyle kesiştirir. Silinen/gizlenen aşamanın
+ * eski kaydı sayılmaz; yönetici yeni aşama eklerse sıradaki o olur.
+ */
+export function summarizeProgress(
+  stages: Pick<PublicStage, 'id' | 'title'>[],
+  savedStageIds: readonly string[],
+): JourneyProgress {
+  const saved = new Set(savedStageIds);
+  const completedStageIds = stages.filter((s) => saved.has(s.id)).map((s) => s.id);
+  const nextIndex = stages.findIndex((s) => !saved.has(s.id));
+  const next = nextIndex >= 0 ? stages[nextIndex] : undefined;
+  return {
+    completedStageIds,
+    completedStages: completedStageIds.length,
+    nextStage: next ? { id: next.id, title: next.title, index: nextIndex } : null,
+  };
 }
 
 // ─── Yönetici (STK) CRUD ─────────────────────────────────────────────────────
@@ -530,21 +599,26 @@ function toAdminView(s: {
   };
 }
 
-/** Kullanıcının yolculuk durumunu (tamamlandı mı, kaç aşama) döner. */
+/**
+ * Kullanıcının yolculuk durumunu döner: tamamlandı mı, kaç aşama, kaçı geçildi, sıradaki hangisi.
+ * Yalnız çağıranın KENDİ üyeliği okunur (userId oturumdan gelir).
+ */
 export async function getJourneyStatus(
   userId: string,
   tenantId: string,
   audience: LearningAudience,
-): Promise<{
-  audience: LearningAudience;
-  completed: boolean;
-  completedAt: Date | null;
-  totalStages: number;
-}> {
+): Promise<
+  {
+    audience: LearningAudience;
+    completed: boolean;
+    completedAt: Date | null;
+    totalStages: number;
+  } & JourneyProgress
+> {
   const [membership, stages] = await Promise.all([
     prisma.tenantMembership.findUnique({
       where: { userId_tenantId: { userId, tenantId } },
-      select: { learningJourneyCompletedAt: true },
+      select: { learningJourneyCompletedAt: true, learningJourneyStageIds: true },
     }),
     buildStageList(tenantId, audience),
   ]);
@@ -554,5 +628,6 @@ export async function getJourneyStatus(
     completed: Boolean(membership?.learningJourneyCompletedAt),
     completedAt: membership?.learningJourneyCompletedAt ?? null,
     totalStages: stages.length,
+    ...summarizeProgress(stages, membership?.learningJourneyStageIds ?? []),
   };
 }

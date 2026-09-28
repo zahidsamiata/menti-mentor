@@ -1118,6 +1118,10 @@ model TenantMembership {
   // Öğrenme Yolculuğu tamamlanma anı (rol bazlı: mentör yolculuğu ≠ menti yolculuğu).
   // null = henüz tamamlanmadı. Sertifika puanından bağımsız — keşif akışıdır.
   learningJourneyCompletedAt DateTime?
+  // Öğrenme Yolculuğu ilerlemesi (P-08): kişinin geçtiği aşamaların id'leri. Yönetici aşamaları
+  // yeniden sıralayabildiği/gizleyebildiği için indeks değil id tutulur; "kaçıncı aşama" görünür
+  // aşama listesiyle kesiştirilerek türetilir. Seçilen ŞIK tutulmaz (madde 145: kişilik sinyali değil).
+  learningJourneyStageIds String[] @default([])
 
   isActive Boolean @default(true)
 

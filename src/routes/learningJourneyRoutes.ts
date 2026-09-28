@@ -5,7 +5,7 @@
  * (learningJourneyAdminRoutes.ts): rol/yetki ayrımı net kalsın.
  *
  * Route sırası: sabit path'ler (/stages, /complete, /status) parametrik
- * /stages/:stageId/select'ten önce tanımlıdır (Express üstten-aşağı eşleştirir).
+ * /stages/:stageId/select ve /progress'ten önce tanımlıdır (Express üstten-aşağı eşleştirir).
  */
 
 import { Router, type RequestHandler } from 'express';
@@ -16,6 +16,7 @@ import {
   selectChoice,
   completeJourney,
   getStatus,
+  recordStageProgress,
 } from '../controllers/learningJourneyController.js';
 
 const router = Router();
@@ -38,6 +39,13 @@ router.post(
   '/stages/:stageId/select',
   requireRole(...PLAYER_ROLES),
   selectChoice as unknown as RequestHandler,
+);
+
+/** POST /api/learning-journey/stages/:stageId/progress — aşama geçildi (kalıcı ilerleme, P-08) */
+router.post(
+  '/stages/:stageId/progress',
+  requireRole(...PLAYER_ROLES),
+  recordStageProgress as unknown as RequestHandler,
 );
 
 export default router;
