@@ -19,18 +19,19 @@ import { prisma } from '../db.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isPairBlocked } from '../services/blockList.js';
+import { communicationChannelSchema, meetingFrequencySchema, mentorshipSideSchema } from '../services/statusFieldSchemas.js';
 
 const CreateAgreementSchema = z.object({
   mentorId: z.string().min(1),
   mentiId:  z.string().min(1),
   matchId:  z.string().optional(),
 
-  meetingFrequency:     z.enum(['WEEKLY', 'BIWEEKLY', 'MONTHLY']),
-  communicationChannel: z.enum(['ONLINE', 'IN_PERSON', 'PHONE']),
+  meetingFrequency:     meetingFrequencySchema,
+  communicationChannel: communicationChannelSchema,
   durationWeeks:        z.number().int().min(1).max(52),
   targetMeetings:       z.number().int().min(1).max(100),
   mentiGoal:            z.string().min(10).max(1000),
-  agendaOwner:          z.enum(['MENTOR', 'MENTI']).default('MENTI'),
+  agendaOwner:          mentorshipSideSchema.default('MENTI'),
   privacyAgreed:        z.literal(true),
 });
 

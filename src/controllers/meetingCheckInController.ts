@@ -6,6 +6,7 @@ import { applyFeedbackSignal } from '../services/rewardPenalty.js';
 import { computePairSignalFromCheckIns, PAIR_SIGNAL_CONFIG } from '../services/pairSignal.service.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
+import { concernTagSchema, continuationViewSchema, continueIntentSchema, wantedMoreSchema } from '../services/statusFieldSchemas.js';
 
 // ─── Katman 1: Zorunlu kısa değerlendirme ────────────────────────────────────
 
@@ -13,16 +14,16 @@ const CheckInSchema = z.object({
   // Zorunlu
   overallRating:  z.number().int().min(1).max(5),
   progressRating: z.number().int().min(1).max(5),
-  continueIntent: z.enum(['EVET', 'BELIRSIZ', 'HAYIR']),
+  continueIntent: continueIntentSchema,
 
   // Sadece mentor
   menteePreparedness: z.number().int().min(1).max(5).optional(),
 
   // Katman 2: opsiyonel derinleştirme
-  wantedMore:       z.enum(['YONLENDIRME', 'KAYNAK', 'BAGLANIT', 'GERI_BILDIRIM', 'HAYIR']).optional(),
+  wantedMore:       wantedMoreSchema.optional(),
   nextTopicNote:    z.string().max(500).optional(),
-  concernTag:       z.enum(['MOT_DUSUK', 'HEDEF_BELIRSIZ', 'ZAMAN_YOK', 'ILETISIM', 'HAYIR']).optional(),
-  continuationView: z.enum(['KESINLIKLE', 'EVET', 'KARARSIZ', 'HAYIR']).optional(),
+  concernTag:       concernTagSchema.optional(),
+  continuationView: continuationViewSchema.optional(),
   openNote:         z.string().max(1000).optional(),
 });
 

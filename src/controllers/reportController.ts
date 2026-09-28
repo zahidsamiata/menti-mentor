@@ -4,11 +4,10 @@ import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { parsePagination, REPORT_PAGE } from '../services/pagination.js';
 import { validateRequest } from '../middleware/validate.js';
-
-const REPORT_REASONS = ['SPAM', 'HARASSMENT', 'INAPPROPRIATE', 'NO_SHOW', 'OTHER'] as const;
+import { userReportReasonSchema, userReportReviewStatusSchema, userReportStatusSchema } from '../services/statusFieldSchemas.js';
 
 const CreateReportSchema = z.object({
-  reason: z.enum(REPORT_REASONS),
+  reason: userReportReasonSchema,
   description: z.string().trim().max(1000).optional(),
 });
 
@@ -60,7 +59,7 @@ export async function createReport(req: RequestWithTenant, res: Response) {
 // ─── Tenant admin: kendi kurumunun şikayetleri ────────────────────────────────
 
 const ReportListSchema = z.object({
-  status: z.enum(['OPEN', 'REVIEWED', 'DISMISSED']).optional(),
+  status: userReportStatusSchema.optional(),
 });
 
 const REPORT_SELECT = {
@@ -96,7 +95,7 @@ export async function listTenantReports(req: RequestWithTenant, res: Response) {
 }
 
 const ReviewReportSchema = z.object({
-  status: z.enum(['REVIEWED', 'DISMISSED']),
+  status: userReportReviewStatusSchema,
   note: z.string().trim().max(1000).optional(),
 });
 

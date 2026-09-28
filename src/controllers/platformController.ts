@@ -15,6 +15,7 @@ import { verifyTransporter, getSmtpStatus } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
+import { userReportReviewStatusSchema, userReportStatusSchema } from '../services/statusFieldSchemas.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -528,8 +529,9 @@ export function maskUserReportRow(r: UserReportRow, tenantNameById: Map<string, 
 
 // GET /api/platform/user-reports?status=OPEN|REVIEWED|DISMISSED
 export async function listUserReports(req: Request, res: Response) {
-  const statusRaw = req.query['status'] as string | undefined;
-  const status = statusRaw && ['OPEN', 'REVIEWED', 'DISMISSED'].includes(statusRaw) ? statusRaw : undefined;
+  // Geçersiz/eksik status → filtresiz liste (önceki davranış korunur; 400 DÖNMEZ).
+  const statusParsed = userReportStatusSchema.safeParse(req.query['status']);
+  const status = statusParsed.success ? statusParsed.data : undefined;
 
   const { limit, offset } = parsePagination(req.query['limit'], req.query['offset'], REPORT_PAGE);
   const where = status ? { status } : {};
@@ -565,7 +567,7 @@ export async function listUserReports(req: Request, res: Response) {
 
 // PATCH /api/platform/user-reports/:id
 const PlatformReviewReportSchema = z.object({
-  status: z.enum(['REVIEWED', 'DISMISSED']),
+  status: userReportReviewStatusSchema,
   note: z.string().trim().max(1000).optional(),
 });
 

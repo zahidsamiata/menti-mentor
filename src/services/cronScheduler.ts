@@ -11,7 +11,7 @@
  */
 
 import cron from 'node-cron';
-import type { Checkpoint } from '@prisma/client';
+import type { Checkpoint, TenantOnboardingStep } from '@prisma/client';
 import { prisma } from '../db.js';
 import { tuneScoringWeights } from './algorithmTuner.js';
 import { findMatchesDueForCheckpoint } from './feedback.service.js';
@@ -115,7 +115,7 @@ async function runWeeklyPurge(opts?: { tenantId?: string }): Promise<PurgeResult
 
 // ─── Görev: Taslak Tenant Kurtarma E-postası (Faz 3) ─────────────────────────
 
-const DRAFT_STEPS: string[] = ['TEMPLATE', 'LOGO', 'PREVIEW'];
+const DRAFT_STEPS: TenantOnboardingStep[] = ['TEMPLATE', 'LOGO', 'PREVIEW'];
 const DRAFT_REMINDER_HOURS = 72;
 const DRAFT_CLEANUP_HOURS  = 96; // 24h sonra temizle (reminder sonrası)
 

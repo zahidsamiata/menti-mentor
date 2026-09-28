@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { authenticateTenantAdminForParam } from '../middleware/tenantAdminAuth.js';
+import { reportingFrequencySchema } from '../services/statusFieldSchemas.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
@@ -24,7 +25,7 @@ const UpdateSettingsSchema = z
   .object({
     maxMeetingsPerWeek:     z.number().int().min(1).max(5).optional(),
     minMatchScoreThreshold: z.number().int().min(20).max(90).optional(),
-    reportingFrequency:     z.enum(['WEEKLY', 'BIWEEKLY', 'MONTHLY']).optional(),
+    reportingFrequency:     reportingFrequencySchema.optional(),
   })
   .strict()
   .refine(
