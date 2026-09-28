@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { findTenantMember } from './tenantMember.js';
 
 export type SuggestionSeverity = 'INFO' | 'WARN' | 'CRITICAL';
 
@@ -20,16 +21,14 @@ export async function generateSuggestions(
 ): Promise<CoachingSuggestion[]> {
   const suggestions: CoachingSuggestion[] = [];
 
-  const user = await prisma.user.findFirst({
-    where: { id: userId, tenantId },
-    select: {
-      id: true, role: true, fullName: true,
-      discType: true, approvalStatus: true,
-      needsOrientation: true, rematchCount: true,
-      createdAt: true,
-    },
+  // AJ-56: kişi ÜYELİKTEN bulunur (misafir üye — ev-sahibi kurumu başka — de bu kurumun üyesidir).
+  const member = await findTenantMember(tenantId, userId, {
+    id: true, discType: true, needsOrientation: true, rematchCount: true, createdAt: true,
   });
-  if (!user) return [];
+  if (!member) return [];
+  // Yeniden eşleşme sayısı ev-sahibi kurum yöneticisinin kararıdır (AJ-40 FOREIGN_MEMBER_DECISION_MASK,
+  // adminController.ts) → misafir üyede bu kurumun yöneticisine sinyal olarak da sızmaz.
+  const user = { ...member.user, rematchCount: member.isGuest ? 0 : member.user.rematchCount };
 
   // ── 1. Uzun süredir görüşme yok ──────────────────────────────────────────
   const daysSinceCreated = Math.floor(

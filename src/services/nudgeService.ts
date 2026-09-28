@@ -27,8 +27,12 @@ export async function wasRecentlyNudged(tenantId: string, targetUserId: string):
       category: 'AUDIT',
       message: NUDGE_LOG_MESSAGE,
       createdAt: { gt: cutoff },
-      meta: { path: ['targetUserId'], equals: targetUserId },
-      // tenantId de meta'da tutulur; targetUserId zaten tenant'a özgü olduğundan tek filtre yeterli.
+      // AJ-56: limit KURUM başınadır. Misafir üye (ev-sahibi kurumu başka) birden çok kurumun üyesi
+      // olabilir; yalnız targetUserId ile süzmek başka kurumun dürtmesini bu kuruma 429 olarak sızdırır.
+      AND: [
+        { meta: { path: ['targetUserId'], equals: targetUserId } },
+        { meta: { path: ['tenantId'], equals: tenantId } },
+      ],
     },
     select: { id: true },
   });
