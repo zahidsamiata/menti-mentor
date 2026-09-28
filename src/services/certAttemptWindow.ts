@@ -11,7 +11,7 @@
 //    deneme yapan mentör çarşamba ikinci hakkını kullanamadan 24 saat bekliyordu.
 //  - Geçen deneme sayılmıyordu: başarısız → geçti → başarısız → başarısız dizisi aynı
 //    günde 4 değerlendirmeye izin veriyordu (parite `certAttempts % 2` kayıyordu).
-// Bu dosya DB'siz, saf fonksiyonlardır (birim testi: tests/certAttemptWindow.unit.test.ts).
+// Bu dosya DB'siz, saf fonksiyonlardır (birim testi: tests/i08-gunluk-deneme.unit.test.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Deneme gününün saat dilimi (Türkiye). */
