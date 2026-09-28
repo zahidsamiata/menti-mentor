@@ -283,7 +283,10 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
     prisma.conversation.count({ where }),
     prisma.conversation.findMany({
       where,
-      orderBy: { lastMessageAt: 'desc' },
+      // AJ-107: `lastMessageAt` benzersiz değil (aynı anda gelen iki mesaj) — ikincil anahtar
+      // `id` olmadan eşit damgalı satırların sırası sorgudan sorguya değişebilir ve offset
+      // sayfalamasında sayfa sınırında bir konuşma iki kez gelir, bir diğeri hiç gelmez.
+      orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
       include: { mentor: { select: counterpartSelect }, menti: { select: counterpartSelect } },
       take: limit,
       skip: offset,
