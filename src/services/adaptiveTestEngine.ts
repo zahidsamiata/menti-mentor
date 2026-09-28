@@ -19,6 +19,20 @@ import type { DiscDimension, DiscType } from '@prisma/client';
 import type { DiscVector } from './scoring.js';
 
 // Minimum yanıt sayısı — bu eşiğin altında DISC vektörü hesaplanmaz
+//
+// ⚠️ AJ-80 (G2-09 / md.102): bu eşik, soru servisindeki eşikten FARKLIDIR ve farkın
+// neden olduğu belirsizdir. `questionService.calcPoolMeta` DEEPENING'i havuzdaki TÜM
+// CORE sorular cevaplanınca açar (`coreThreshold = coreCount`); bu motor ise sabit 5
+// kullanır. İkisi de aynı toplu commit'te (de6be04, sprint 8-11) gerekçesiz geldi.
+// Bu motorda 5'in etkisi iki yerdedir:
+//   · `computeProgress` → `progress.isDeepening` 5. CORE cevabında true olur
+//     (CORE soruları hâlâ sunuluyor olsa bile);
+//   · `getNextQuestion` → DEEPENING soruları ancak tüm CORE bittikten SONRA sunulur,
+//     ama havuzda 5'ten az CORE varsa hiç açılmaz (yer tutucu döner).
+// Tek sabite bağlamak kullanıcının gördüğü soru akışını ve ilerleme göstergesini
+// değiştirir → "esas DISC testi hangisi" ürün kararına (KARAR-57) bağlıdır; karar
+// gelene dek iki eşik bilerek AYRI tutulur. Bugünkü davranış
+// `tests/disc-core-threshold.unit.test.ts` ile kilitli.
 const MIN_CORE_RESPONSES = 5;
 
 // Boyut bazında DISC katkı ağırlıkları (Likert 1-5 → normalize)
