@@ -21,7 +21,6 @@ import { notifyAdminsMentorCertLapsed } from './notificationService.js';
 import { CERT_CONFIG } from './certification.service.js';
 import { logger } from './logger.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
-import { findTenantAdminUsers } from './membership.js';
 
 /**
  * Cron etkinleştirme koşulları (AND mantığı):
@@ -149,8 +148,10 @@ async function runDraftTenantReminder(): Promise<void> {
     // Admin e-postalarını ayrı çek (Prisma select ile nested relation include karışık değil)
     const draftsWithAdmins = await Promise.all(
       drafts.map(async (t) => {
-        // AJ-105: kurucu yönetici = bu kurumun en eski AKTİF ADMIN üyesi (User.role değil).
-        const [admin = null] = await findTenantAdminUsers(t.id, USER_CONTACT_SELECT);
+        const admin = await prisma.user.findFirst({
+          where:  { tenantId: t.id, role: 'ADMIN', isActive: true },
+          select: USER_CONTACT_SELECT,
+        });
         return { ...t, admin };
       }),
     );

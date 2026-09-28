@@ -9,7 +9,6 @@ import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { sendNewChatMessageEmail } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
-import { ACTIVE_MEMBERSHIP_ROLES_SELECT, roleInTenant } from '../services/membership.js';
 
 // Chat v1 — menti↔mentör talep mesajlaşma.
 // Güvenlik sınırı KATILIMCIDIR (tenant değil): shared-pool'da taraflar farklı
@@ -145,11 +144,10 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından resolveCrossTenantTarget paylaşım iznini zorlar
   const mentorRow = await prisma.user.findUnique({
     where: { id: parsed.data.mentorUserId },
-    select: { id: true, isActive: true, tenantId: true, ...ACTIVE_MEMBERSHIP_ROLES_SELECT },
+    select: { id: true, role: true, isActive: true, tenantId: true },
   });
   const mentor = await resolveCrossTenantTarget(mentorRow, tenantId);
-  // AJ-105: "mentör mü" erişimin verildiği kurumdaki (hedefin ana kurumu) üyelikten — User.role değil.
-  if (!mentor || roleInTenant(mentor.memberships, mentor.tenantId) !== 'MENTOR' || !mentor.isActive) {
+  if (!mentor || mentor.role !== 'MENTOR' || !mentor.isActive) {
     return res.status(400).json({ error: 'TARGET', message: 'Hedef kullanıcı aktif bir mentör olmalıdır.' });
   }
 

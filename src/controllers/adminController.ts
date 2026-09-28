@@ -519,7 +519,7 @@ export async function triggerRematch(req: RequestWithTenant, res: Response) {
 
   const user = await prisma.user.findFirst({
     where: { id: userId, tenantId: req.tenant.tenantId, isActive: true },
-    select: { id: true },
+    select: { id: true, role: true, tenantId: true },
   });
   if (!user) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
@@ -544,7 +544,7 @@ export async function triggerRematch(req: RequestWithTenant, res: Response) {
         rematchPriority: true,
         rematchCount: { increment: 1 },
       },
-      select: { id: true, rematchCount: true },
+      select: { id: true, rematchCount: true, role: true },
     });
 
     return { updated, resetOptIns: resetCount.count };

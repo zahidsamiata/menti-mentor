@@ -22,7 +22,7 @@ import { signToken } from '../../middleware/jwtAuth.js';
 import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../../middleware/tenantSuspension.js';
 import { sendAdminNewUserNotification } from '../emailService.js';
 import { notifyAdminsPendingUser } from '../notificationService.js';
-import { ensureMembershipSafe, findTenantAdminUsers } from '../membership.js';
+import { ensureMembershipSafe } from '../membership.js';
 import { recordUserActivity } from '../activityService.js';
 import { recordSignupConsent } from '../consentService.js';
 import { hashRefreshToken } from '../refreshToken.js';
@@ -192,8 +192,10 @@ async function notifyAdmins(
   newUserFullName: string,
   role: string,
 ): Promise<void> {
-  // AJ-105: alıcılar bu kurumun AKTİF ADMIN üyeleri (User.role + ana kurum değil).
-  const admins = await findTenantAdminUsers(tenant.id, USER_CONTACT_SELECT);
+  const admins = await prisma.user.findMany({
+    where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
+    select: USER_CONTACT_SELECT,
+  });
 
   for (const admin of admins) {
     void sendAdminNewUserNotification({

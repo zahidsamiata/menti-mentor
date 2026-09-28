@@ -19,7 +19,6 @@ import { prisma } from '../db.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isPairBlocked } from '../services/blockList.js';
-import { activeMemberRoleWhere } from '../services/membership.js';
 
 const CreateAgreementSchema = z.object({
   mentorId: z.string().min(1),
@@ -57,13 +56,13 @@ export async function createAgreement(req: RequestWithTenant, res: Response) {
     return res.status(403).json({ error: 'YETKISIZ', message: 'Anlaşma yalnızca taraflar veya admin tarafından oluşturulabilir.' });
   }
 
-  // Her iki kullanıcı da bu tenant'a üye olmalı. AJ-105: rol bu kurumdaki üyelikten (User.role değil).
+  // Her iki kullanıcı da bu tenant'a üye olmalı
   const [mentor, menti] = await Promise.all([
-    prisma.user.findFirst({ where: { id: d.mentorId, tenantId, isActive: true, ...activeMemberRoleWhere(tenantId, 'MENTOR') }, select: { id: true } }),
-    prisma.user.findFirst({ where: { id: d.mentiId,  tenantId, isActive: true, ...activeMemberRoleWhere(tenantId, 'MENTI') },  select: { id: true } }),
+    prisma.user.findFirst({ where: { id: d.mentorId, tenantId, isActive: true }, select: { id: true, role: true } }),
+    prisma.user.findFirst({ where: { id: d.mentiId,  tenantId, isActive: true }, select: { id: true, role: true } }),
   ]);
-  if (!mentor) return res.status(404).json({ error: 'MENTOR_BULUNAMADI' });
-  if (!menti)  return res.status(404).json({ error: 'MENTI_BULUNAMADI' });
+  if (!mentor || mentor.role !== 'MENTOR') return res.status(404).json({ error: 'MENTOR_BULUNAMADI' });
+  if (!menti  || menti.role  !== 'MENTI')  return res.status(404).json({ error: 'MENTI_BULUNAMADI' });
 
   // KR-19: idari blok — bu akış cross-tenant desteklemez (her iki taraf da aynı tenantId'de
   // aranır), tek tenant'ın blockedPairs'ı yeterli. Varlık ifşası yok, jenerik hata.

@@ -3,7 +3,6 @@ import type { Response } from 'express';
 import type { RequestWithTenant } from '../types.js';
 import { prisma } from '../db.js';
 import { validateRequest } from '../middleware/validate.js';
-import { activeMemberRoleWhere } from '../services/membership.js';
 
 const UpsertFilterSchema = z.object({
   minCompatibilityScore: z.number().int().min(0).max(100).default(0),
@@ -19,8 +18,7 @@ export async function getMentorFilter(req: RequestWithTenant, res: Response) {
   // filtresi okunabilir. Aksi halde başka kurumun mentör tercihleri sızardı.
   // (upsertMentorFilter ile aynı kontrol — iki uçta da tutarlı.)
   const mentor = await prisma.user.findFirst({
-    // AJ-105: rol bu kurumdaki üyelikten (User.role değil).
-    where: { id: mentorId, tenantId: req.tenant.tenantId, ...activeMemberRoleWhere(req.tenant.tenantId, 'MENTOR') },
+    where: { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR' },
     select: { id: true },
   });
   if (!mentor) {
@@ -44,8 +42,7 @@ export async function upsertMentorFilter(req: RequestWithTenant, res: Response) 
   const mentorId = req.params['mentorId'] as string;
 
   const mentor = await prisma.user.findFirst({
-    // AJ-105: rol bu kurumdaki üyelikten (User.role değil).
-    where: { id: mentorId, tenantId: req.tenant.tenantId, ...activeMemberRoleWhere(req.tenant.tenantId, 'MENTOR') },
+    where: { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR' },
     select: { id: true },
   });
   if (!mentor) {

@@ -6,7 +6,6 @@ import { parsePagination, LIST_PAGE } from '../services/pagination.js';
 import { applyFeedbackSignal } from '../services/rewardPenalty.js';
 import { logger } from '../services/logger.js';
 import { validateRequest } from '../middleware/validate.js';
-import { activeMemberRoleWhere } from '../services/membership.js';
 
 const DIFFICULTY_VALUES = [
   'ZAMAN_UYUMSUZLUGU',
@@ -68,14 +67,14 @@ export async function createFeedbackLog(req: RequestWithTenant, res: Response) {
     }
   }
 
-  // Mentor ve menti aynı tenant'ta olmalı. AJ-105: rol bu kurumdaki üyelikten (User.role değil).
+  // Mentor ve menti aynı tenant'ta olmalı
   const [mentor, menti] = await Promise.all([
     prisma.user.findFirst({
-      where: { id: mentorId, tenantId: req.tenant.tenantId, ...activeMemberRoleWhere(req.tenant.tenantId, 'MENTOR') },
+      where: { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR' },
       select: { id: true, discType: true },
     }),
     prisma.user.findFirst({
-      where: { id: mentiId, tenantId: req.tenant.tenantId, ...activeMemberRoleWhere(req.tenant.tenantId, 'MENTI') },
+      where: { id: mentiId, tenantId: req.tenant.tenantId, role: 'MENTI' },
       select: { id: true, discType: true },
     }),
   ]);

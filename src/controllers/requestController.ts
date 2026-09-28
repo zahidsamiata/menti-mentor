@@ -7,7 +7,6 @@ import { notifyMatchRequestReceived } from '../services/notificationService.js';
 import { resolveCrossTenantTarget } from '../services/tenantSharing.js';
 import { isPairBlockedInTenants } from '../services/pairBlockGuard.js';
 import { validateRequest } from '../middleware/validate.js';
-import { ACTIVE_MEMBERSHIP_ROLES_SELECT, roleInTenant } from '../services/membership.js';
 
 // Not: requesterUserId body'de ALINMAZ — talep sahibi kimliği doğrulanmış kullanıcıdır
 // (IDOR önleme). Aksi halde bir kullanıcı başkası adına talep oluşturabilirdi.
@@ -45,11 +44,10 @@ export async function createMatchRequest(req: RequestWithTenant, res: Response) 
     // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından resolveCrossTenantTarget paylaşım iznini zorlar
     const targetRow = await prisma.user.findUnique({
       where: { id: parsed.data.targetId },
-      select: { id: true, isActive: true, tenantId: true, ...ACTIVE_MEMBERSHIP_ROLES_SELECT },
+      select: { id: true, role: true, isActive: true, tenantId: true },
     });
     const target = await resolveCrossTenantTarget(targetRow, req.tenant.tenantId);
-    // AJ-105: "mentör mü" erişimin verildiği kurumdaki (hedefin ana kurumu) üyelikten — User.role değil.
-    if (!target || roleInTenant(target.memberships, target.tenantId) !== 'MENTOR' || !target.isActive) {
+    if (!target || target.role !== 'MENTOR' || !target.isActive) {
       return res.status(400).json({ error: 'TARGET', message: 'Hedef USER mentor olmalıdır.' });
     }
     // KR-19b: idari blok eşleşme isteğini de durdurur (önceden yalnız startConversation

@@ -6,7 +6,6 @@ import { rankMentisForMentor, rankMentorsForMenti, MAX_MATCH_CANDIDATES, type Ra
 import { resolveCrossTenantTarget } from '../services/tenantSharing.js';
 import { validateRequest } from '../middleware/validate.js';
 import { rejectIfCallerNotApproved } from '../middleware/approvalGate.js';
-import { activeMemberRoleWhere, ACTIVE_MEMBERSHIP_ROLES_SELECT, roleInTenant } from '../services/membership.js';
 
 // KARAR 3: qualityMultiplier kullanıcıya gösterilmez (gizli yorumları dolaylı sızdırır).
 // DISC tipi açıklanmaz; bunun yerine nitel uyum gerekçesi üretilir.
@@ -148,8 +147,7 @@ export async function setVisibilityOptIn(req: RequestWithTenant, res: Response) 
   if (!parsed.success) return parsed.response;
 
   const mentor = await prisma.user.findFirst({
-    // AJ-105: rol bu kurumdaki üyelikten (User.role değil).
-    where: { id: mentorId, tenantId: req.tenant.tenantId, isActive: true, ...activeMemberRoleWhere(req.tenant.tenantId, 'MENTOR') },
+    where: { id: mentorId, tenantId: req.tenant.tenantId, role: 'MENTOR', isActive: true },
     select: { id: true },
   });
   if (!mentor) {
@@ -170,16 +168,14 @@ export async function setVisibilityOptIn(req: RequestWithTenant, res: Response) 
   // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından resolveCrossTenantTarget paylaşım iznini zorlar
   const mentiRow = await prisma.user.findUnique({
     where: { id: parsed.data.mentiId },
-    select: { id: true, isActive: true, tenantId: true, ...ACTIVE_MEMBERSHIP_ROLES_SELECT },
+    select: { id: true, role: true, isActive: true, tenantId: true },
   });
   const menti = await resolveCrossTenantTarget(mentiRow, req.tenant.tenantId);
   if (!menti) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Menti bulunamadı.' });
   }
 
-  // AJ-105: rol, kişinin erişimin verildiği kurumdaki (ana kurum — paylaşım izni onun üzerinden)
-  // üyeliğinden okunur; User.role kişi-genel olduğu için başka kurumdaki rolü olabilir.
-  if (roleInTenant(menti.memberships, menti.tenantId) !== 'MENTI' || !menti.isActive) {
+  if (menti.role !== 'MENTI' || !menti.isActive) {
     return res.status(400).json({
       error: 'GECERSIZ_ROL',
       message: 'Hedef kullanıcı aktif bir menti değil.',

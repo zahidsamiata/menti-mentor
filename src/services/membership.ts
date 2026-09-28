@@ -1,5 +1,4 @@
-import type { Prisma, UserRole } from '@prisma/client';
-import { prisma } from '../db.js';
+import type { UserRole } from '@prisma/client';
 import type { PrismaExtended } from '../db.js';
 import { logger } from './logger.js';
 
@@ -56,58 +55,4 @@ export async function ensureMembershipSafe(
       role,
     });
   }
-}
-
-// ─── AJ-105: kurum-içi rol OKUMA yardımcıları ───────────────────────────────────
-// Neden: oturumdaki rol her istekte üyelikten düzeltiliyor (middleware/tenant.ts), ama hedef
-// kişinin rolü (ör. "bu kişi mentör mü") veritabanından `User.role` ile okunuyordu. `User.role`
-// kişi-genel TEK alandır; A kurumunda MENTOR, B kurumunda MENTI olan kişi B'de de mentör
-// sayılıyordu. Kurum-içi rolün kaynağı `TenantMembership.role`dür (CLAUDE.md "Veri Modeli").
-// Yalnız AKTİF üyelik sayılır (kurumdan çıkarılmış kişi o kurumda rolsüzdür).
-
-/**
- * `prisma.user.findFirst/findMany` where parçası: bu kurumda verilen rolde AKTİF üyeliği olan kişi.
- * İlişki filtresi (`memberships.some`) RLS eklentisinin üst düzey `tenantId` filtresini bozmaz.
- */
-export function activeMemberRoleWhere(tenantId: string, role: UserRole) {
-  return { memberships: { some: { tenantId, role, isActive: true } } } satisfies Prisma.UserWhereInput;
-}
-
-/** `User` select parçası: kişinin AKTİF üyelikleri (kurum + rol) — `roleInTenant` ile okunur. */
-export const ACTIVE_MEMBERSHIP_ROLES_SELECT = {
-  memberships: { where: { isActive: true }, select: { tenantId: true, role: true } },
-} as const satisfies Prisma.UserSelect;
-
-/** Saf: üyelik listesinden verilen kurumdaki rol (aktif üyelik yoksa null). */
-export function roleInTenant(
-  memberships: ReadonlyArray<{ tenantId: string; role: UserRole }>,
-  tenantId: string,
-): UserRole | null {
-  return memberships.find((m) => m.tenantId === tenantId)?.role ?? null;
-}
-
-/** Kişinin bu kurumdaki AKTİF üyelik rolü (üyelik yoksa ya da pasifse null). */
-export async function getActiveMembershipRole(userId: string, tenantId: string): Promise<UserRole | null> {
-  const membership = await prisma.tenantMembership.findUnique({
-    where:  { userId_tenantId: { userId, tenantId } },
-    select: { role: true, isActive: true },
-  });
-  return membership?.isActive ? membership.role : null;
-}
-
-/**
- * Kurum yöneticisi bildirim alıcıları: bu kurumda AKTİF ADMIN üyeliği olan, hesabı aktif kişiler.
- * `User.role = ADMIN` + ana kurum DEĞİL — misafir üye olarak yönetici olan kişi de alır; üyelikte
- * rolü düşürülmüş kişi almaz. Sıra: en eski hesap önce (ilk yönetici = kurucu).
- */
-export async function findTenantAdminUsers<S extends Prisma.UserSelect>(
-  tenantId: string,
-  select: S,
-): Promise<Prisma.UserGetPayload<{ select: S }>[]> {
-  const rows = await prisma.tenantMembership.findMany({
-    where:   { tenantId, role: 'ADMIN', isActive: true, user: { isActive: true } },
-    select:  { user: { select } },
-    orderBy: { user: { createdAt: 'asc' } },
-  });
-  return rows.map((r) => r.user as Prisma.UserGetPayload<{ select: S }>);
 }

@@ -13,7 +13,7 @@ import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
 import { createOAuthState, verifyOAuthState } from '../services/oauth/oauthStateService.js';
 import { handleOAuthCallback, OAuthConflictError } from '../services/oauth/oauthService.js';
 import { ensureUserProfile } from '../services/userProfile.service.js';
-import { ensureMembershipSafe, findTenantAdminUsers } from '../services/membership.js';
+import { ensureMembershipSafe } from '../services/membership.js';
 import { recordSignupConsent, hasCurrentSignupConsent } from '../services/consentService.js';
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
@@ -209,8 +209,10 @@ export async function register(req: Request, res: Response) {
   // ise onaylanacak bir şey yoktur → admin'e "onaya bak" bildirimi gönderilmez (yanıltıcı olurdu).
   if (approvalStatus === 'PENDING') {
     // Sprint 8 admin bildirim servisi — tenant adminlerine e-posta + push
-    // AJ-105: alıcılar bu kurumun AKTİF ADMIN üyeleri (User.role + ana kurum değil).
-    const tenantAdmins = await findTenantAdminUsers(tenant.id, USER_CONTACT_SELECT);
+    const tenantAdmins = await prisma.user.findMany({
+      where: { tenantId: tenant.id, role: 'ADMIN', isActive: true },
+      select: USER_CONTACT_SELECT,
+    });
 
     for (const admin of tenantAdmins) {
       void sendAdminNewUserNotification({
@@ -898,8 +900,7 @@ export async function getMe(req: RequestWithTenant, res: Response) {
           verificationStatus: tenant.verificationStatus,
           // Y1-B9: kurum askıda mı (dondurma/ret) — istemci askı bilgisini gösterebilsin.
           isSuspended: isTenantSuspended(tenant),
-          // AJ-105: kurum-içi rol (üyelikten, requireTenant her istekte düzeltir) — User.role değil.
-          correctionNote: req.auth.role === 'ADMIN' ? (tenant.correctionNote ?? null) : null,
+          correctionNote: user.role === 'ADMIN' ? (tenant.correctionNote ?? null) : null,
         }
       : null,
   });
