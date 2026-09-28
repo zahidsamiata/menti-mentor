@@ -178,6 +178,91 @@ enum TenantVerificationStatus {
   CORRECTION_REQUESTED // Platform admin düzeltme istedi — kurum bilgileri revize edip tekrar gönderecek (#37)
 }
 
+// ─── AJ-77 (G6-02 / madde 49): serbest metin (String) durum/tür alanlarının enum karşılıkları ───
+// Değer kümeleri koddaki Zod şemalarıyla BİREBİR (tek kaynak: prisma enum; Zod `z.nativeEnum` ile okur).
+// Migration: 20260928000000_durum_alanlari_enum (🔵 — PO EVET + tarihli yedek sonrası uygulanır).
+
+enum TenantOnboardingStep {
+  PENDING
+  TEMPLATE
+  LOGO
+  PREVIEW
+  DONE
+}
+
+enum ProgramTemplate {
+  MEZUN
+  KULUP
+  GONULLU
+  OZEL
+}
+
+enum ReportingFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum CheckInContinueIntent {
+  EVET
+  BELIRSIZ
+  HAYIR
+}
+
+enum CheckInWantedMore {
+  YONLENDIRME
+  KAYNAK
+  BAGLANIT
+  GERI_BILDIRIM
+  HAYIR
+}
+
+enum CheckInConcernTag {
+  MOT_DUSUK
+  HEDEF_BELIRSIZ
+  ZAMAN_YOK
+  ILETISIM
+  HAYIR
+}
+
+enum CheckInContinuationView {
+  KESINLIKLE
+  EVET
+  KARARSIZ
+  HAYIR
+}
+
+enum UserReportReason {
+  SPAM
+  HARASSMENT
+  INAPPROPRIATE
+  NO_SHOW
+  OTHER
+}
+
+enum UserReportStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+}
+
+enum MeetingFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+// Mentörlük ilişkisinin iki tarafı (UserRole'ün ADMIN vb. değerlerini KABUL ETMEZ — bilinçli dar küme).
+enum MentorshipSide {
+  MENTOR
+  MENTI
+}
+
+enum InvitationFormat {
+  EMAIL
+  WHATSAPP
+}
+
 model Tenant {
   id                 String  @id @default(cuid())
   name               String
@@ -191,10 +276,10 @@ model Tenant {
   primaryColor String? @default("#6366f1") // Tailwind indigo-500
 
   // PLG / Freemium katmanı
-  plan            String  @default("FREE") // FREE | PRO | ENTERPRISE
+  plan            String               @default("FREE") // FREE | PRO | ENTERPRISE — AJ-77: bilinçli String kaldı (kodda yalnız FREE yazılıyor; paket kümesi ürün kararı)
   limits          Json? // {"max_reports": 3, "custom_domain": false, ...}
-  onboardingStep  String  @default("PENDING") // PENDING | TEMPLATE | LOGO | PREVIEW | DONE
-  programTemplate String? // "MEZUN" | "KULUP" | "GONULLU" | "OZEL"
+  onboardingStep  TenantOnboardingStep @default(PENDING)
+  programTemplate ProgramTemplate?
 
   // Program kuralları — dernek yöneticisi kendi kurumunun dinamiklerine göre ayarlar
   maxMeetingsPerWeek     Int   @default(2) // Bir mentinin haftalık maks. görüşme sayısı
@@ -207,7 +292,7 @@ model Tenant {
 
   // AlgorithmTuner bildirim sıklığı — admin kendi tercihine göre ayarlar
   // WEEKLY (varsayılan) | BIWEEKLY | MONTHLY
-  reportingFrequency String @default("WEEKLY")
+  reportingFrequency ReportingFrequency @default(WEEKLY)
 
   // Super Admin askıya alma / aktif etme
   isActive Boolean @default(true)
@@ -593,17 +678,17 @@ model MeetingCheckIn {
   // Katman 1 — Zorunlu (3-4 soru)
   overallRating  Int // 1-5 yıldız: "Bu görüşme ne kadar değerliydi?"
   progressRating Int // 1-5: "Hedefe ne kadar yaklaştın?"
-  continueIntent String // EVET | BELIRSIZ | HAYIR
+  continueIntent CheckInContinueIntent
 
   // Sadece mentör doldurur
   menteePreparedness Int? // 1-5: "Menti hazırlıklı geldi mi?"
 
   // Katman 2 — Opsiyonel derin (isteğe bağlı)
-  wantedMore       String? // YONLENDIRME | KAYNAK | BAGLANIT | GERI_BILDIRIM | HAYIR
-  nextTopicNote    String? @db.VarChar(500) // "Bir sonraki görüşmede konuşmak istediğim:"
-  concernTag       String? // mentör: MOT_DUSUK | HEDEF_BELIRSIZ | ZAMAN_YOK | ILETISIM | HAYIR
-  continuationView String? // KESINLIKLE | EVET | KARARSIZ | HAYIR
-  openNote         String? @db.VarChar(1000) // serbest metin
+  wantedMore       CheckInWantedMore?
+  nextTopicNote    String?                  @db.VarChar(500) // "Bir sonraki görüşmede konuşmak istediğim:"
+  concernTag       CheckInConcernTag? // yalnız mentör doldurur
+  continuationView CheckInContinuationView?
+  openNote         String?                  @db.VarChar(1000) // serbest metin
 
   submittedAt DateTime @default(now())
 
@@ -1186,17 +1271,17 @@ model MatchFeedback {
 // (public davet-şüphesi, user ID yok) ile karışmaz: bu tenant-scoped + reporter/target User.
 // Tenant admin kendi kurumunun şikayetlerini, platform admin tümünü görür.
 model UserReport {
-  id             String   @id @default(cuid())
+  id             String           @id @default(cuid())
   tenantId       String
   reporterUserId String
   targetUserId   String
-  reason         String // SPAM | HARASSMENT | INAPPROPRIATE | NO_SHOW | OTHER
-  description    String?  @db.VarChar(1000)
-  status         String   @default("OPEN") // OPEN | REVIEWED | DISMISSED
+  reason         UserReportReason
+  description    String?          @db.VarChar(1000)
+  status         UserReportStatus @default(OPEN)
   reviewNote     String?
   reviewedBy     String? // denetleyen (platform-admin veya tenant admin userId)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   // onDelete: Restrict (PO kararı 2026-08-30) — MentorshipAgreement ile aynı ilke.
   reporter User @relation("ReportsMade", fields: [reporterUserId], references: [id], onDelete: Restrict)
@@ -1235,13 +1320,13 @@ model MentorshipAgreement {
   matchId  String?
 
   // Anlaşma içeriği — iki taraf birlikte doldurur
-  meetingFrequency     String // WEEKLY | BIWEEKLY | MONTHLY
-  communicationChannel String // ONLINE | IN_PERSON | PHONE
+  meetingFrequency     MeetingFrequency
+  communicationChannel MeetingFormat // Meeting.format ile aynı küme
   durationWeeks        Int // İlişki süresi (hafta cinsinden)
   targetMeetings       Int // Hedef görüşme sayısı
-  mentiGoal            String  @db.VarChar(1000) // Menti'nin somut hedefi
-  agendaOwner          String  @default("MENTI") // Gündem kim belirler
-  privacyAgreed        Boolean @default(false) // Gizlilik taahhüdü
+  mentiGoal            String           @db.VarChar(1000) // Menti'nin somut hedefi
+  agendaOwner          MentorshipSide   @default(MENTI) // Gündem kim belirler
+  privacyAgreed        Boolean          @default(false) // Gizlilik taahhüdü
 
   // Dijital onaylar — her iki taraf onaylamadan ACTIVE olmaz
   mentorConfirmedAt DateTime?
@@ -1272,10 +1357,10 @@ model MentorshipAgreement {
 // ─── Davet Şablonu ────────────────────────────────────────────────────────────
 // Her tenant kendi düzenlenmiş davet metnini rol+format bazında saklar.
 model InvitationTemplate {
-  id       String @id @default(cuid())
+  id       String           @id @default(cuid())
   tenantId String
-  role     String // MENTOR | MENTI
-  format   String // EMAIL | WHATSAPP
+  role     MentorshipSide
+  format   InvitationFormat
   content  String
 
   createdAt DateTime @default(now())

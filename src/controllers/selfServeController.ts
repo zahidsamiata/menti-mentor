@@ -15,6 +15,7 @@ import { recordSignupConsent } from '../services/consentService.js';
 import { hashRefreshToken } from '../services/refreshToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
+import { invitationFormatSchema, mentorshipSideSchema, onboardingStepSchema, programTemplateSchema } from '../services/statusFieldSchemas.js';
 import { sendAlreadyRegisteredEmail } from '../services/emailService.js';
 import { setRefreshCookie, refreshTokenExpiresAt } from '../utils/authCookies.js';
 
@@ -200,7 +201,7 @@ const SelfServeRegisterSchema = z.object({
     .min(2, 'Slug en az 2 karakter olmalı')
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
-  programTemplate:  z.enum(['MEZUN', 'KULUP', 'GONULLU', 'OZEL']).default('OZEL'),
+  programTemplate:  programTemplateSchema.default('OZEL'),
   // KVKK Md.5 — açık rıza zorunlu.
   kvkkConsent:      z.literal(true, { message: 'KVKK onayı zorunludur.' }),
   // Doğrulama alanları — .edu.tr veya generic domain için zorunlu hale gelir (frontend kontrolü)
@@ -359,11 +360,9 @@ export async function selfServeRegister(req: Request, res: Response) {
 
 // ─── PATCH /api/tenants/:id/onboarding ───────────────────────────────────────
 
-const ONBOARDING_STEPS = ['PENDING', 'TEMPLATE', 'LOGO', 'PREVIEW', 'DONE'] as const;
-
 const UpdateOnboardingSchema = z
   .object({
-    onboardingStep:  z.enum(ONBOARDING_STEPS).optional(),
+    onboardingStep:  onboardingStepSchema.optional(),
     logoUrl:         logoUrlSchema.optional(),
     primaryColor:    z
       .string()
@@ -716,8 +715,8 @@ export async function unsubscribeTenant(req: Request, res: Response) {
 // ─── Davet Şablonu CRUD ───────────────────────────────────────────────────────
 
 const SaveTemplateSchema = z.object({
-  role:    z.enum(['MENTOR', 'MENTI']),
-  format:  z.enum(['EMAIL', 'WHATSAPP']),
+  role:    mentorshipSideSchema,
+  format:  invitationFormatSchema,
   content: z.string().min(10).max(5000),
 });
 

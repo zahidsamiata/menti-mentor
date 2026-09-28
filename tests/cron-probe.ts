@@ -14,7 +14,7 @@
  */
 
 import crypto from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type TenantOnboardingStep } from '@prisma/client';
 import { config as loadEnv } from 'dotenv';
 import { lockProbeToTestDatabase } from './helpers/probeGuard.js';
 
@@ -146,7 +146,7 @@ async function main() {
   console.log(`\n${'─'.repeat(60)}`);
   console.log('TEST 2 — runDraftTenantCleanup (önce dry-run)');
 
-  const DRAFT_STEPS = ['TEMPLATE', 'LOGO', 'PREVIEW'];
+  const DRAFT_STEPS: TenantOnboardingStep[] = ['TEMPLATE', 'LOGO', 'PREVIEW'];
   const cutoff96h   = new Date(now - 96 * 3600_000);
 
   const wouldDelete = await probe.tenant.findMany({
