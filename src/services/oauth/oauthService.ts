@@ -44,6 +44,7 @@ export async function handleOAuthCallback(
   profile: OAuthUserProfile,
   state: OAuthStatePayload,
 ): Promise<OAuthCallbackResult> {
+  // eslint-disable-next-line no-restricted-syntax -- bilinçli global e-posta araması: sağlayıcının doğruladığı e-posta tüm kurumlarda tekil; mevcut hesap kendi kurumuyla oturum açar
   const existingUser = await prisma.user.findUnique({
     where: { email: profile.email },
     select: { id: true, tenantId: true, role: true, fullName: true, authProvider: true, isActive: true },

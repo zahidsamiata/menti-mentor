@@ -308,6 +308,7 @@ export async function completeProfile(req: RequestWithTenant, res: Response) {
     goals, schools, companies, communities,
   } = parsed.data;
 
+  // eslint-disable-next-line no-restricted-syntax -- kişinin kendi kaydı, kimlik oturumdan (req.auth.userId)
   const user = await prisma.user.findUnique({
     where:  { id: req.auth.userId },
     select: { id: true, sectorTags: true, selfProfile: true },

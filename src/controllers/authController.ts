@@ -154,6 +154,7 @@ export async function register(req: Request, res: Response) {
     }
   }
 
+  // eslint-disable-next-line no-restricted-syntax -- bilinçli global e-posta araması: e-posta tüm kurumlarda tekil (kayıt tekilliği), yanıt kayıtlı/kayıtsız için aynı
   const existing = await prisma.user.findUnique({
     where: { email },
     select: { id: true, fullName: true },
@@ -293,6 +294,7 @@ export async function login(req: Request, res: Response) {
 
   const { email, password } = parsed.data;
 
+  // eslint-disable-next-line no-restricted-syntax -- giriş e-postayla global yapılır (e-posta tüm kurumlarda tekil); kurum oturuma kullanıcının kendi tenantId'sinden gelir
   const user = await prisma.user.findUnique({
     where: { email },
     select: {
@@ -415,6 +417,7 @@ export async function reapply(req: Request, res: Response) {
   if (!parsed.success) return parsed.response;
   const { email, password } = parsed.data;
 
+  // eslint-disable-next-line no-restricted-syntax -- e-posta+şifre ile kimlik doğrulama, e-posta global tekil; yalnız doğrulanan kişinin kendi hesabı etkilenir
   const user = await prisma.user.findUnique({
     where: { email },
     select: {
@@ -581,6 +584,7 @@ export async function forgotPassword(req: Request, res: Response) {
 
   const GENERIC_SUCCESS_MESSAGE = 'E-posta adresiniz kayıtlıysa şifre sıfırlama bağlantısı gönderildi.';
 
+  // eslint-disable-next-line no-restricted-syntax -- şifre sıfırlama e-postayla global arar (e-posta tüm kurumlarda tekil); yanıt her durumda aynı, bağlantı yalnız hesabın kendi e-postasına gider
   const user = await prisma.user.findUnique({
     where: { email: parsed.data.email },
     select: { id: true, fullName: true, email: true, authProvider: true, isActive: true },

@@ -152,6 +152,7 @@ export async function setVisibilityOptIn(req: RequestWithTenant, res: Response) 
 
   // cross-tenant kasıtlı: menti farklı tenant'tan olabilir (shared pool).
   // canCrossTenantMatch çağrısı hemen ardından izin kontrolünü yapar.
+  // eslint-disable-next-line no-restricted-syntax -- kurumlar arası erişim (paylaşılan havuz), ardından canCrossTenantMatch paylaşım iznini zorlar
   const menti = await prisma.user.findUnique({
     where: { id: parsed.data.mentiId },
     select: { id: true, role: true, isActive: true, tenantId: true },

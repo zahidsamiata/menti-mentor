@@ -222,6 +222,7 @@ export async function selfServeRegister(req: Request, res: Response) {
       where: { slug },
       select: { id: true, verificationStatus: true },
     }),
+    // eslint-disable-next-line no-restricted-syntax -- bilinçli global e-posta araması: e-posta tüm kurumlarda tekil (kayıt tekilliği), yanıt kayıtlı/kayıtsız için aynı
     prisma.user.findUnique({ where: { email }, select: { id: true, fullName: true } }),
   ]);
 
@@ -494,6 +495,7 @@ export async function getTenantPreview(req: Request, res: Response) {
   }
 
   // Admin'in DISC vektörünü oku (findUnique → RLS extension filtrelemez, doğrudan güvenli)
+  // eslint-disable-next-line no-restricted-syntax -- kişinin kendi kaydı, kimlik oturumdan (doğrulanmış token payload.sub)
   const admin = await prisma.user.findUnique({
     where:  { id: payload.sub },
     select: { discVector: true, discType: true },

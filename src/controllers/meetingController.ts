@@ -501,6 +501,7 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   // tenantId seçilir — başka alan dönmez/sızmaz. Mentör yoksa istek kurumu yine kontrol edilir;
   // gerisini aşağıdaki müsaitlik kontrolü (istek kurumunda) reddeder.
   // Varlık ifşası yok, jenerik hata.
+  // eslint-disable-next-line no-restricted-syntax -- mentörün ana kurumu bilinçli olarak istek kurumu dışında aranır (AJ-54 idari blok); yalnız tenantId seçilir
   const mentorHome = await prisma.user.findUnique({
     where:  { id: mentorUserId },
     select: { tenantId: true },

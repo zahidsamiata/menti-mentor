@@ -153,6 +153,7 @@ export async function submitFeedback(req: RequestWithTenant, res: Response) {
 export async function getMeetingFeedback(req: RequestWithTenant, res: Response) {
   const meetingId = req.params['meetingId'] as string;
 
+  // eslint-disable-next-line no-restricted-syntax -- hemen ardından feedback.meeting.tenantId istek kurumuyla eşleşmezse 404 döner (kurum kontrolü elle)
   const feedback = await prisma.feedback.findUnique({
     where: { meetingId },
     include: {

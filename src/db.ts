@@ -16,7 +16,9 @@ export function runWithTenant<T>(tenantId: string, fn: () => T): T {
 
 // ─── Tenant-Scoped Model Listesi ─────────────────────────────────────────────
 // Bu modeller tenantId sütunu taşır; okuma sorgularına otomatik filtre enjekte edilir.
-const TENANT_SCOPED = new Set([
+// AJ-75: dışa açık — `eslint.config.mjs` TENANT_SCOPED_MODELS aynı listeyi tutar (findUnique bekçisi);
+// eşitliği `tests/eslint-tenant-findunique.unit.test.ts` ölçer. Buraya model eklerken oraya da ekleyin.
+export const TENANT_SCOPED = new Set([
   'User',
   'VisibilityOptIn',
   'MatchRequest',
