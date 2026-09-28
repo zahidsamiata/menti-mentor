@@ -25,6 +25,7 @@ import { prisma } from '../db.js';
 import { applyKAnonymity } from '../services/mask.js';
 import { maskEmail } from '../services/mask.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
+import { ACTIVE_KVKK_CONSENT_SELECT, hasActiveKvkkConsent } from '../services/consentIndicator.js';
 
 const ROLES = ['ADMIN', 'MENTOR', 'MENTI'] as const;
 const MEETING_STATUSES = [
@@ -183,7 +184,8 @@ export async function getTenantMembers(req: Request, res: Response) {
             fullName: true,
             email: true,
             discType: true,
-            kvkkConsentAt: true,
+            // AJ-88: rıza durumu Consent tablosundan (aktif ACIK_RIZA) — eski kvkkConsentAt DEĞİL.
+            consents: ACTIVE_KVKK_CONSENT_SELECT,
           },
         },
       },
@@ -201,7 +203,7 @@ export async function getTenantMembers(req: Request, res: Response) {
     certificationStatus: m.certificationStatus,
     isCertified: m.isCertified,
     learningJourneyCompletedAt: m.learningJourneyCompletedAt,
-    hasKvkkConsent: m.user.kvkkConsentAt != null,
+    hasKvkkConsent: hasActiveKvkkConsent(m.user.consents),
   }));
 
   await audit('VIEW_TENANT_MEMBERS', tenantId, req, { role: role ?? 'ALL', page });
@@ -236,7 +238,8 @@ export async function getTenantUserDetail(req: Request, res: Response) {
           fullName: true,
           email: true,
           discType: true,
-          kvkkConsentAt: true,
+          // AJ-88: rıza durumu Consent tablosundan (aktif ACIK_RIZA) — eski kvkkConsentAt DEĞİL.
+          consents: ACTIVE_KVKK_CONSENT_SELECT,
         },
       },
     },
@@ -259,7 +262,7 @@ export async function getTenantUserDetail(req: Request, res: Response) {
     certificationStatus: membership.certificationStatus,
     isCertified: membership.isCertified,
     learningJourneyCompletedAt: membership.learningJourneyCompletedAt,
-    hasKvkkConsent: membership.user.kvkkConsentAt != null,
+    hasKvkkConsent: hasActiveKvkkConsent(membership.user.consents),
   });
 }
 
