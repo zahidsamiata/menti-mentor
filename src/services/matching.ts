@@ -1,6 +1,6 @@
 import type { DiscType } from '@prisma/client';
 import { prisma } from '../db.js';
-import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, type DiscVector } from './scoring.js';
+import { computeTotalScore, isAntiMatch, computeMentorQualityMultiplier, parseDiscVector } from './scoring.js';
 import { getAlgorithmWeights } from './algorithmTuner.js';
 import { areTimeCommitmentsCompatible } from './temperamentAnalysis.js';
 import { computeProfileCompleteness } from './profile-completeness.service.js';
@@ -298,7 +298,7 @@ type Candidate = {
   tenantId: string;
   sectorTags: string[];
   discType: string | null;
-  discVector: unknown;          // DB'den gelen JSON — DiscVector olarak cast edilir
+  discVector: unknown;          // DB'den gelen JSON — parseDiscVector ile doğrulanır (AJ-94)
   skills: string[];
   avatarUrl: string | null;
   timeCommitment: string | null;
@@ -347,8 +347,9 @@ function scoreAndFilter(
 
     if (opts.applyAntiMatch && isAntiMatch(mentor.discType as any, c.discType as any)) continue;
 
-    // Kesirli vektörü güvenli şekilde cast et
-    const mentiVector = opts.sectorOnly ? null : (c.discVector as DiscVector | null);
+    // AJ-94: kesirli vektör doğrulanarak okunur — bozuk kayıt (eksik anahtar, metin, NaN) null →
+    // vektörsüz adayla aynı yol (matris). Geçerli vektörde skor birebir aynı.
+    const mentiVector = opts.sectorOnly ? null : parseDiscVector(c.discVector);
 
     const interactionBonus =
       !opts.sectorOnly &&
@@ -525,7 +526,8 @@ export async function rankMentorsForMenti(args: {
     ? rawMentors.filter((m) => !blockedMentorIds.has(m.id))
     : rawMentors;
 
-  const mentiVector = menti.discVector as DiscVector | null;
+  // AJ-94: doğrulamalı okuma — bozuk vektör null → vektörsüz menti yolu (matris).
+  const mentiVector = parseDiscVector(menti.discVector);
 
   // Tenant-özel skor ağırlığını .map() döngüsünden ÖNCE bir kez oku (N+1 yasak).
   // Hata → varsayılan 0.6/0.4 (patlama yok).

@@ -5,7 +5,11 @@
 
 export type OceanKey = 'o' | 'c' | 'e' | 'a' | 'n';
 
-export interface DiscVector {
+// AJ-94 (md.169): önceki adı `DiscVector` idi; `scoring.ts`'teki eşleştirme `DiscVector`'ü
+// (büyük harf D/I/S/C + confidence, 0-1 oran) ile AYNI adı taşıyordu ama farklı bir yapı:
+// küçük harf anahtar, confidence yok, OCEAN ölçeğinde (0-100) değer ya da ağırlık satırı.
+// Birleştirilemez (farklı anahtar + ölçek) → ayrışan adla yeniden adlandırıldı.
+export interface DiscAxisValues {
   d: number;
   i: number;
   s: number;
@@ -20,7 +24,7 @@ export interface OceanVector {
   n: number;
 }
 
-export const DISC_TO_OCEAN_WEIGHTS: Record<OceanKey, DiscVector> = {
+export const DISC_TO_OCEAN_WEIGHTS: Record<OceanKey, DiscAxisValues> = {
   o: { d: 0.1,  i: 0.4,  s: -0.3, c: -0.2 },
   c: { d: 0.3,  i: -0.1, s: 0.1,  c: 0.6  },
   e: { d: 0.4,  i: 0.6,  s: -0.2, c: -0.3 },

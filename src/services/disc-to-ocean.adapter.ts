@@ -1,6 +1,6 @@
 import type { UserRole } from '@prisma/client';
 import {
-  type DiscVector,
+  type DiscAxisValues,
   type OceanKey,
   type OceanVector,
   ARCHETYPE_THRESHOLDS,
@@ -19,11 +19,11 @@ const clamp = (x: number): number => Math.max(0, Math.min(100, x));
  * [49.75,50.30]'a sıkışıyor ve `ARCHETYPE_THRESHOLDS` (60/55/45) hiçbir zaman aşılamıyordu →
  * `deriveArchetype` her zaman varsayılan M1/m1'e düşüyordu.
  */
-export function toOceanScale(disc: { D: number; I: number; S: number; C: number }): DiscVector {
+export function toOceanScale(disc: { D: number; I: number; S: number; C: number }): DiscAxisValues {
   return { d: disc.D * 100, i: disc.I * 100, s: disc.S * 100, c: disc.C * 100 };
 }
 
-export function discToOcean(disc: DiscVector): OceanVector {
+export function discToOcean(disc: DiscAxisValues): OceanVector {
   const project = (key: OceanKey): number => {
     const w = DISC_TO_OCEAN_WEIGHTS[key];
     const raw = w.d * disc.d + w.i * disc.i + w.s * disc.s + w.c * disc.c;

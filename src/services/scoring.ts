@@ -17,6 +17,37 @@ export type DiscVector = {
   confidence: number;
 };
 
+/**
+ * AJ-94 (md.168): DB'den gelen `Json` değerini `DiscVector`'e DOĞRULAYARAK çevirir.
+ * Beş alanın (D/I/S/C/confidence) hepsi sonlu sayı değilse `null` döner → çağıran "vektörü
+ * olmayan kullanıcı" yoluna düşer (matris/discType yedeği). Doğrulamasız `as DiscVector`
+ * dönüşümü bozuk bir kayıtta (eksik anahtar, metin, NaN) sessizce NaN/yanlış skor üretiyordu.
+ * Saf fonksiyon (DB yok) — eşleştirme, analitik ve discVectorService aynı kapıyı kullanır.
+ */
+export function parseDiscVector(raw: unknown): DiscVector | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const v = raw as Record<string, unknown>;
+  const D = v['D'];
+  const I = v['I'];
+  const S = v['S'];
+  const C = v['C'];
+  const confidence = v['confidence'];
+  if (
+    !isFiniteNumber(D) ||
+    !isFiniteNumber(I) ||
+    !isFiniteNumber(S) ||
+    !isFiniteNumber(C) ||
+    !isFiniteNumber(confidence)
+  ) {
+    return null;
+  }
+  return { D, I, S, C, confidence };
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 const ANTI_MATCH_RULES: Array<{ mentorDisc: DiscType; mentiDisc: DiscType }> = [
   { mentorDisc: 'D', mentiDisc: 'S' },
 ];
