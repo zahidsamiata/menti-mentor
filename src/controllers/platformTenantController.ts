@@ -171,7 +171,7 @@ export async function getTenantMembers(req: Request, res: Response) {
       take: PAGE_SIZE,
       // AJ-119: eşit createdAt'te sıra belirsizdi → offset sayfalamasında sayfa sınırında
       // üye tekrar eder/kaybolur. İkincil anahtar id (birincil yönle aynı) sırayı tekil kılar.
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      orderBy: { createdAt: 'asc' },
       select: {
         id: true,
         role: true,
@@ -289,7 +289,7 @@ export async function getTenantMeetings(req: Request, res: Response) {
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
       // AJ-119: eşit startsAt'te kararlı sayfalama için ikincil anahtar id (birincil yönle aynı).
-      orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+      orderBy: { startsAt: 'desc' },
       select: {
         id: true,
         startsAt: true,
