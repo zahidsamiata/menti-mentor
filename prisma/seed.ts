@@ -4,6 +4,8 @@
  * Çalıştırma: npx tsx prisma/seed.ts
  */
 
+// AJ-57: İLK import kalmalı — onay yoksa diğer modüller (PrismaClient) yüklenmeden çıkar.
+import './seed-approval-gate.js';
 import bcrypt from 'bcryptjs';
 import {
   PrismaClient, DiscType, TimeCommitment, InteractionStyle, QuestionType, DiscDimension,
