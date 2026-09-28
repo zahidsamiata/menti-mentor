@@ -8,7 +8,15 @@
  * İş 5: Anlaşma yenileme cron'u
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// AJ-58: cron artık e-posta GERÇEKTEN gitmediyse feedbackPrompted yazmıyor. CI'da SMTP yok
+// (send() false döner) → hatırlatma e-postası sahte; varsayılan "gönderildi", testte değiştirilebilir.
+const { feedbackReminderMock } = vi.hoisted(() => ({ feedbackReminderMock: vi.fn() }));
+vi.mock('../src/services/emailService.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/services/emailService.js')>();
+  return { ...actual, sendFeedbackReminderEmail: feedbackReminderMock };
+});
 import { agent, loginAs, tenantHeaders, type TestAgent } from './helpers/request.js';
 import { cleanDb, testPrisma } from './helpers/db.js';
 import { createTenant, createAdminUser, createUser, createMentor, createMenti } from './helpers/factories.js';
@@ -201,6 +209,8 @@ describe('İş 3: runFeedbackReminderCron', () => {
     const menti  = await createUser({ tenantId: tenant.id, role: 'MENTI' });
     mentorId = mentor.id;
     mentiId  = menti.id;
+    feedbackReminderMock.mockReset();
+    feedbackReminderMock.mockResolvedValue(true);
   });
 
   it('tamamlanmış ve feedback eksik toplantıya hatırlatma gönderir + feedbackPrompted=true', async () => {
@@ -222,6 +232,29 @@ describe('İş 3: runFeedbackReminderCron', () => {
 
     const updated = await testPrisma.meeting.findUnique({ where: { id: meeting.id } });
     expect(updated?.feedbackPrompted).toBe(true);
+  });
+
+  it('AJ-58: e-posta hiçbir tarafa gitmezse feedbackPrompted=false kalır, sonraki cron yeniden dener', async () => {
+    const meeting = await testPrisma.meeting.create({
+      data: {
+        tenantId:     tenant.id,
+        mentorUserId: mentorId,
+        mentiUserId:  mentiId,
+        startsAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+        endsAt:   new Date(Date.now() - 2 * 60 * 60 * 1000),
+        status:   'COMPLETED',
+        hasFeedback:      false,
+        feedbackPrompted: false,
+      },
+    });
+
+    feedbackReminderMock.mockResolvedValue(false);
+    expect((await runFeedbackReminderCron()).sent).toBe(0);
+    expect((await testPrisma.meeting.findUnique({ where: { id: meeting.id } }))?.feedbackPrompted).toBe(false);
+
+    feedbackReminderMock.mockResolvedValue(true);
+    expect((await runFeedbackReminderCron()).sent).toBe(1);
+    expect((await testPrisma.meeting.findUnique({ where: { id: meeting.id } }))?.feedbackPrompted).toBe(true);
   });
 
   it('feedbackPrompted=true olan toplantıya tekrar göndermez', async () => {
