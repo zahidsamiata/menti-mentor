@@ -24,6 +24,13 @@ function tokenFor(u: Pick<User, 'id' | 'tenantId' | 'role' | 'fullName'>): strin
   return signToken({ sub: u.id, tenantId: u.tenantId, role: u.role, fullName: u.fullName });
 }
 
+/** Fabrika varsayılan discType atar; DISC'i bitirmemiş kullanıcı için tip temizlenir. */
+async function withoutDisc<T extends { id: string }>(userPromise: Promise<T>): Promise<T> {
+  const u = await userPromise;
+  await testPrisma.user.update({ where: { id: u.id }, data: { discType: null } });
+  return u;
+}
+
 /** DISC bitişinin gerçek izi: tamamlama yolları (onboarding/adaptif test) `discType` yazar. */
 async function markDiscDone(userId: string) {
   await testPrisma.user.update({ where: { id: userId }, data: { discType: 'D' } });
@@ -54,7 +61,7 @@ describe('AJ-78: yönetici KPI — tamamlama oranları ve tamamlanan görüşme'
       await markDiscDone(m.id);
       mentisA.push(m);
     }
-    await createMenti(tenantA.id, { approvalStatus: 'PENDING' });
+    await withoutDisc(createMenti(tenantA.id, { approvalStatus: 'PENDING' }));
     await addMeeting(tenantA.id, mentorA.id, mentisA[0]!.id, 'COMPLETED');
     await addMeeting(tenantA.id, mentorA.id, mentisA[1]!.id, 'COMPLETED');
     await addMeeting(tenantA.id, mentorA.id, mentisA[2]!.id, 'SCHEDULED'); // tamamlanmamış — sayılmaz
@@ -117,7 +124,7 @@ describe('AJ-78: yönetici KPI — tamamlama oranları ve tamamlanan görüşme'
     const tenant = await createTenant();
     const admin = await createAdminUser(tenant.id);
     const mentis = [];
-    for (let i = 0; i < 5; i++) mentis.push(await createMenti(tenant.id));
+    for (let i = 0; i < 5; i++) mentis.push(await withoutDisc(createMenti(tenant.id)));
     await markDiscDone(mentis[0]!.id);
 
     const res = await http.get(KPI_URL).set(tenantHeaders(tenant.id, tokenFor(admin))).expect(200);
@@ -129,9 +136,9 @@ describe('AJ-78: yönetici KPI — tamamlama oranları ve tamamlanan görüşme'
     const tenantA = await createTenant({ name: 'Kurum A' });
     const tenantB = await createTenant({ name: 'Kurum B' });
     const adminA = await createAdminUser(tenantA.id);
-    const mentorA = await createMentor(tenantA.id);
+    const mentorA = await withoutDisc(createMentor(tenantA.id));
     const mentisA = [];
-    for (let i = 0; i < 3; i++) mentisA.push(await createMenti(tenantA.id));
+    for (let i = 0; i < 3; i++) mentisA.push(await withoutDisc(createMenti(tenantA.id)));
     await markDiscDone(mentisA[0]!.id); // DISC: 1/4 → gizli
     for (const m of mentisA) await addMeeting(tenantA.id, mentorA.id, m.id, 'COMPLETED');
 
@@ -159,7 +166,7 @@ describe('AJ-78: yönetici KPI — tamamlama oranları ve tamamlanan görüşme'
     const admin = await createAdminUser(tenant.id);
     // Davetle gelen kullanıcı kayıtta APPROVED: bekleme odası bildirimi (discAssessmentCompletedAt) hiç yazılmaz.
     for (let i = 0; i < 3; i++) await createMenti(tenant.id, { approvalStatus: 'APPROVED', discType: 'S' });
-    await createMenti(tenant.id); // DISC'i bitirmemiş
+    await withoutDisc(createMenti(tenant.id)); // DISC'i bitirmemiş
     const invited = await testPrisma.user.count({ where: { tenantId: tenant.id, discAssessmentCompletedAt: { not: null } } });
     expect(invited).toBe(0);
 

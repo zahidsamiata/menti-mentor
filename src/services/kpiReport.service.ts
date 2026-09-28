@@ -206,7 +206,7 @@ const SUPPRESSED_NOTE =
 
 const SUPPRESSED_GROUP_NOTE =
   `Gizlilik için hem grupta hem tamamlayanlarda en az ${K_ANONYMITY_THRESHOLD} kişi gerekir; kişilerin durumu tek tek okunamasın diye gösterilmiyor.`;
-const REGISTRATION_DEFINITION = 'Aktif mentör ve mentilerden hesabı onaylanmış olanlar (onay kullanıcı düzeyindedir, kuruma özel değildir).';
+const REGISTRATION_DEFINITION = 'Aktif mentör ve mentilerden hesabı onaylanmış olanlar (onay kullanıcı düzeyindedir — kuruma özel değildir).';
 const DISC_DEFINITION = 'Aktif mentör ve mentilerden DISC değerlendirmesini bitirenler.';
 
 export const KPI_CSV_HEADER = ['Bölüm', 'Metrik', 'Değer', 'Açıklama'] as const;
