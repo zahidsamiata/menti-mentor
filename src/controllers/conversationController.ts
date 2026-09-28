@@ -160,9 +160,9 @@ export async function startConversation(req: RequestWithTenant, res: Response) {
   // KR-19: idari blok kontrolü — taraflardan HERHANGİ BİRİNİN tenant'ında (menti veya
   // mentörün home tenant'ı) bu çift bloklanmışsa konuşma başlatılamaz. Cross-tenant
   // (shared pool) senaryosunda blok hangi tarafın admin'i koyduysa o tarafta durabilir,
-  // bu yüzden İKİ tenant da kontrol edilir (rankMentisForMentor/rankMentorsForMenti'nin
-  // aksine — oradaki "yalnız kendi tenant'ı" kısayolu liste sıralaması için yeterliyken,
-  // burada tek bir eylemi (konuşma açma) engellemek için her iki taraf da kontrol edilir).
+  // bu yüzden İKİ tenant da kontrol edilir. Aynı kural eşleşme isteği (requestController),
+  // randevu talebi (meetingController.bookMeeting, AJ-54) ve liste sıralaması
+  // (matching.ts buildListBlockedSet — havuz kurumlarının blokları dahil) için de geçerlidir.
   // Varlık ifşası YOK: blok bilgisi kullanıcıya sızdırılmaz, jenerik hata döner.
   if (await isPairBlockedInTenants([tenantId, mentor.tenantId], mentiId, mentor.id)) {
     return res.status(403).json({
