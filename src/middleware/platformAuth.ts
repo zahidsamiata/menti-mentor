@@ -35,7 +35,9 @@ export async function requirePlatformAdmin(req: Request, res: Response, next: Ne
   // AJ-51: bellek listesinde yoksa DB'deki çıkış kaydına bakılır — sunucu yeniden başladıktan sonra
   // da çıkış yapılmış anahtar reddedilir. Yanıt bellek-içi iptal yoluyla (verifyPlatformToken → null)
   // AYNI: 403 YETKISIZ — yeniden başlatma öncesi/sonrası davranış farkı yok.
-  const session = await resolvePlatformSession(payload);
+  // MUTASYON (AJ-51): DB çıkış kaydı kontrolü devre dışı — uçtan uca test KIRMIZI olmalı.
+  void resolvePlatformSession;
+  const session = { ok: true } as { ok: boolean };
   if (!session.ok) {
     return res.status(403).json(PLATFORM_FORBIDDEN_BODY);
   }
