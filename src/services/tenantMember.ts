@@ -30,7 +30,7 @@ export async function findTenantMember<S extends Prisma.UserSelect>(
   select: S,
 ): Promise<TenantMember<S> | null> {
   const membership = await prisma.tenantMembership.findFirst({
-    where: { tenantId, userId, isActive: true },
+    where: { tenantId, userId, isActive: true, user: { tenantId } }, // MUTASYON: ev-sahibi kuruma geri
     select: { role: true, user: { select: { ...select, tenantId: true } } },
   });
   if (!membership) return null;

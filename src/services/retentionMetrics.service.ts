@@ -79,6 +79,7 @@ export async function computeHealthMetrics(
     tenantId,
     isActive: true,
     user: {
+      tenantId, // MUTASYON: ev-sahibi kuruma geri
       isActive: true,
       approvalStatus: 'APPROVED' as const,
       OR: [

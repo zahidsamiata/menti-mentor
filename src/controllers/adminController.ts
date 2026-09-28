@@ -304,7 +304,7 @@ export async function adminListUsers(req: RequestWithTenant, res: Response) {
     // AJ-56: üyelikten — ev-sahibi kurumu başka olan (misafir) yöneticinin adı da çözülür; kurum
     // filtresi üyelik satırında (yalnız bu kurumun üyeleri → çapraz-kurum isim sızmaz).
     const admins = await prisma.tenantMembership.findMany({
-      where: { tenantId: req.tenant.tenantId, userId: { in: adminIds } },
+      where: { tenantId: req.tenant.tenantId, userId: { in: adminIds }, user: { tenantId: req.tenant.tenantId } }, // MUTASYON
       select: { user: { select: { id: true, fullName: true } } },
     });
     for (const { user: a } of admins) nameById.set(a.id, a.fullName);
