@@ -1,6 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyPlatformToken, PLATFORM_AUDIENCE } from './jwtAuth.js';
 import { PLATFORM_COOKIE } from '../controllers/platformController.js';
+import { resolvePlatformSession } from '../services/platformSessionRevocation.js';
+
+const PLATFORM_FORBIDDEN_BODY = { error: 'YETKISIZ', message: 'Bu endpoint yalnızca platform yöneticisine açıktır.' } as const;
 
 function parseCookieToken(cookieHeader: string | undefined): string | null {
   if (!cookieHeader) return null;
@@ -13,7 +16,7 @@ function parseCookieToken(cookieHeader: string | undefined): string | null {
   return null;
 }
 
-export function requirePlatformAdmin(req: Request, res: Response, next: NextFunction) {
+export async function requirePlatformAdmin(req: Request, res: Response, next: NextFunction) {
   const token = parseCookieToken(req.headers.cookie);
   if (!token) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Platform oturumu gerekli.' });
@@ -26,7 +29,15 @@ export function requirePlatformAdmin(req: Request, res: Response, next: NextFunc
   // geçerli sayılmasını imkânsız kılar. Eski (aud'suz) platform token'ları geçersizdir
   // → yeniden giriş gerekir (bilinçli güvenlik kesiti).
   if (!payload || !payload.isPlatformAdmin || payload.aud !== PLATFORM_AUDIENCE) {
-    return res.status(403).json({ error: 'YETKISIZ', message: 'Bu endpoint yalnızca platform yöneticisine açıktır.' });
+    return res.status(403).json(PLATFORM_FORBIDDEN_BODY);
+  }
+
+  // AJ-51: bellek listesinde yoksa DB'deki çıkış kaydına bakılır — sunucu yeniden başladıktan sonra
+  // da çıkış yapılmış anahtar reddedilir. Yanıt bellek-içi iptal yoluyla (verifyPlatformToken → null)
+  // AYNI: 403 YETKISIZ — yeniden başlatma öncesi/sonrası davranış farkı yok.
+  const session = await resolvePlatformSession(payload);
+  if (!session.ok) {
+    return res.status(403).json(PLATFORM_FORBIDDEN_BODY);
   }
 
   next();

@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { signToken, verifyPlatformToken, PLATFORM_AUDIENCE } from '../middleware/jwtAuth.js';
-import { revokeAccessToken } from '../services/accessTokenRevocation.js';
+import { recordPlatformLogout } from '../services/platformSessionRevocation.js';
 import { logger } from '../services/logger.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { detectAnomalies } from '../services/abuseDetection.service.js';
@@ -95,7 +95,14 @@ export async function platformLogout(req: Request, res: Response) {
   // AJ-87: platform çerezi platform türünde doğrulanır (erişim doğrulayıcısı platform anahtarını reddeder).
   const payload = token ? verifyPlatformToken(token) : null;
   if (payload?.jti && payload.exp) {
-    revokeAccessToken(payload.jti, payload.exp);
+    // AJ-51: iptal bellek listesine + SystemLog'a yazılır (sunucu yeniden başlasa da geçerli —
+    // bkz. services/platformSessionRevocation.ts). DB yazımı başarısız olursa çıkış yine
+    // tamamlanır (çerez silinir, bu süreçte bellek iptali geçerli); hata kalıcı olarak loglanır.
+    try {
+      await recordPlatformLogout(payload.jti, payload.exp);
+    } catch {
+      void logger.error('AUTH', 'Platform çıkış kaydı DB\'ye yazılamadı — iptal yalnız bellekte');
+    }
   }
 
   res.clearCookie(PLATFORM_COOKIE, { ...PLATFORM_COOKIE_OPTS, maxAge: 0 });
