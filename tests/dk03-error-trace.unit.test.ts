@@ -62,7 +62,7 @@ describe('DK-03 · scrubStackTrace', () => {
   });
 
   it('PII içermeyen iz AYNEN kalır', () => {
-    const plain = "TypeError: Cannot read properties of undefined (reading 'id')\n    at f (/srv/a.js:1:2)";
+    const plain = 'TypeError: Cannot read properties of undefined (reading id)\n    at f (/srv/a.js:1:2)';
     expect(scrubStackTrace(plain)).toBe(plain);
   });
 
@@ -72,12 +72,67 @@ describe('DK-03 · scrubStackTrace', () => {
     expect(out.endsWith('[kesildi]')).toBe(true);
   });
 
-  it('uzun, eşleşmeyen girdide doğrusal kalır (karesel süre yok)', () => {
-    const started = Date.now();
-    scrubStackTrace(`${'a'.repeat(15_000)}?${'b'.repeat(900)}`);
-    scrubStackTrace('"'.repeat(15_000));
-    scrubStackTrace('1 '.repeat(7_000));
-    expect(Date.now() - started).toBeLessThan(1_000);
+  it('600+ karakterlik çift tırnaklı değer (uzun bio + ad) maskelenir', () => {
+    const longBio = `${QUOTED_NAME} ${'uzun biyografi metni '.repeat(40)}`;
+    expect(longBio.length).toBeGreaterThan(600);
+    const out = scrubStackTrace(`Invalid value: { biosummary: "${longBio}", x: 1 }\n    at f (/srv/a.js:1:2)`);
+    expect(out).not.toContain(QUOTED_NAME);
+    expect(out).not.toContain('biyografi');
+    expect(out).toContain('x: 1 }');
+    expect(out).toContain('/srv/a.js:1:2');
+  });
+
+  it('kapanmayan çift tırnak (kesilmiş döküm) satır sonuna kadar maskelenir, sonraki satır kalır', () => {
+    const out = scrubStackTrace(`data: { fullName: "${QUOTED_NAME} ve devamı kesildi\n    at g (/srv/b.js:3:4)`);
+    expect(out).not.toContain(QUOTED_NAME);
+    expect(out).not.toContain('devamı');
+    expect(out).toContain('at g (/srv/b.js:3:4)');
+  });
+
+  it('tek tırnaklı değer maskelenir', () => {
+    const out = scrubStackTrace(`Invalid input for user '${QUOTED_NAME}' (reading 'fullName')`);
+    expect(out).not.toContain(QUOTED_NAME);
+    expect(out).toContain(`'${REDACTED}'`);
+  });
+
+  it('Postgres Key (sütun)=(değer) ayrıntısında değer maskelenir, sütun kalır', () => {
+    const out = scrubStackTrace(`DETAIL: Key (email, full_name)=(${EMAIL}, ${QUOTED_NAME}) already exists.\n    at q (/srv/c.js:5:6)`);
+    expect(out).not.toContain(QUOTED_NAME);
+    expect(out).not.toContain('ornek.kisi');
+    expect(out).toContain('Key (email, full_name)=([gizli])');
+    expect(out).toContain('/srv/c.js:5:6');
+  });
+
+  it('parantezli telefon biçimleri maskelenir', () => {
+    for (const phone of ['+90(555)1234567', '+90 (555) 123-45-67', '(0555) 123 45 67']) {
+      const out = scrubStackTrace(`iletişim ${phone} ile kayıt`);
+      expect(out, phone).not.toMatch(/555/);
+      expect(out, phone).toContain(REDACTED);
+    }
+  });
+
+  it('kötü niyetli 16k girdide her desen doğrusal kalır (< 50 ms)', () => {
+    const inputs = [
+      `${'a'.repeat(15_000)}?${'b'.repeat(900)}`,
+      '"'.repeat(16_000),
+      `"${'\\'.repeat(15_998)}`,
+      "\\'".repeat(8_000),
+      "'".repeat(16_000),
+      `"${'a\\"'.repeat(5_300)}`,
+      '1 '.repeat(8_000),
+      '(1'.repeat(8_000),
+      'Key ('.repeat(3_200),
+      `Key (${'a'.repeat(15_990)}`,
+      'eyJ'.repeat(5_300),
+      `x@${'a.'.repeat(7_990)}`,
+      '?a='.repeat(5_300),
+    ];
+    scrubStackTrace(inputs[0]!); // ısınma (JIT)
+    for (const input of inputs) {
+      const started = performance.now();
+      scrubStackTrace(input);
+      expect(performance.now() - started, input.slice(0, 12)).toBeLessThan(50);
+    }
   });
 });
 
