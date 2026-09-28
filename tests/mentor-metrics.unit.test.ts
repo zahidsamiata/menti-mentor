@@ -48,8 +48,8 @@ describe('buildMentorMetricsResponse — P-12 sertifika durumu', () => {
 describe('buildMentorMetricsResponse — P-13 aktif menti listesi', () => {
   it('activeMentis sayısı liste uzunluğuna eşit (sayı ↔ liste tutarlı)', () => {
     const mentees = [
-      { id: 'a', fullName: 'Ada' },
-      { id: 'b', fullName: 'Bora' },
+      { id: 'a', fullName: 'Birinci Menti' },
+      { id: 'b', fullName: 'İkinci Menti' },
     ];
     const out = buildMentorMetricsResponse({ ...base, activeMentees: mentees });
     expect(out.activeMentis).toBe(2);
