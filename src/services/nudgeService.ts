@@ -29,10 +29,8 @@ export async function wasRecentlyNudged(tenantId: string, targetUserId: string):
       createdAt: { gt: cutoff },
       // AJ-56: limit KURUM başınadır. Misafir üye (ev-sahibi kurumu başka) birden çok kurumun üyesi
       // olabilir; yalnız targetUserId ile süzmek başka kurumun dürtmesini bu kuruma 429 olarak sızdırır.
-      AND: [
-        { meta: { path: ['targetUserId'], equals: targetUserId } },
-        { meta: { path: ['tenantId'], equals: tenantId } },
-      ],
+      meta: { path: ['targetUserId'], equals: targetUserId }, // MUTASYON: kurum başına limit yok
+      ...(tenantId ? {} : {}),
     },
     select: { id: true },
   });
