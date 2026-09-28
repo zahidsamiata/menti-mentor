@@ -31,6 +31,11 @@ import { prisma } from '../db.js';
 import { logger } from './logger.js';
 import { deleteLocalAvatar } from './avatarStorage.js';
 import { revokeConsent } from './consentService.js';
+import {
+  MEMBERSHIP_EXPORT_SELECT,
+  type MembershipExport,
+  type MembershipExportScope,
+} from './gdprMembershipExport.js';
 
 const JsonNull = Prisma.JsonNull;
 
@@ -312,19 +317,68 @@ export type UserDataExport = {
   consents: Array<Record<string, unknown>>;
   /** Yalnız SAYI — mesaj içeriği KARŞI TARAFI da içerir, dışa aktarılmaz (PII sızıntısı önlemi). */
   messageCount: number;
+  /**
+   * AJ-124: kurum üyelikleri (rol, sertifika, öğrenme yolculuğu, katılım tarihi). Kapsam
+   * `membershipScope`'a göre: kendi isteğinde TÜM kurumlar, yönetici isteğinde yalnız o kurum.
+   * Alan listesi + hariç tutma gerekçeleri: gdprMembershipExport.ts.
+   */
+  memberships: MembershipExport[];
 };
 
-export async function exportUserData(userId: string, tenantId: string): Promise<UserDataExport> {
-  const [user, responses, feedbackLogs, matchRequests, consents, messageCount] = await Promise.all([
-    prisma.user.findFirst({
-      where: { id: userId, tenantId },
+/** Dışa aktarılan profil alanları (explicit select — password/hash yok). */
+const EXPORT_PROFILE_SELECT = {
+  id: true, role: true, email: true, fullName: true,
+  discType: true, discVector: true, sectorTags: true,
+  skills: true, bioSummary: true, expertiseDetails: true,
+  selfProfile: true, createdAt: true, updatedAt: true,
+} as const satisfies Prisma.UserSelect;
+
+/**
+ * Dışa aktarılan kişinin profil + üyelik kaydını okur.
+ *
+ * 'all' (YALNIZ kişinin KENDİ isteği — controller userId'yi oturumdan/kendi-kontrolünden verir):
+ *   Kurum filtresi (src/db.ts RLS eklentisi) BİLİNÇLİ olarak aşılır — `findUnique` eklentinin
+ *   READ_OPS'u dışındadır ve iç içe `memberships` seçimi ayrı bir üst düzey sorgu olmadığı için
+ *   filtrelenmez. NEDEN: KVKK Md.11 erişim hakkı kişinin TÜM kurum üyeliklerini kapsar; ayrıca
+ *   kişi ev kurumu dışındaki (misafir üyesi olduğu) kurumun oturumundayken de kendi kaydı
+ *   bulunabilmeli (önceden `{ id, tenantId: istek kurumu }` araması bulamıyor → 500). Sorgu yalnız
+ *   `where: { id: userId }` ile tek kişiye bağlı; başka kişinin satırı dönemez.
+ * 'requestTenant' (yönetici başkasını dışa aktarıyor): DEĞİŞMEDİ — kişi istek kurumunun kaydı
+ *   olmalı (`findFirst { id, tenantId }`), üyelik yalnız o kurumdaki.
+ */
+async function findExportSubject(userId: string, tenantId: string, scope: MembershipExportScope) {
+  if (scope === 'all') {
+    // eslint-disable-next-line no-restricted-syntax -- AJ-124: kişinin KENDİ KVKK dışa aktarımı; tüm kurum üyelikleri bilinçli olarak okunur, sorgu yalnız kendi id'sine bağlı (bkz. üstteki yorum).
+    return prisma.user.findUnique({
+      where: { id: userId },
       select: {
-        id: true, role: true, email: true, fullName: true,
-        discType: true, discVector: true, sectorTags: true,
-        skills: true, bioSummary: true, expertiseDetails: true,
-        selfProfile: true, createdAt: true, updatedAt: true,
+        ...EXPORT_PROFILE_SELECT,
+        memberships: { select: MEMBERSHIP_EXPORT_SELECT, orderBy: { createdAt: 'asc' } },
       },
+    });
+  }
+  const [user, memberships] = await Promise.all([
+    prisma.user.findFirst({ where: { id: userId, tenantId }, select: EXPORT_PROFILE_SELECT }),
+    prisma.tenantMembership.findMany({
+      where: { userId, tenantId },
+      select: MEMBERSHIP_EXPORT_SELECT,
+      orderBy: { createdAt: 'asc' },
     }),
+  ]);
+  return user ? { ...user, memberships } : null;
+}
+
+/**
+ * @param membershipScope 'all' yalnız kişinin KENDİ isteğinde verilir (self-servis). Varsayılan
+ *   'requestTenant' — güvenli taraf: başka biri dışa aktarırken kişinin diğer kurum üyelikleri sızmaz.
+ */
+export async function exportUserData(
+  userId: string,
+  tenantId: string,
+  membershipScope: MembershipExportScope = 'requestTenant',
+): Promise<UserDataExport> {
+  const [subject, responses, feedbackLogs, matchRequests, consents, messageCount] = await Promise.all([
+    findExportSubject(userId, tenantId, membershipScope),
     prisma.userResponse.findMany({
       where: { userId },
       select: { questionId: true, value: true, createdAt: true },
@@ -347,9 +401,10 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
     prisma.message.count({ where: { senderUserId: userId } }),
   ]);
 
-  if (!user) {
+  if (!subject) {
     throw new GdprUserNotFoundError();
   }
+  const { memberships, ...user } = subject;
 
   void logger.info('SYSTEM', 'KVKK: Kullanıcı veri dışa aktarımı yapıldı', { userId, tenantId });
 
@@ -362,6 +417,7 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
     matchRequests: matchRequests as Array<Record<string, unknown>>,
     consents: consents as Array<Record<string, unknown>>,
     messageCount,
+    memberships,
   };
 }
 

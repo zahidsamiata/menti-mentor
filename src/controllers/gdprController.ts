@@ -82,7 +82,11 @@ export async function exportUserDataHandler(req: RequestWithTenant, res: Respons
     return res.status(403).json({ error: 'YETKISIZ', message: 'Yalnızca kullanıcı kendi verisini veya admin export edebilir.' });
   }
 
-  const result = await withUserNotFound(res, () => exportUserData(parsed.data.id, req.tenant.tenantId));
+  // AJ-124: kişi KENDİ verisini istiyorsa tüm kurum üyelikleri; yönetici başkasınınkini istiyorsa
+  // yalnız bu kurumdaki üyelik (kişinin başka kurumlardaki rol/sertifika bilgisi yöneticiye sızmaz).
+  const result = await withUserNotFound(res, () =>
+    exportUserData(parsed.data.id, req.tenant.tenantId, isSelf ? 'all' : 'requestTenant'),
+  );
   if (!result) return res;
   return res.json(result);
 }
@@ -96,7 +100,11 @@ export async function exportMyDataHandler(req: RequestWithTenant, res: Response)
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Bu işlem için giriş yapmalısınız.' });
   }
 
-  const result = await exportUserData(req.auth.userId, req.tenant.tenantId);
+  // AJ-124: kendi isteği → TÜM kurum üyelikleri (KVKK Md.11 erişim hakkı).
+  // Kayıt yine bulunamazsa (ör. hesap kaldırılmış) 500 değil anlamlı 404.
+  const userId = req.auth.userId;
+  const result = await withUserNotFound(res, () => exportUserData(userId, req.tenant.tenantId, 'all'));
+  if (!result) return res;
   return res.json(result);
 }
 
