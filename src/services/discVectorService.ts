@@ -11,6 +11,7 @@
  *
  * Boyut skoru = o boyuttaki tüm normalize değerlerin aritmetik ortalaması.
  * Hiç cevaplanmamış boyut için varsayılan: 0.25 (eşit dağılım prioru)
+ * Dört boyutun toplamı 0 ise (tüm cevaplar Likert 1) vektör eşit dağılımdır (0.25) — AJ-108.
  *
  * Normalizasyon adımı: D + I + S + C toplamı 1.0'a ölçeklenir.
  *   finalScore[dim] = raw[dim] / (raw.D + raw.I + raw.S + raw.C)
@@ -81,6 +82,13 @@ export function invalidateDimensionalCountCache(): void {
 // ─── Vektör hesaplama ─────────────────────────────────────────────────────────
 
 /**
+ * Dört boyutun eşit payı (1/4). İki yerde kullanılır: cevapsız boyutun prioru ve dört boyutun
+ * toplamı 0 olduğunda (tüm cevaplar Likert 1) geri dönüş vektörü — uyarlanabilir motorun
+ * `normalizeToVector` total===0 korumasıyla aynı sonuç (adaptiveTestEngine.ts).
+ */
+const DISC_EQUAL_SHARE = 0.25;
+
+/**
  * Kullanıcının tüm yanıtlarından DISC vektörünü yeniden hesaplar ve DB'e yazar.
  *
  * @param userId - Hesaplama yapılacak kullanıcı ID'si
@@ -114,22 +122,25 @@ export async function recalcDiscVector(userId: string, tenantId: string): Promis
     dimensionalAnswered++;
   }
 
-  // Boyut ortalamaları — hiç cevap yoksa prior olarak 0.25 (eşit dağılım)
+  // Boyut ortalamaları — hiç cevap yoksa prior olarak eşit pay (DISC_EQUAL_SHARE)
   const raw: Record<(typeof DISC_DIMS)[number], number> = {
-    D: buckets.D.length > 0 ? arithmeticMean(buckets.D) : 0.25,
-    I: buckets.I.length > 0 ? arithmeticMean(buckets.I) : 0.25,
-    S: buckets.S.length > 0 ? arithmeticMean(buckets.S) : 0.25,
-    C: buckets.C.length > 0 ? arithmeticMean(buckets.C) : 0.25,
+    D: buckets.D.length > 0 ? arithmeticMean(buckets.D) : DISC_EQUAL_SHARE,
+    I: buckets.I.length > 0 ? arithmeticMean(buckets.I) : DISC_EQUAL_SHARE,
+    S: buckets.S.length > 0 ? arithmeticMean(buckets.S) : DISC_EQUAL_SHARE,
+    C: buckets.C.length > 0 ? arithmeticMean(buckets.C) : DISC_EQUAL_SHARE,
   };
 
-  // D + I + S + C toplamını 1.0'a normalize et
+  // D + I + S + C toplamını 1.0'a normalize et.
+  // AJ-108: dört boyut da cevaplı ve hepsi Likert 1 ise toplam 0 → bölme NaN üretir ve yazım
+  // doğrulaması reddeder (kullanıcı ilerleyemez). Bu durumda eşit dağılım döner.
   const sum = raw.D + raw.I + raw.S + raw.C;
+  const share = (value: number) => (sum === 0 ? DISC_EQUAL_SHARE : round3(value / sum));
 
   const vector: DiscVector = {
-    D: round3(raw.D / sum),
-    I: round3(raw.I / sum),
-    S: round3(raw.S / sum),
-    C: round3(raw.C / sum),
+    D: share(raw.D),
+    I: share(raw.I),
+    S: share(raw.S),
+    C: share(raw.C),
     // confidence = cevaplanmış / hedef, maksimum 1.0
     // dimensionalTotal = 0 ise henüz soru yok → confidence = 0
     confidence: dimensionalTotal > 0
