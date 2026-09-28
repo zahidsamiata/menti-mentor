@@ -7,6 +7,7 @@ import {
   getPlatformStats,
   getPlatformHealth,
   getPlatformLogs,
+  getPlatformLogTrace,
   listPendingTenants,
   listAllTenants,
   approveTenant,
@@ -44,6 +45,7 @@ router.use(platformReadRateLimiter);
 router.get('/stats', getPlatformStats);
 router.get('/health', getPlatformHealth);
 router.get('/logs', getPlatformLogs);
+router.get('/logs/:id/trace', getPlatformLogTrace); // DK-03: temizlenmiş hata iz kaydı (yalnız ERROR)
 
 // ─── Kurum Yönetimi ───────────────────────────────────────────────────────────
 router.get('/tenants/pending', listPendingTenants);
