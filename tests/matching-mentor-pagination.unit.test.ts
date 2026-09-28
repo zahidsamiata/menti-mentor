@@ -62,6 +62,7 @@ function mentor(id: string, sectorTags: string[]) {
     skills: [],
     avatarUrl: null,
     mentorVisibilityEnabled: true,
+    memberships: [], // AJ-66: sertifikalı üyelik yok (iç içe select şekli)
   };
 }
 

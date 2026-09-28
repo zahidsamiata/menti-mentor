@@ -95,6 +95,8 @@ function buildMentiFacingMentorItem(m: RankedMentor) {
     // detayı (isVisibilityFaded/isProfileFaded) menti'ye sızmaz, yalnız nihai iki bayrak döner.
     isFaded:    m.isFaded,
     isBookable: m.isBookable,
+    // AJ-66 · KARAR 4: sertifika mahrem değil, herkes görür; ön yüz yalnız true'da rozet gösterir.
+    isCertified: m.isCertified,
   };
 }
 
