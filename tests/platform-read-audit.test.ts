@@ -10,6 +10,11 @@ import { cleanDb, testPrisma } from './helpers/db.js';
 import { createAdminUser, createTenant } from './helpers/factories.js';
 import { signToken, PLATFORM_AUDIENCE } from '../src/middleware/jwtAuth.js';
 
+// E-4 karantina: GET /api/super-admin/tenants/pending karantinada (410). Bu dosya o ucun handler davranışını korumaya
+// devam eder — kapı ortam değişkeniyle yeniden açılır (vitest pool=forks: her dosya ayrı süreç,
+// değişken başka dosyaya sızmaz). Kapının kendisi `e4-karantina.test.ts`'te test edilir.
+process.env['QUARANTINE_REOPEN'] = 'super-admin-tenants-pending';
+
 // logger.info fire-and-forget olabilir → kaydı kısa süre bekle.
 async function waitForAuditLog(message: string, tries = 30) {
   for (let i = 0; i < tries; i++) {

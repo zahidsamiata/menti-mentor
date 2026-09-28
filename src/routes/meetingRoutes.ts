@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
 import { requireAuth, requireRole } from '../middleware/authorize.js';
+import { quarantined } from '../middleware/quarantine.js';
 import {
   createMeeting,
   listMeetings,
@@ -137,9 +138,12 @@ router.get(
   getCheckIns as unknown as RequestHandler,
 );
 // GET /pair-signal?mentorId=&mentiId=  → Çift verimsizlik sinyali
+// E-4 KARANTİNA (KARAR-11 A): ikame yönetici eşleşme listesindeki "Risk" sütunu (adminController
+// aynı pairSignal.service'i kullanır). Arşiv: çatı `docs/arsiv/silinenler-2026-09-10.md`.
 router.get(
   '/pair-signal',
   requireRole('ADMIN'),
+  quarantined('meetings-pair-signal'),
   getPairEfficiencySignal as unknown as RequestHandler,
 );
 

@@ -10,6 +10,11 @@ import { createTenant, createMentor, createMenti } from './helpers/factories.js'
 import { signToken } from '../src/middleware/jwtAuth.js';
 import type { User } from '@prisma/client';
 
+// E-4 karantina: PATCH /api/users/me/social karantinada (410). Bu dosya o ucun handler davranışını korumaya
+// devam eder — kapı ortam değişkeniyle yeniden açılır (vitest pool=forks: her dosya ayrı süreç,
+// değişken başka dosyaya sızmaz). Kapının kendisi `e4-karantina.test.ts`'te test edilir.
+process.env['QUARANTINE_REOPEN'] = 'users-me-social';
+
 function tokenFor(u: Pick<User, 'id' | 'tenantId' | 'role' | 'fullName'>): string {
   return signToken({ sub: u.id, tenantId: u.tenantId, role: u.role, fullName: u.fullName });
 }
