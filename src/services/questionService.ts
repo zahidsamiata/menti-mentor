@@ -136,6 +136,12 @@ export function calcPoolMeta(
   return {
     coreCount,
     deepeningCount,
+    // ⚠️ AJ-80 (G2-09 / md.102): uyarlanabilir test motoru (`adaptiveTestEngine.ts`
+    // `MIN_CORE_RESPONSES = 5`) farklı eşik kullanır; farkın neden olduğu belirsizdir
+    // (ikisi de gerekçesiz toplu commit de6be04). Birleştirmek DISC testinde derinleşme
+    // sorularının ve bekleme odası bildiriminin (`questionController` respond ucu) ne zaman
+    // tetiklendiğini değiştirir → KARAR-57'ye ("esas test hangisi") bağlı; o zamana dek
+    // ayrı. Kilit testi: `tests/disc-core-threshold.unit.test.ts`.
     coreThreshold: coreCount, // tüm CORE sorular cevaplanınca DEEPENING açılır
     dimensionalTotal,
   };
