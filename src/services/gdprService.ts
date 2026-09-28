@@ -417,7 +417,7 @@ export async function exportUserData(
     matchRequests: matchRequests as Array<Record<string, unknown>>,
     consents: consents as Array<Record<string, unknown>>,
     messageCount,
-    memberships,
+    memberships: [], // MUTASYON: düzeltme geri alındı
   };
 }
 
