@@ -493,6 +493,23 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
     return sendValidationError(res, 'Geçmiş bir zamana görüşme oluşturulamaz.');
   }
 
+  // KR-19 / AJ-54: idari blok — startConversation ve POST /api/requests ile AYNI kural:
+  // istek kurumu + mentörün ANA kurumu (yön bağımsız). Mentör istek kurumunda yalnız üye
+  // olabilir (ana kurumu başka); ana kurumun yöneticisinin koyduğu engel de randevuyu durdurur.
+  // Ana kurum okuması kurum filtresinin (db.ts RLS eklentisi) BİLİNÇLİ dışında: findUnique
+  // filtrelenmez ve burada amaç tam olarak istek kurumu DIŞINDAKİ kurumu bulmaktır. Yalnız
+  // tenantId seçilir — başka alan dönmez/sızmaz. Mentör yoksa istek kurumu yine kontrol edilir;
+  // gerisini aşağıdaki müsaitlik kontrolü (istek kurumunda) reddeder.
+  // Varlık ifşası yok, jenerik hata.
+  // eslint-disable-next-line no-restricted-syntax -- mentörün ana kurumu bilinçli olarak istek kurumu dışında aranır (AJ-54 idari blok); yalnız tenantId seçilir
+  const mentorHome = await prisma.user.findUnique({
+    where:  { id: mentorUserId },
+    select: { tenantId: true },
+  });
+  if (await isPairBlockedInTenants([tenantId, mentorHome?.tenantId], userId, mentorUserId)) {
+    return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
+  }
+
   // matchId varsa eşleşme doğrulaması
   if (matchId) {
     const match = await prisma.match.findFirst({
@@ -554,35 +571,6 @@ export async function bookMeeting(req: RequestWithTenant, res: Response) {
   const weekly = await checkWeeklyMeetingLimit(tenantId, userId, start);
   if (weekly.exceeded) {
     return res.status(409).json({ error: WEEKLY_LIMIT_MESSAGE });
-  }
-
-  // KR-19 / AJ-54: idari blok — startConversation ve POST /api/requests ile AYNI kural:
-  // istek kurumu + mentörün ANA kurumu (yön bağımsız). Mentör istek kurumunda yalnız üye
-  // olabilir (ana kurumu başka); ana kurumun yöneticisinin koyduğu engel de randevuyu durdurur.
-  // AJ-100: engel, talep GERÇEKTEN oluşacakken (müsaitlik/çakışma/limit geçtikten sonra,
-  // create'ten hemen önce) bakılır. Önceden en başta bakılıyordu → havuzu kapalı / müsaitliği
-  // olmayan mentör için engelli çift 403, engelsiz çift 409 alıyor ve menti, başka kurumdaki
-  // engelin varlığını bu farktan öğrenebiliyordu (konuşma/istek uçları bu durumda engeli
-  // "hedef yok" yanıtının arkasına saklıyor — AJ-103). Bu uçta paylaşım kapısının karşılığı
-  // müsaitlik kontrolüdür: bloklar istek kurumunda aranır, mentör bu kurumda müsaitlik
-  // girmemişse (havuz kapalı/üye değil) talep 409 ile durur — engelli ve engelsiz çift aynı yanıtı alır.
-  // resolveCrossTenantTarget burada BİLİNÇLİ kullanılmaz: mentör istek kurumunun üyesi olup ana
-  // kurumunun havuzu kapalı olabilir (AJ-54 senaryosu) — o kapı bu meşru randevuyu kırardı.
-  // Varsayım "istek kurumu = mentinin ana kurumu" bu uçta SORGUYLA sabit değil: requireTenant
-  // yalnız istek kurumunda aktif ÜYELİK arar, mentinin ana kurumu başka olabilir. Konuşma/istek
-  // uçları menti'yi `tenantId: istek kurumu` ile bulduğu için orada varsayım zaten zorlanır; burada
-  // mentinin ana kurumu da okunur → engel, sendMessage gibi üç kurumda (istek + iki ana kurum) aranır.
-  // Ana kurum okumaları kurum filtresinin (db.ts RLS eklentisi) BİLİNÇLİ dışında: findUnique
-  // filtrelenmez ve amaç tam olarak istek kurumu DIŞINDAKİ kurumları bulmaktır. Yalnız tenantId
-  // seçilir — başka alan dönmez/sızmaz. Varlık ifşası yok, jenerik hata.
-  const [mentorHome, mentiHome] = await Promise.all([
-    // eslint-disable-next-line no-restricted-syntax -- mentörün ana kurumu bilinçli olarak istek kurumu dışında aranır (AJ-54 idari blok); yalnız tenantId seçilir
-    prisma.user.findUnique({ where: { id: mentorUserId }, select: { tenantId: true } }),
-    // eslint-disable-next-line no-restricted-syntax -- mentinin ana kurumu istek kurumundan farklı olabilir (AJ-100 idari blok); yalnız tenantId seçilir
-    prisma.user.findUnique({ where: { id: userId }, select: { tenantId: true } }),
-  ]);
-  if (await isPairBlockedInTenants([tenantId, mentorHome?.tenantId, mentiHome?.tenantId], userId, mentorUserId)) {
-    return res.status(403).json({ error: 'ISLEM_YAPILAMIYOR', message: 'Bu işlem şu anda gerçekleştirilemiyor.' });
   }
 
   // Toplantı PENDING oluşturulur — mentor onayı beklenir
