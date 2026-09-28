@@ -1,6 +1,7 @@
 import { CertificationStatus } from '@prisma/client';
 import { prisma } from '../db.js';
 import { selectExamQuestions } from './certExamSelection.js';
+import { CERT_ATTEMPT_TIME_ZONE, certAttemptLock, recordAttempt } from './certAttemptWindow.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sertifika değerlendirme motoru — "ilk-deneme oranı + red-line" modeli.
@@ -15,8 +16,9 @@ import { selectExamQuestions } from './certExamSelection.js';
 // İki farklı "tekrar" seviyesi (karıştırma):
 //   - Konu içi (tek sınav oturumunda): yanlışta ceza YOK — UI aynı konunun farklı
 //     varyantını sunar (öğret, eleme). İlk-deneme sonucu değişmez.
-//   - Sınav seviyesi (deneme döngüsü): 2 sınav hakkı; 2.de kalınırsa 24s bekleme;
-//     sonraki denemede yanlış konulara ağırlık verilir.
+//   - Sınav seviyesi (deneme döngüsü): Türkiye takvim gününde 2 sınav hakkı (madde 158,
+//     I-08); günün 2. denemesi de kalınırsa ertesi gün 00:00'a kadar bekleme; sonraki
+//     denemede yanlış konulara ağırlık verilir. Pencere mantığı: certAttemptWindow.ts.
 //
 // Tüm sertifika durumu TenantMembership'te saklanır (per-tenant).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,9 +29,19 @@ export const CERT_CONFIG = {
   passRateThreshold: 0.8,
   /** Kurum, toplam aktif konu sayısını bu değerin altına düşüremez. */
   minActiveTopics: 5,
-  /** Kaç başarısız sınav denemesinden sonra bekleme başlar. */
+  /**
+   * Bir takvim gününde (Türkiye saati) değerlendirilebilecek en fazla sınav sayısı
+   * (madde 158 "günde 2"). Günün son hakkı da kalınırsa bekleme ertesi gün 00:00'a kadar
+   * sürer. Hatırlatma cron'u da "hakları tüketmiş" eşiği olarak bunu kullanır.
+   */
   attemptsBeforeCooldown: 2,
-  /** Bekleme süresi (saat). */
+  /** Deneme gününün saat dilimi. */
+  attemptDayTimeZone: CERT_ATTEMPT_TIME_ZONE,
+  /**
+   * @deprecated I-08 (madde 158): "her 2 başarısız denemede 24 saat" kuralının yerini
+   * takvim günü sınırı aldı; bekleme artık ertesi gün 00:00'a kadar. Hiçbir kod okumuyor —
+   * silme protokolü gereği karantinada (eski kuralın süresi kayıt olarak burada).
+   */
   cooldownHours: 24,
   /**
    * Sertifika açıldıktan (üyelik oluşumundan) kaç gün sonra, geride kalan mentör için
@@ -42,6 +54,9 @@ export const CERT_CONFIG = {
 export const PASS_RATE_THRESHOLD = CERT_CONFIG.passRateThreshold;
 
 const STARTING_MULTIPLIER = 1.0;  // sertifika alınınca kalite çarpanı sıfırlanır
+// Eşzamanlı değerlendirme yazımı çakışırsa kaç kez yeniden okunup denenir (iyimser kilit).
+// Her başarılı yazım sayacı ilerletir; günlük hak dolunca kapı zaten reddeder.
+const CONCURRENT_WRITE_RETRIES = 3;
 
 /**
  * Verilen AKTİF konu sayısı için ilk-denemede geçilmesi gereken minimum konu sayısı.
@@ -138,7 +153,15 @@ export async function evaluateCertification(
   if (!Array.isArray(answers) || answers.length === 0) {
     throw new Error('answers must be a non-empty array.');
   }
+  return evaluateOnce(userId, tenantId, answers, CONCURRENT_WRITE_RETRIES);
+}
 
+async function evaluateOnce(
+  userId: string,
+  tenantId: string,
+  answers: CertAnswer[],
+  retriesLeft: number,
+): Promise<CertResult> {
   // Sertifikasyon verisi TenantMembership'ten okunur (per-tenant).
   const membership = await prisma.tenantMembership.findUnique({
     where: { userId_tenantId: { userId, tenantId } },
@@ -147,14 +170,16 @@ export async function evaluateCertification(
     throw new Error(`TenantMembership bulunamadı: userId=${userId} tenantId=${tenantId}`);
   }
 
-  // ── Bekleme (cooldown) kapısı: süre dolmadan yeni deneme değerlendirilmez ────
+  // ── Deneme kapısı (madde 158): süren mola VEYA bugünkü hak dolmuş → değerlendirilmez ──
   // (Deneme sayacı artmaz, membership'e yazılmaz — sadece reddedilir.)
-  if (membership.cooldownUntil && membership.cooldownUntil.getTime() > Date.now()) {
+  const now = new Date();
+  const lockedUntil = certAttemptLock(membership, now, CERT_CONFIG.attemptsBeforeCooldown);
+  if (lockedUntil) {
     return {
       certScore: membership.certScore ?? 0, passRate: 0, totalTopics: 0, passedTopics: 0,
       required: 0, redLineOk: false, passed: false, status: membership.certificationStatus,
       qualityMultiplier: membership.qualityMultiplier, failReason: 'COOLDOWN_ACTIVE',
-      attempts: membership.certAttempts, cooldownUntil: membership.cooldownUntil, topicResults: [],
+      attempts: membership.certAttempts, cooldownUntil: lockedUntil, topicResults: [],
     };
   }
 
@@ -228,30 +253,36 @@ export async function evaluateCertification(
   const status = passed ? CertificationStatus.CERTIFIED : CertificationStatus.FAILED;
 
   // ── Sınav-seviyesi deneme döngüsü (konu-içi öğrenme akışından AYRI) ──────────
-  // Her `attemptsBeforeCooldown` başarısız denemede bir bekleme süresi başlar.
-  const cooldownTriggered =
-    !passed && newAttempts % CERT_CONFIG.attemptsBeforeCooldown === 0;
-  const cooldownUntil = cooldownTriggered
-    ? new Date(Date.now() + CERT_CONFIG.cooldownHours * 60 * 60 * 1000)
-    : null;
+  // Günlük sayaç (Türkiye günü) artar; günün son hakkı başarısızsa mola ertesi gün 00:00.
+  const attemptWindow = recordAttempt(membership, now, passed, CERT_CONFIG.attemptsBeforeCooldown);
+  const cooldownUntil = attemptWindow.cooldownUntil;
 
   // Sonraki denemede ağırlıklandırmak için bu denemede geçilemeyen konular.
   // Geçince temizlenir; başarısızsa güncel yanlış liste yazılır.
   const wrongTopics = passed ? [] : topicResults.filter((t) => !t.passed).map((t) => t.topic);
 
-  await prisma.tenantMembership.update({
-    where: { userId_tenantId: { userId, tenantId } },
+  // İyimser kilit: okuduğumuzdan beri başka bir değerlendirme yazıldıysa (çift gönderim)
+  // bu yazım düşer ve değerlendirme güncel sayaçla yeniden yapılır — aynı gün
+  // eşzamanlı iki istek günlük sınırı aşamasın.
+  const written = await prisma.tenantMembership.updateMany({
+    where: { userId, tenantId, certAttempts: membership.certAttempts },
     data: {
       certScore,
       isCertified:         passed,
       certificationStatus: status,
-      certifiedAt:         passed ? new Date() : null,
+      certifiedAt:         passed ? now : null,
       certAttempts:        newAttempts,
       cooldownUntil,
+      certDayAttempts:     attemptWindow.certDayAttempts,
+      certLastAttemptAt:   attemptWindow.certLastAttemptAt,
       certWrongTopics:     wrongTopics,
       ...(passed ? { qualityMultiplier: STARTING_MULTIPLIER } : {}),
     },
   });
+  if (written.count === 0) {
+    if (retriesLeft > 0) return evaluateOnce(userId, tenantId, answers, retriesLeft - 1);
+    throw new Error('Sertifika değerlendirmesi eşzamanlı güncelleme nedeniyle yazılamadı.');
+  }
 
   return {
     certScore,
