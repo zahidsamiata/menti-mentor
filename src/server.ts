@@ -36,6 +36,7 @@ import agreementRoutes from './routes/agreementRoutes.js';
 import learningJourneyRoutes from './routes/learningJourneyRoutes.js';
 import learningJourneyAdminRoutes from './routes/learningJourneyAdminRoutes.js';
 import conversationRoutes from './routes/conversationRoutes.js';
+import surveyRoutes from './routes/surveyRoutes.js';
 import type { RequestHandler } from 'express';
 
 const app = express();
@@ -136,6 +137,8 @@ app.use('/api/scoring', sjtScoringRoutes);
 app.use('/api/agreements', agreementRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/learning-journey', learningJourneyRoutes);
+// AN-52 — ürün-içi otomatik geri bildirim anketi (pending soru + cevap/kapatma)
+app.use('/api/surveys', surveyRoutes);
 // Kullanıcı etiket önerisi (authenticated, tenant-scoped)
 // V-13: controller req.tenant + req.auth bekliyor ama mount'ta requireTenant/requireAuth yoktu
 // → uç fail-closed 401 dönüyordu (ölü uç). Diğer tenant-scoped uçlarla tutarlı hale getirildi.

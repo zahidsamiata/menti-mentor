@@ -55,7 +55,7 @@ Every request must carry `X-Tenant-Id`. The `tenant.ts` middleware validates it 
 
 ### Data Model (Prisma)
 
-**38 models** (see `schema.prisma`; `grep -c '^model ' backend/prisma/schema.prisma`). Frequently referenced: `Tenant`, `User`, `TenantMembership`, `VisibilityOptIn`, `MatchRequest`, `Match`, `Meeting`, `Feedback`, `Question`, `UserResponse`, `Conversation`/`Message`, `Club`, `JobListing`.
+**40 models** (see `schema.prisma`; `grep -c '^model ' backend/prisma/schema.prisma`; count drifts as models are added — verify with the grep, don't trust the number alone). Frequently referenced: `Tenant`, `User`, `TenantMembership`, `VisibilityOptIn`, `MatchRequest`, `Match`, `Meeting`, `Feedback`, `Question`, `UserResponse`, `Conversation`/`Message`, `Club`, `JobListing`.
 
 - All tenant-scoped tables carry a `tenantId` foreign key.
 - `UserRole`: `ADMIN | MENTOR | MENTI`
@@ -104,6 +104,7 @@ All data in this system is classified into two categories. Code must never mix t
 | `FeedbackLog` | 3 years | `purgeExpiredData()` cron — weekly (G1-06) |
 | `UserResponse` | Until user anonymized/deleted | `anonymizeUser()` / `hardDeleteUser()` |
 | `VisibilityOptIn` | Until hard-delete | Cascades with user |
+| `ProductSurveyResponse` (AN-52) | Until user anonymized/deleted | `anonymizeUser()` (`deleteMany`, same treatment as `UserResponse`) |
 
 ### Security Invariants
 

@@ -18,6 +18,8 @@
  *   - discType (kişilik verisi — hassas kategori)
  *   - UserProfile.schools, UserProfile.companies, UserProfile.communities (bağlam/PII)
  *   - UserProfile.discD/I/S/C, oceanO..N, archetype (kişilik verisi — hassas kategori)
+ *   - ProductSurveyResponse.answerKey (AN-52 — ürün-içi anket cevabı, kişiye bağlı öznel/duygusal
+ *     beyan; hassas kategori DEĞİL ama sıradan PII muamelesi görür — anonimleşince SİLİNİR)
  *
  * Analitik Alanları (silinmez — anonimleştirme sonrası korunur):
  *   - sectorTags, role, tenantId (tenant-seviyesi istatistik)
@@ -123,6 +125,11 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     // Kullanıcı yanıtlarını sil (DISC soruları — kişilik profili)
     await tx.userResponse.deleteMany({ where: { userId } });
 
+    // AN-52 — ürün-içi anket cevaplarını sil (kişiye bağlı öznel/duygusal beyan,
+    // UserResponse ile AYNI muamele — anonimleştirme sonrası korunacak bir "analitik" değeri yok,
+    // her satır zaten yalnız bu kullanıcıya ait — bkz. schema.prisma ProductSurveyResponse).
+    await tx.productSurveyResponse.deleteMany({ where: { userId } });
+
     // UserProfile: PII/kişilik alanlarını temizle, Analitik (skill/goal/industry/yearsExp) koru.
     // updateMany kullanılır — profil satırı yoksa sessizce no-op olur.
     // Profilin KENDİ id'si (userId FK'i değil) — aşağıda Match.mentorId/mentiId eşlemesi için gerekli.
@@ -219,7 +226,7 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     'volunteerHistory', 'pastProjects', 'education', 'selfProfile',
     'discVector', 'discType', 'temperamentJson', 'discResultCard', 'enneagramWing',
     'avatarUrl', 'avatarFile', 'linkedinUrl', 'instagramUrl', 'password', 'rejectionReason',
-    'userResponses', 'sessions',
+    'userResponses', 'sessions', 'productSurveyResponses',
     'userProfile.schools', 'userProfile.companies', 'userProfile.communities',
     'userProfile.disc', 'userProfile.ocean', 'userProfile.archetype',
     'message.content', 'meeting.notes', 'meeting.requestMessage', 'meeting.phoneNumber',
@@ -310,12 +317,14 @@ export type UserDataExport = {
   matchRequests: Array<Record<string, unknown>>;
   /** KVKK Md.11: verdiği/geri çektiği rızaların denetim izi (tip, sürüm, tarih). */
   consents: Array<Record<string, unknown>>;
+  /** AN-52 — ürün-içi anket cevapları (kendi verdiği/kapattığı sorular; başkasının cevabı YOK). */
+  productSurveyResponses: Array<Record<string, unknown>>;
   /** Yalnız SAYI — mesaj içeriği KARŞI TARAFI da içerir, dışa aktarılmaz (PII sızıntısı önlemi). */
   messageCount: number;
 };
 
 export async function exportUserData(userId: string, tenantId: string): Promise<UserDataExport> {
-  const [user, responses, feedbackLogs, matchRequests, consents, messageCount] = await Promise.all([
+  const [user, responses, feedbackLogs, matchRequests, consents, productSurveyResponses, messageCount] = await Promise.all([
     prisma.user.findFirst({
       where: { id: userId, tenantId },
       select: {
@@ -343,6 +352,12 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
       select: { type: true, version: true, source: true, grantedAt: true, revokedAt: true },
       orderBy: { grantedAt: 'desc' },
     }),
+    // AN-52 — yalnız KENDİ anket cevapları (unique([userId, questionKey]) zaten başkasınınkini dışlar).
+    prisma.productSurveyResponse.findMany({
+      where: { userId },
+      select: { questionKey: true, answerKey: true, shownAt: true, respondedAt: true, dismissedAt: true },
+      orderBy: { shownAt: 'desc' },
+    }),
     // Yalnız kendi gönderdiği mesajların SAYISI — içerik dışa aktarılmaz (karşı taraf PII'si).
     prisma.message.count({ where: { senderUserId: userId } }),
   ]);
@@ -361,6 +376,7 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
     feedbackLogs: feedbackLogs as Array<Record<string, unknown>>,
     matchRequests: matchRequests as Array<Record<string, unknown>>,
     consents: consents as Array<Record<string, unknown>>,
+    productSurveyResponses: productSurveyResponses as Array<Record<string, unknown>>,
     messageCount,
   };
 }

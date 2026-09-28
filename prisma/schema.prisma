@@ -259,6 +259,9 @@ model Tenant {
   agreements          MentorshipAgreement[]
   conversations       Conversation[]
   consents            Consent[]
+
+  // AN-52 — ürün-içi otomatik geri bildirim anketi cevapları (tenant-bazlı sorgu için)
+  productSurveyResponses ProductSurveyResponse[]
 }
 
 model User {
@@ -383,6 +386,9 @@ model User {
 
   // KVKK — tipli + sürümlü rıza kayıtları (G1-07). kvkkConsentAt ile dual-write.
   consents Consent[]
+
+  // AN-52 — ürün-içi otomatik geri bildirim anketi cevapları (persona/davranış sinyali)
+  productSurveyResponses ProductSurveyResponse[]
 
   // email @unique ile global unique; ayrıca tenant bazlı sorgular için index
   @@index([tenantId, role, isActive])
@@ -1324,4 +1330,31 @@ enum ConsentSource {
   OAUTH // Google / LinkedIn
   SELF_SERVE // STK kurum kaydı
   BACKFILL // eski kayıt taşıma (backfill script)
+}
+
+// ─── AN-52 — Ürün-içi otomatik geri bildirim anketi ──────────────────────────
+// "Tek kutu, tek migration" deseni (KARAR-80/M12) — Consent modeliyle AYNI ilke: yeni bir
+// soru eklemek (S8, S9...) yeni bir migration İSTEMEZ, yalnız kodda yeni questionKey sabiti +
+// tetikleyici mantığı eklenir (bkz. src/services/surveyQuestions.ts — TEK config listesi).
+// Kaynak/tasarım: docs/raporlar/kesif/an52-urun-ici-geri-bildirim-plani-2026-09-27.md §3.2.
+// KVKK: cevaplar userId'ye bağlı öznel/duygusal beyan içerebilir (hassas kategori DEĞİL) —
+// gdprService.ts exportUserData (dışa aktarım) ve anonymizeUser (silme, UserResponse ile
+// AYNI muamele — deleteMany) bu tabloyu kapsar.
+model ProductSurveyResponse {
+  id          String    @id @default(cuid())
+  userId      String
+  tenantId    String
+  questionKey String // "S1_BEKLEME" vb. — src/services/surveyQuestions.ts'teki TEK sabit liste
+  answerKey   String? // seçilen şık kodu; null = yalnız kapatıldı (cevaplanmadı)
+  shownAt     DateTime  @default(now())
+  respondedAt DateTime?
+  dismissedAt DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // "1 kez kuralı" (§2) — aynı soru aynı kullanıcıya en fazla 1 kez; DB seviyesinde garanti
+  // (UI kontrolü tek başına yeterli değil — aynı kullanıcı iki sekmede aynı anda görebilir).
+  @@unique([userId, questionKey])
+  @@index([tenantId, questionKey])
 }
