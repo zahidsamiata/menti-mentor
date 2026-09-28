@@ -332,7 +332,12 @@ export async function respondToQuestion(req: RequestWithTenant, res: Response) {
 
   // CORE test ilk kez tamamlandığında bekleme odası bildirimi gönder
   if (progress.coreAnswered >= progress.coreThreshold) {
-    void triggerWaitingRoomNotificationIfNeeded(userId, req.tenant.tenantId);
+    // Yakalanmayan ret (ör. DB kilitlenmesi) Node'da süreci düşürür → her zaman yakala.
+    void triggerWaitingRoomNotificationIfNeeded(userId, req.tenant.tenantId).catch((err) =>
+      void logger.error('SYSTEM', 'Bekleme odası bildirimi tetiklenemedi', {
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
   }
 
   return res.json({ discVector, progress });
