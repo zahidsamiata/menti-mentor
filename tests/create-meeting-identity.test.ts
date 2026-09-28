@@ -80,3 +80,68 @@ describe('GV-06: POST /api/meetings kimlik kaynağı', () => {
     expect(count).toBe(0);
   });
 });
+
+// AJ-74: oryantasyon kilidi kurum-kapsamlı menti bulunduktan SONRA kontrol edilir.
+// Başka kurumdaki bir menti kimliğiyle istek, o kaydın kilit durumundan bağımsız AYNI 404'ü alır.
+describe('AJ-74: POST /api/meetings oryantasyon kilidi kurum izolasyonu', () => {
+  let http: TestAgent;
+  let tenantId: string;
+  let otherTenantId: string;
+  let mentor: Awaited<ReturnType<typeof createMentor>>;
+  let admin: Awaited<ReturnType<typeof createAdminUser>>;
+
+  beforeEach(async () => {
+    await cleanDb();
+    http = agent();
+    tenantId      = (await createTenant()).id;
+    otherTenantId = (await createTenant()).id;
+    mentor = await createMentor(tenantId);
+    admin  = await createAdminUser(tenantId);
+  });
+
+  async function createLockedMenti(tid: string) {
+    const m = await createMenti(tid);
+    await testPrisma.user.update({ where: { id: m.id }, data: { needsOrientation: true } });
+    return m;
+  }
+
+  function postAsAdmin(mentiId: string) {
+    return http.post('/api/meetings').set(tenantHeaders(tenantId, tokenFor(admin)))
+      .send({ mentorId: mentor.id, mentiId, scheduledAt: inTwoDays() });
+  }
+
+  it('negatif: başka kurumdaki kilitli ve kilitsiz menti için yanıt AYNI (404, aynı gövde), kayıt oluşmaz', async () => {
+    const foreignLocked   = await createLockedMenti(otherTenantId);
+    const foreignUnlocked = await createMenti(otherTenantId);
+
+    const lockedRes   = await postAsAdmin(foreignLocked.id);
+    const unlockedRes = await postAsAdmin(foreignUnlocked.id);
+
+    expect(lockedRes.status).toBe(404);
+    expect(unlockedRes.status).toBe(404);
+    expect(lockedRes.body).toEqual(unlockedRes.body);
+    expect(lockedRes.body.error).not.toBe('ORYANTASYON_KILIDI');
+
+    const count = await testPrisma.meeting.count({
+      where: { mentiUserId: { in: [foreignLocked.id, foreignUnlocked.id] } },
+    });
+    expect(count).toBe(0);
+  });
+
+  it('kendi kurumundaki kilitli menti için 403 ORYANTASYON_KILIDI (davranış korunur), kayıt oluşmaz', async () => {
+    const lockedMenti = await createLockedMenti(tenantId);
+    const res = await postAsAdmin(lockedMenti.id);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('ORYANTASYON_KILIDI');
+    const count = await testPrisma.meeting.count({ where: { mentiUserId: lockedMenti.id } });
+    expect(count).toBe(0);
+  });
+
+  it('kilitli menti kendi adına talep açamaz (403 ORYANTASYON_KILIDI)', async () => {
+    const lockedMenti = await createLockedMenti(tenantId);
+    const res = await http.post('/api/meetings').set(tenantHeaders(tenantId, tokenFor(lockedMenti)))
+      .send({ mentorId: mentor.id, mentiId: lockedMenti.id, scheduledAt: inTwoDays() });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('ORYANTASYON_KILIDI');
+  });
+});
