@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { verifyToken, PLATFORM_AUDIENCE } from './jwtAuth.js';
+import { verifyPlatformToken, PLATFORM_AUDIENCE } from './jwtAuth.js';
 import { PLATFORM_COOKIE } from '../controllers/platformController.js';
 
 function parseCookieToken(cookieHeader: string | undefined): string | null {
@@ -19,7 +19,8 @@ export function requirePlatformAdmin(req: Request, res: Response, next: NextFunc
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Platform oturumu gerekli.' });
   }
 
-  const payload = verifyToken(token);
+  // AJ-87: platform doğrulayıcısı yalnız platform türünü kabul eder (aud + typ).
+  const payload = verifyPlatformToken(token);
   // Çift kontrol (defense-in-depth): hem isPlatformAdmin claim'i hem de aud:'platform'.
   // aud kontrolü, tenant/kullanıcı token'ının (aud taşımaz) platform endpoint'inde
   // geçerli sayılmasını imkânsız kılar. Eski (aud'suz) platform token'ları geçersizdir

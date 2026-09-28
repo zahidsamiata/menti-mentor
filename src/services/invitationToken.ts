@@ -13,11 +13,13 @@
 
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
+import { TOKEN_TYPES } from '../middleware/jwtAuth.js';
 
 export interface InvitationTokenClaims {
   tenantId:        string;
   role:            'MENTOR' | 'MENTI';
   type:            'invitation';
+  typ?:            'invitation'; // AJ-87 — eski davetlerde yok
   invitedByName?:  string;
   invitedByTitle?: string;
   iat?:            number;
@@ -29,7 +31,10 @@ export function verifyInvitationToken(token: string): InvitationTokenClaims | nu
   try {
     const decoded = jwt.verify(token, config.jwt.secret) as InvitationTokenClaims;
     // type guard: normal auth token'larının davet gibi geçmesini engelle.
-    return decoded.type === 'invitation' ? decoded : null;
+    // AJ-87: `typ` varsa davet olmalı; yoksa (≤30 gün önce üretilmiş eski davet) `type` yeter —
+    // erişim/state anahtarları `type:'invitation'` taşımadığı için tür-siz eski davet ayrışır.
+    const typOk = decoded.typ === undefined || decoded.typ === TOKEN_TYPES.INVITATION;
+    return decoded.type === 'invitation' && typOk ? decoded : null;
   } catch {
     return null;
   }

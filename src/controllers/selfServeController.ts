@@ -6,7 +6,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { logoUrlSchema } from '../services/logoUrl.js';
 import { passwordSchema } from '../services/passwordPolicy.js';
-import { signToken } from '../middleware/jwtAuth.js';
+import { signToken, TOKEN_TYPES } from '../middleware/jwtAuth.js';
 import { authenticateTenantAdmin } from '../middleware/tenantAdminAuth.js';
 import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
 import { invalidateTenant } from '../services/tenantCache.js';
@@ -543,6 +543,7 @@ interface InvitationTokenClaims {
   tenantId:        string;
   role:            'MENTOR' | 'MENTI';
   type:            'invitation';
+  typ?:            'invitation'; // AJ-87 — eski davetlerde yok
   invitedByName?:  string;
   invitedByTitle?: string;
   iat?:            number;
@@ -555,7 +556,8 @@ function signInvitationToken(
   invitedByName?: string,
   invitedByTitle?: string,
 ): string {
-  const payload: Omit<InvitationTokenClaims, 'iat' | 'exp'> = { tenantId, role, type: 'invitation' };
+  // AJ-87: `typ` ortak tür alanı (erişim/state anahtarlarıyla aynı desen); `type` eski davetlerle uyum için kalır.
+  const payload: Omit<InvitationTokenClaims, 'iat' | 'exp'> = { tenantId, role, type: 'invitation', typ: TOKEN_TYPES.INVITATION };
   if (invitedByName) payload.invitedByName = invitedByName;
   if (invitedByTitle) payload.invitedByTitle = invitedByTitle;
   return jwt.sign(payload, config.jwt.secret, { expiresIn: '30d' } as jwt.SignOptions);
@@ -564,8 +566,11 @@ function signInvitationToken(
 function verifyInvitationToken(token: string): InvitationTokenClaims | null {
   try {
     const decoded = jwt.verify(token, config.jwt.secret) as InvitationTokenClaims;
-    // type guard: normal auth token'larının bu endpoint'e geçmesini engelle
-    return decoded.type === 'invitation' ? decoded : null;
+    // type guard: normal auth token'larının bu endpoint'e geçmesini engelle.
+    // AJ-87: `typ` varsa davet olmalı; yoksa (≤30 gün önce üretilmiş eski davet) `type` yeter —
+    // erişim/state anahtarları `type:'invitation'` taşımadığı için tür-siz eski davet ayrışır.
+    const typOk = decoded.typ === undefined || decoded.typ === TOKEN_TYPES.INVITATION;
+    return decoded.type === 'invitation' && typOk ? decoded : null;
   } catch {
     return null;
   }
