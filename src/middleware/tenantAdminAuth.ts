@@ -41,7 +41,7 @@ export async function authenticateTenantAdmin(
   // üyelikte ADMIN ama User.role'ü MENTOR/MENTI kişi (AJ-115 sonrası yönetici panelini görür) bu uçlardan
   // reddediliyordu. Geçersiz anahtar ve platform anahtarı (aud) reddi aynen korunur.
   const payload = verifyToken(token);
-  if (!payload || payload.aud !== undefined) {
+  if (!payload || payload.role !== 'ADMIN' || payload.aud !== undefined) {
     res.status(403).json({ error: 'YETKI_YOK', message: 'Bu işlem için yönetici yetkisi gereklidir.' });
     return null;
   }
