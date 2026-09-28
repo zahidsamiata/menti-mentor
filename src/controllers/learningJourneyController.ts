@@ -7,6 +7,7 @@
  * KEŞİF akışı — puanlama YOK. Endpoint haritası (oyuncu):
  *   GET  /api/learning-journey/stages          → getStages       (audience = rol)
  *   POST /api/learning-journey/stages/:id/select → selectChoice  (outcome + feedback)
+ *   POST /api/learning-journey/stages/:id/progress → recordStageProgress (aşama geçildi — P-08)
  *   POST /api/learning-journey/complete          → completeJourney (tamamlandı işaretle)
  *   GET  /api/learning-journey/status            → getStatus
  */
@@ -19,6 +20,7 @@ import {
   buildStageList,
   resolveChoice,
   markJourneyCompleted,
+  markStageProgress,
   getJourneyStatus,
   LEARNING_JOURNEY_FRAME,
 } from '../services/learningJourney.service.js';
@@ -26,6 +28,11 @@ import { validateRequest } from '../middleware/validate.js';
 
 const SelectChoiceSchema = z.object({
   choiceKey: z.string().min(1).max(8),
+});
+
+// Aşama id'si (cuid). Gövde KULLANILMAZ: kimlik oturumdan, kurum X-Tenant-Id'den gelir.
+const StageParamSchema = z.object({
+  stageId: z.string().min(1).max(64),
 });
 
 // ─── GET /api/learning-journey/stages ─────────────────────────────────────────
@@ -71,6 +78,40 @@ export async function selectChoice(req: RequestWithTenant, res: Response) {
   }
 
   return res.json(result);
+}
+
+// ─── POST /api/learning-journey/stages/:stageId/progress ─────────────────────
+
+/**
+ * Aşamayı "geçildi" olarak kaydeder (P-08 — sayfadan çıkan kaldığı yerden devam etsin).
+ * İdempotent. Yalnız kendi üyeliğine yazar; aşama görünür değilse 404 (seçim ucu ile aynı kapı).
+ */
+export async function recordStageProgress(req: RequestWithTenant, res: Response) {
+  if (!req.auth) return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
+
+  const audience = audienceForRole(req.auth.role);
+  if (!audience) {
+    return res.status(403).json({ error: 'YOLCULUK_YOK', message: 'Bu rol için öğrenme yolculuğu bulunmuyor.' });
+  }
+
+  const parsed = validateRequest(StageParamSchema, req.params, res);
+  if (!parsed.success) return parsed.response;
+
+  // IDOR koruması: userId gövdeden DEĞİL oturumdan; tenant izolasyonu findVisibleStage'de.
+  const ok = await markStageProgress(req.auth.userId, req.tenant.tenantId, audience, parsed.data.stageId);
+  if (!ok) {
+    return res.status(404).json({
+      error: 'ASAMA_BULUNAMADI',
+      message: 'Aşama bulunamadı ya da erişim reddedildi.',
+    });
+  }
+
+  const status = await getJourneyStatus(req.auth.userId, req.tenant.tenantId, audience);
+  return res.json({
+    completedStages: status.completedStages,
+    totalStages: status.totalStages,
+    nextStage: status.nextStage,
+  });
 }
 
 // ─── POST /api/learning-journey/complete ─────────────────────────────────────
