@@ -25,6 +25,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { applyKAnonymity, maskDefaultProfileRate } from '../services/mask.js';
 import { maskEmail } from '../services/mask.js';
+import { getMatchingFallbackRate } from '../services/matchingFallbackStats.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
 import { ACTIVE_KVKK_CONSENT_SELECT, hasActiveKvkkConsent } from '../services/consentIndicator.js';
 
@@ -345,6 +346,11 @@ export async function getTenantAnalytics(req: Request, res: Response) {
   });
   const defaultProfile = maskDefaultProfileRate(withoutVector, memberships.length);
 
+  // AJ-111 (md.111): son 30 günde eşleştirme isteklerinin yüzde kaçı gevşetilmiş kurallarla
+  // (fallbackLevel > 0) sonuçlandı. Kaynak kurum+gün+kademe toplu sayacıdır — kişi yok, k-anonimlik
+  // maskesi gerekmez; az istekte oran yanıltıcı olduğu için `insufficientData` ile gizlenir.
+  const matchingFallback = await getMatchingFallbackRate(tenantId);
+
   await audit('VIEW_TENANT_ANALYTICS', tenantId, req);
 
   return res.json({
@@ -352,5 +358,6 @@ export async function getTenantAnalytics(req: Request, res: Response) {
     discDistribution: visible,
     suppressedGroups,
     defaultProfile,
+    matchingFallback,
   });
 }
