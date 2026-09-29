@@ -47,6 +47,27 @@ function classifyEmailDomain(email: string): DomainTier {
   return 'INSTITUTION';
 }
 
+/** AN-29 / KARAR-34: self-serve kayıtta seçilebilen kurum türleri (Prisma `TenantKind` ile aynı). */
+export const TENANT_KINDS = ['ORGANIZATION', 'COMMUNITY'] as const;
+export type SelfServeTenantKind = (typeof TENANT_KINDS)[number];
+
+/**
+ * Yeni kurumun başlangıç doğrulama durumu.
+ * - Kurum (ORGANIZATION ya da tür gönderilmemiş): e-posta alan adına göre — kurumsal alan adı
+ *   otomatik onay, .edu.tr ve genel e-posta platform incelemesi (mevcut davranış, değişmedi).
+ * - Topluluk (COMMUNITY): HER ZAMAN platform incelemesi. KARAR-34 SORU 1 (PO, 2026-09-23):
+ *   "Lider bir TALEP oluşturur → PO yalnız LİDERİ onaylar". Kurumsal alan adlı e-postayla gelen
+ *   topluluk da otomatik onay almaz; lider onaylanınca üyeleri kendisi davet eder (üyeler PO
+ *   onayına düşmez — mevcut davet akışı).
+ */
+export function initialVerificationStatus(
+  email: string,
+  kind: SelfServeTenantKind | undefined,
+): 'AUTO_APPROVED' | 'PENDING_REVIEW' {
+  if (kind === 'COMMUNITY') return 'PENDING_REVIEW';
+  return classifyEmailDomain(email) === 'INSTITUTION' ? 'AUTO_APPROVED' : 'PENDING_REVIEW';
+}
+
 // ─── DISC Önizleme Motoru (kural tabanlı, LLM yok) ───────────────────────────
 
 const DISC_ARCHETYPES: Record<string, { name: string; emoji: string; power: string }> = {
@@ -202,6 +223,8 @@ const SelfServeRegisterSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
   programTemplate:  z.enum(['MEZUN', 'KULUP', 'GONULLU', 'OZEL']).default('OZEL'),
+  // AN-29 / KARAR-34: kurum türü. Gönderilmezse NULL kalır (eski istemci = kurum davranışı).
+  kind:             z.enum(TENANT_KINDS).optional(),
   // KVKK Md.5 — açık rıza zorunlu.
   kvkkConsent:      z.literal(true, { message: 'KVKK onayı zorunludur.' }),
   // Doğrulama alanları — .edu.tr veya generic domain için zorunlu hale gelir (frontend kontrolü)
@@ -213,10 +236,9 @@ export async function selfServeRegister(req: Request, res: Response) {
   const parsed = validateRequest(SelfServeRegisterSchema, req.body, res);
   if (!parsed.success) return parsed.response;
 
-  const { email, password, name, tenantName, slug, programTemplate, institutionRole, verificationNote } = parsed.data;
+  const { email, password, name, tenantName, slug, programTemplate, kind, institutionRole, verificationNote } = parsed.data;
 
-  const domainTier = classifyEmailDomain(email);
-  const verificationStatus = domainTier === 'INSTITUTION' ? 'AUTO_APPROVED' : 'PENDING_REVIEW';
+  const verificationStatus = initialVerificationStatus(email, kind);
 
   const [slugExists, emailExists] = await Promise.all([
     prisma.tenant.findUnique({
@@ -276,6 +298,7 @@ export async function selfServeRegister(req: Request, res: Response) {
         // o istek düşerse kurum taslakta kalıyor ve 96 saatlik taslak temizliği onu siliyordu.
         onboardingStep:     'DONE',
         programTemplate,
+        ...(kind && { kind }),
         unsubscribeToken:   crypto.randomUUID(),
         kvkkConsentAt:      new Date(),
         verificationStatus,
@@ -346,6 +369,7 @@ export async function selfServeRegister(req: Request, res: Response) {
       plan:               tenant.plan,
       onboardingStep:     tenant.onboardingStep,
       programTemplate:    tenant.programTemplate,
+      kind:               tenant.kind,
       verificationStatus: tenant.verificationStatus,
     },
     user: {
