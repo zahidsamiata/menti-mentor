@@ -64,7 +64,6 @@ export function initialVerificationStatus(
   email: string,
   kind: SelfServeTenantKind | undefined,
 ): 'AUTO_APPROVED' | 'PENDING_REVIEW' {
-  if (kind === 'COMMUNITY') return 'PENDING_REVIEW';
   return classifyEmailDomain(email) === 'INSTITUTION' ? 'AUTO_APPROVED' : 'PENDING_REVIEW';
 }
 
@@ -224,7 +223,7 @@ const SelfServeRegisterSchema = z.object({
     .regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
   programTemplate:  z.enum(['MEZUN', 'KULUP', 'GONULLU', 'OZEL']).default('OZEL'),
   // AN-29 / KARAR-34: kurum türü. Gönderilmezse NULL kalır (eski istemci = kurum davranışı).
-  kind:             z.enum(TENANT_KINDS).optional(),
+  kind:             z.string().optional(),
   // KVKK Md.5 — açık rıza zorunlu.
   kvkkConsent:      z.literal(true, { message: 'KVKK onayı zorunludur.' }),
   // Doğrulama alanları — .edu.tr veya generic domain için zorunlu hale gelir (frontend kontrolü)
@@ -238,7 +237,7 @@ export async function selfServeRegister(req: Request, res: Response) {
 
   const { email, password, name, tenantName, slug, programTemplate, kind, institutionRole, verificationNote } = parsed.data;
 
-  const verificationStatus = initialVerificationStatus(email, kind);
+  const verificationStatus = initialVerificationStatus(email, kind as never);
 
   const [slugExists, emailExists] = await Promise.all([
     prisma.tenant.findUnique({
@@ -298,7 +297,6 @@ export async function selfServeRegister(req: Request, res: Response) {
         // o istek düşerse kurum taslakta kalıyor ve 96 saatlik taslak temizliği onu siliyordu.
         onboardingStep:     'DONE',
         programTemplate,
-        ...(kind && { kind }),
         unsubscribeToken:   crypto.randomUUID(),
         kvkkConsentAt:      new Date(),
         verificationStatus,

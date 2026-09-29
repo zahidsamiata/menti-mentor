@@ -155,7 +155,6 @@ export async function getPlatformStats(_req: Request, res: Response) {
         isSharedPoolActive: true,
         isActive: true,
         verificationStatus: true,
-        kind: true, // AN-29
         createdAt: true,
         _count: { select: { users: true, meetings: true } },
       },
@@ -252,7 +251,7 @@ type PendingTenantRow = {
   slug: string;
   isActive: boolean;
   verificationStatus: string;
-  kind: TenantKind | null;
+  kind?: TenantKind | null;
   verificationNote: string | null;
   createdAt: Date;
   users: { fullName: string | null; email: string }[];
@@ -287,7 +286,6 @@ export async function listPendingTenants(req: Request, res: Response) {
       slug: true,
       isActive: true,
       verificationStatus: true,
-      kind: true, // AN-29: platform onay ekranında başvurunun türü (kurum / topluluk) görünür
       verificationNote: true,
       createdAt: true,
       users: {
@@ -321,7 +319,6 @@ export async function listAllTenants(req: Request, res: Response) {
         slug: true,
         isActive: true,
         verificationStatus: true,
-        kind: true, // AN-29
         plan: true,
         createdAt: true,
         _count: { select: { users: true } },
