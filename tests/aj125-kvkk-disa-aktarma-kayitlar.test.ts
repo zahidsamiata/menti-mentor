@@ -76,11 +76,15 @@ describe('AJ-125 — dışa aktarmada tüm kurumlardaki geri bildirim + eşleşm
 
   function assertFieldSetUnchanged(body: ExportBody) {
     // Alan kümesi yönetici yolu ve önceki çıktı ile aynı — karşı taraf kimliği/tenantId eklenmedi.
+    // AJ-126: kişinin MENTÖR olduğu (kendi yazdığı) satırda goalAchieved de var; menti satırı değişmedi.
+    const base = ['createdAt', 'difficulty', 'npsScore', 'phase', 'starRating'];
     for (const f of body.feedbackLogs) {
-      expect(Object.keys(f).sort()).toEqual(['createdAt', 'difficulty', 'npsScore', 'phase', 'starRating']);
+      const expected = f.difficulty === FB_B ? [...base, 'goalAchieved'].sort() : base;
+      expect(Object.keys(f).sort()).toEqual(expected);
     }
+    // AJ-126: gönderilen isteğin kendi yazdığı mesajı da var.
     for (const r of body.matchRequests) {
-      expect(Object.keys(r).sort()).toEqual(['createdAt', 'targetId', 'targetType']);
+      expect(Object.keys(r).sort()).toEqual(['createdAt', 'requestMessage', 'targetId', 'targetType']);
     }
     const blob = JSON.stringify({ f: body.feedbackLogs, r: body.matchRequests });
     expect(blob).not.toContain(mentorA.id);

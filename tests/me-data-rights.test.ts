@@ -6,7 +6,9 @@
  *  2. POST /api/me/delete-account → kullanıcı KENDİ hesabını kapatır (anonimleştirme, e-posta teyidi).
  *
  * Güvenlik iddiaları:
- *  - Export'ta yalnız KENDİ verisi; mesaj İÇERİĞİ değil yalnız SAYI (karşı taraf PII'si sızmaz).
+ *  - Export'ta yalnız KENDİ verisi; ALINAN mesajın içeriği yok (karşı taraf PII'si sızmaz).
+ *    AJ-126 (a): kişinin KENDİ GÖNDERDİĞİ mesajların içeriği `messagesSent`'te (KVKK Md.11);
+ *    alınan mesajlar KARAR-138 bekliyor.
  *  - Yanlış teyit e-postası ile silme REDDEDİLİR (yanlışlıkla tetikleme önlenir).
  *  - Kurumun SON aktif admin'i kendini kapatamaz (kurum sahipsiz kalmasın).
  *  - Kapatma sonrası ACIK_RIZA revokedAt dolar (satır SİLİNMEZ — denetim izi) ve oturum düşer.
@@ -52,7 +54,7 @@ describe('GET /api/me/data-export — kendi verisini indirir', () => {
     ({ accessToken: tokenA } = await loginAs(http, a.email, a.rawPassword));
   });
 
-  it('kendi profil + rıza + mesaj SAYISI döner (içerik değil)', async () => {
+  it('kendi profil + rıza + mesaj SAYISI + yalnız KENDİ gönderdiği mesaj içeriği döner', async () => {
     const res = await http
       .get('/api/me/data-export')
       .set(tenantHeaders(tenantId, tokenA))
@@ -67,7 +69,8 @@ describe('GET /api/me/data-export — kendi verisini indirir', () => {
     expect(res.body.messageCount).toBe(1);
     const blob = JSON.stringify(res.body);
     expect(blob).not.toContain('B mesajı');
-    expect(blob).not.toContain('A mesajı'); // içerik hiç dışa aktarılmaz
+    // AJ-126: kendi gönderdiği mesajın içeriği VAR, alınan (B'nin) mesaj içeriği YOK (yukarıda).
+    expect(res.body.messagesSent.map((m: { content: string }) => m.content)).toEqual(['A mesajı']);
   });
 
   it('token olmadan 401 (kimlik doğrulaması zorunlu)', async () => {
