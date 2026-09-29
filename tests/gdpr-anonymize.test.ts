@@ -258,6 +258,28 @@ describe('anonymizeUser → bağlı serbest-metin PII temizlenir (madde 93)', ()
     expect(msgB!.content).toContain(SECRET); // B'nin verisi dokunulmadı
   });
 
+  // AN-27: zaman önerisinde talep edilen zaman da gönderenin girdisidir → A'nınki temizlenir, B'ninki KORUNUR.
+  it('AN-27: A\'nın zaman önerisindeki talep edilen zaman temizlenir; B\'nin önerisi KORUNUR', async () => {
+    const conversation = await testPrisma.conversation.findFirstOrThrow({ where: { mentorUserId: userA } });
+    const when = new Date('2031-01-15T10:00:00.000Z');
+    const pa = await testPrisma.message.create({
+      data: { conversationId: conversation.id, senderUserId: userA, content: `öneri ${SECRET}`, kind: 'TIME_PROPOSAL', proposedStartAt: when },
+    });
+    const pb = await testPrisma.message.create({
+      data: { conversationId: conversation.id, senderUserId: userB, content: `öneri ${SECRET}`, kind: 'TIME_PROPOSAL', proposedStartAt: when },
+    });
+
+    await anonymizeUser(userA, tenantId);
+
+    const afterA = await testPrisma.message.findUniqueOrThrow({ where: { id: pa.id } });
+    const afterB = await testPrisma.message.findUniqueOrThrow({ where: { id: pb.id } });
+    expect(afterA.content).toBe('[silindi]');
+    expect(afterA.proposedStartAt).toBeNull();
+    expect(afterA.kind).toBe('TIME_PROPOSAL');
+    expect(afterB.proposedStartAt?.toISOString()).toBe(when.toISOString());
+    expect(afterB.content).toContain(SECRET);
+  });
+
   it('tüm bağlı serbest-metin alanları temizlenir; MentorshipAgreement.mentiGoal placeholder', async () => {
     await anonymizeUser(userA, tenantId);
 

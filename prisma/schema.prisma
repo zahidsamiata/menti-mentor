@@ -497,6 +497,15 @@ model Message {
   // PII — düz metin içerik. Log'a yazılmaz; KVKK hard-delete kapsamındadır.
   content String @db.Text
 
+  // AN-27 (KARAR-53 ②④): yapılandırılmış mesaj tipi. NULL = sıradan mesaj (mevcut tüm satırlar).
+  // 'TIME_PROPOSAL' = menti'nin zaman önerisi: content = NEDEN görüşmek istediği (gerekçe),
+  // proposedStartAt = talep ettiği zaman. İzin listesi uygulamada (services/timeProposal.ts) —
+  // enum değil, yeni tip ayrı enum migration'ı gerektirmesin.
+  // Sınıf: kind = analitik tip işareti · proposedStartAt = kişinin girdisi (PII sınıfı; KVKK dışa
+  // aktarmada verilir, anonimleştirmede temizlenir — gdprOwnDataExport.ts / gdprService.ts).
+  kind            String?
+  proposedStartAt DateTime?
+
   createdAt DateTime @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
