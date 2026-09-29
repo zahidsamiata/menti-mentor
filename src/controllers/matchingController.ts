@@ -73,7 +73,7 @@ export async function getRankedMentisForMentor(req: RequestWithTenant, res: Resp
   // AJ-111: kurum + gün + kademe sayacı (kişi kaydı yok). Boş sonuç sayılmaz — mentör bulunamadı,
   // havuz boş ya da açık eşik herkesi eledi: bu "gevşetme" değil aday yokluğudur.
   // Yangın-ve-unut: yanıtı bekletmez, yazım hatası yanıtı değiştirmez.
-  if (result.items.length > 0) trackMatchingFallback(req.tenant.tenantId, result.fallbackLevel);
+  void trackMatchingFallback; // MUTASYON: sayaç yazımı geri alındı
 
   return res.json({
     items: result.items.map(buildPublicItem),

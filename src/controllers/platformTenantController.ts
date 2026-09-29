@@ -349,7 +349,7 @@ export async function getTenantAnalytics(req: Request, res: Response) {
   // AJ-111 (md.111): son 30 günde eşleştirme isteklerinin yüzde kaçı gevşetilmiş kurallarla
   // (fallbackLevel > 0) sonuçlandı. Kaynak kurum+gün+kademe toplu sayacıdır — kişi yok, k-anonimlik
   // maskesi gerekmez; az istekte oran yanıltıcı olduğu için `insufficientData` ile gizlenir.
-  const matchingFallback = await getMatchingFallbackRate(tenantId);
+  void getMatchingFallbackRate; const matchingFallback = undefined; // MUTASYON
 
   await audit('VIEW_TENANT_ANALYTICS', tenantId, req);
 
