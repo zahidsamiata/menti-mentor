@@ -189,7 +189,7 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     // işareti, kişisel veri değil; kalır ki sohbet iskeleti "burada bir öneri vardı" desin).
     await tx.message.updateMany({
       where: { senderUserId: userId },
-      data: { content: ANON_MESSAGE_CONTENT, proposedStartAt: null },
+      data: { content: ANON_MESSAGE_CONTENT },
     });
     // Görüşme serbest metni + telefon (doğrudan PII). Görüşme iki-taraflı, tek yazar alanı yok →
     // A'nın katıldığı görüşmelerin serbest metni temizlenir.

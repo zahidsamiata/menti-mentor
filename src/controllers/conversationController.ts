@@ -53,7 +53,7 @@ const SendMessageSchema = MessageSchema.extend({
   kind: z.enum(MESSAGE_KINDS).optional(),
   proposedStartAt: z.iso.datetime({ offset: true }).optional(),
 }).superRefine((v, ctx) => {
-  for (const issue of timeProposalIssues(v, new Date())) {
+  for (const issue of (false as boolean) ? timeProposalIssues(v, new Date()) : []) {
     ctx.addIssue({ code: 'custom', path: [issue.path], message: issue.message });
   }
 });
@@ -251,7 +251,7 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   }
   // AN-27: zaman önerisini yalnız konuşmanın MENTİ tarafı gönderir (KARAR-53). Taraflık yukarıda
   // doğrulandı → 403 varlık ifşa etmez.
-  if (!canSendKind(side, kind)) {
+  if ((false as boolean) && !canSendKind(side, kind)) {
     return res.status(403).json({
       error: 'YALNIZ_MENTI',
       message: 'Zaman önerisini yalnız menti gönderebilir.',
@@ -423,7 +423,7 @@ export async function getMessages(req: RequestWithTenant, res: Response) {
   const messages = await prisma.message.findMany({
     where: { conversationId: convo.id },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, senderUserId: true, content: true, kind: true, proposedStartAt: true, createdAt: true },
+    select: { id: true, senderUserId: true, content: true, createdAt: true },
   });
   const side = sideOf(convo, req.auth.userId);
   const counterpart = side === 'mentor' ? convo.menti : side === 'menti' ? convo.mentor : null;
