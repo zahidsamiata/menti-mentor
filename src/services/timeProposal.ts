@@ -9,7 +9,7 @@
 // ek iş olmadan anlamlı kalır; eski istemci öneriyi sıradan mesaj gibi gösterir (bozulmaz).
 // Randevu oluşturma akışına OTOMATİK bağlanmaz — öneri yalnız bir mesajdır (kapsam dışı, AN-27 kalanı).
 //
-// Saf fonksiyonlar: DB/HTTP bilmez → birim testle doğrulanır (tests/time-proposal.unit.test.ts).
+// Saf fonksiyonlar: DB/HTTP bilmez → birim testle doğrulanır (tests/an27-zaman-onerisi.unit.test.ts).
 
 export const MESSAGE_KIND = {
   TIME_PROPOSAL: 'TIME_PROPOSAL',
