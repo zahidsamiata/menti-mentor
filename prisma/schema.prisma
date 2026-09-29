@@ -259,6 +259,7 @@ model Tenant {
   agreements          MentorshipAgreement[]
   conversations       Conversation[]
   consents            Consent[]
+  matchingFallbackDailyStats MatchingFallbackDailyStat[]
 }
 
 model User {
@@ -542,6 +543,22 @@ model MatchCombinationScore {
 
   @@unique([tenantId, discCombination])
   @@index([tenantId])
+}
+
+// AJ-111 (md.111 / G2-06): eşleştirme gevşetme oranı — kurum + gün + fallback kademesi başına
+// TOPLU SAYAÇ. Kişi düzeyinde hiçbir alan YOK (userId/mentorId tutulmaz) → kişisel veri değildir,
+// KVKK saklama/silme kapsamına girmez. day = İstanbul takvim günü (00:00 UTC olarak saklanır).
+// level = matching.ts fallbackLevel (0 tüm filtreler · 1 zaman · 2 anti-match · 3 yalnız sektör).
+// Yazım: services/matchingFallbackStats.ts (upsert + increment); okuma: platform kurum analizi.
+model MatchingFallbackDailyStat {
+  tenantId String
+  day      DateTime @db.Date
+  level    Int
+  count    Int      @default(0)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, day, level])
 }
 
 model Meeting {

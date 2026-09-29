@@ -104,6 +104,7 @@ All data in this system is classified into two categories. Code must never mix t
 | `FeedbackLog` | 3 years | `purgeExpiredData()` cron — weekly (G1-06) |
 | `UserResponse` | Until user anonymized/deleted | `anonymizeUser()` / `hardDeleteUser()` |
 | `VisibilityOptIn` | Until hard-delete | Cascades with user |
+| `MatchingFallbackDailyStat` | Indefinite — not personal data (tenant + day + fallback level counters, no user id; ≤4 rows/tenant/day) | Cascades with tenant (AJ-111) |
 
 ### Security Invariants
 
