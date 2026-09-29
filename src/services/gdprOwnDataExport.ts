@@ -295,8 +295,9 @@ export const CONVERSATION_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
 };
 
 /** Kişinin GÖNDERDİĞİ mesajlar (senderUserId = kişi). Aldığı mesajlar KARAR-138 bekliyor. */
+// AN-27: zaman önerisi alanları (kind + talep edilen zaman) kişinin KENDİ girdisidir → dışa aktarılır.
 export const EXPORT_MESSAGE_SELECT = {
-  conversationId: true, content: true, createdAt: true,
+  conversationId: true, content: true, kind: true, proposedStartAt: true, createdAt: true,
 } as const satisfies Prisma.MessageSelect;
 
 export const MESSAGE_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {

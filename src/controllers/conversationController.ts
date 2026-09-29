@@ -10,6 +10,13 @@ import { sendNewChatMessageEmail } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
 import { ACTIVE_MEMBERSHIP_ROLES_SELECT, roleInTenant } from '../services/membership.js';
+import {
+  MESSAGE_KIND,
+  MESSAGE_KINDS,
+  timeProposalIssues,
+  canSendKind,
+  previewPrefix,
+} from '../services/timeProposal.js';
 
 // Chat v1 — menti↔mentör talep mesajlaşma.
 // Güvenlik sınırı KATILIMCIDIR (tenant değil): shared-pool'da taraflar farklı
@@ -38,6 +45,23 @@ const MessageSchema = z.object({
     .min(1, 'Mesaj boş olamaz.')
     .max(MESSAGE_MAX, `Mesaj en fazla ${MESSAGE_MAX} karakter olabilir.`),
 });
+
+// AN-27: mesaj gönderme ucu yapılandırılmış "zaman önerisi"ni de taşır (yeni uç açılmadı).
+// kind yoksa davranış eskisiyle BİREBİR aynı (sıradan mesaj). kind='TIME_PROPOSAL' ise
+// message = gerekçe (reasonMin..reasonMax) + proposedStartAt zorunlu, ileri ve makul aralıkta.
+const SendMessageSchema = MessageSchema.extend({
+  kind: z.enum(MESSAGE_KINDS).optional(),
+  proposedStartAt: z.iso.datetime({ offset: true }).optional(),
+}).superRefine((v, ctx) => {
+  for (const issue of timeProposalIssues(v, new Date())) {
+    ctx.addIssue({ code: 'custom', path: [issue.path], message: issue.message });
+  }
+});
+
+/** 400 yanıtına kullanıcıya gösterilecek tek Türkçe cümle (ilk hata). */
+function firstIssueMessage(error: z.ZodError): string {
+  return error.issues[0]?.message ?? 'Geçersiz istek.';
+}
 
 const StartSchema = MessageSchema.extend({
   // Menti bir mentöre zorunlu ilk mesajla konuşma açar (hemen açık, kabul adımı yok).
@@ -212,8 +236,9 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   if (!req.auth) {
     return res.status(401).json({ error: 'KIMLIK_DOGRULANMADI', message: 'Giriş gerekli.' });
   }
-  const parsed = validateRequest(MessageSchema, req.body, res);
+  const parsed = validateRequest(SendMessageSchema, req.body, res, { message: firstIssueMessage });
   if (!parsed.success) return parsed.response;
+  const kind = parsed.data.kind ?? null;
 
   const convo = await prisma.conversation.findUnique({ where: { id: req.params['id'] as string } });
   if (!convo) {
@@ -223,6 +248,14 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   const side = sideOf(convo, req.auth.userId);
   if (!side) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Konuşma bulunamadı.' });
+  }
+  // AN-27: zaman önerisini yalnız konuşmanın MENTİ tarafı gönderir (KARAR-53). Taraflık yukarıda
+  // doğrulandı → 403 varlık ifşa etmez.
+  if (!canSendKind(side, kind)) {
+    return res.status(403).json({
+      error: 'YALNIZ_MENTI',
+      message: 'Zaman önerisini yalnız menti gönderebilir.',
+    });
   }
 
   // KR-19b: idari blok, blok KONMADAN ÖNCE açılmış konuşmada da mesajlaşmayı durdurur
@@ -252,7 +285,14 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   await emailRecipientIfCaughtUp(convo, otherSide(side), req.auth.fullName);
 
   const msg = await prisma.message.create({
-    data: { conversationId: convo.id, senderUserId: req.auth.userId, content: parsed.data.message },
+    data: {
+      conversationId: convo.id,
+      senderUserId: req.auth.userId,
+      content: parsed.data.message,
+      ...(kind === MESSAGE_KIND.TIME_PROPOSAL && parsed.data.proposedStartAt
+        ? { kind, proposedStartAt: new Date(parsed.data.proposedStartAt) }
+        : {}),
+    },
   });
   const readField = side === 'mentor'
     ? { mentorLastReadAt: msg.createdAt }
@@ -263,7 +303,14 @@ export async function sendMessage(req: RequestWithTenant, res: Response) {
   });
 
   return res.status(201).json({
-    message: { id: msg.id, senderUserId: msg.senderUserId, content: msg.content, createdAt: msg.createdAt },
+    message: {
+      id: msg.id,
+      senderUserId: msg.senderUserId,
+      content: msg.content,
+      kind: msg.kind,
+      proposedStartAt: msg.proposedStartAt,
+      createdAt: msg.createdAt,
+    },
   });
 }
 
@@ -330,9 +377,9 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
 
   const lastMessages = convoIds.length === 0
     ? []
-    : await prisma.$queryRaw<Array<{ conversationId: string; content: string }>>(
+    : await prisma.$queryRaw<Array<{ conversationId: string; content: string; kind: string | null }>>(
         Prisma.sql`
-          SELECT DISTINCT ON ("conversationId") "conversationId", "content"
+          SELECT DISTINCT ON ("conversationId") "conversationId", "content", "kind"
           FROM "Message"
           WHERE "conversationId" IN (${Prisma.join(convoIds)})
           ORDER BY "conversationId", "createdAt" DESC
@@ -347,7 +394,7 @@ export async function listConversations(req: RequestWithTenant, res: Response) {
     return {
       id: c.id,
       counterpart,
-      lastMessagePreview: last ? preview(last.content) : null,
+      lastMessagePreview: last ? `${previewPrefix(last.kind)}${preview(last.content)}` : null,
       lastMessageAt: c.lastMessageAt,
       unread: unreadByConvo.get(c.id) ?? 0,
     };
@@ -376,7 +423,7 @@ export async function getMessages(req: RequestWithTenant, res: Response) {
   const messages = await prisma.message.findMany({
     where: { conversationId: convo.id },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, senderUserId: true, content: true, createdAt: true },
+    select: { id: true, senderUserId: true, content: true, kind: true, proposedStartAt: true, createdAt: true },
   });
   const side = sideOf(convo, req.auth.userId);
   const counterpart = side === 'mentor' ? convo.menti : side === 'menti' ? convo.mentor : null;

@@ -185,9 +185,11 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     // Sahiplik-kapsamlı: yalnız anonimleşen kullanıcının YAZDIĞI/HAKKINDA-OLAN içerik. Karşı tarafın
     // (B) kendi yazdıkları KORUNUR. userId rastgele cuid olduğundan sorgu doğal olarak A'ya kapsanır.
     // Mesaj (iii): A'nın yazdığı içerik placeholder olur; B'nin mesajları + sohbet iskeleti kalır.
+    // AN-27: zaman önerisinde A'nın talep ettiği zaman da A'nın girdisidir → temizlenir (kind = tip
+    // işareti, kişisel veri değil; kalır ki sohbet iskeleti "burada bir öneri vardı" desin).
     await tx.message.updateMany({
       where: { senderUserId: userId },
-      data: { content: ANON_MESSAGE_CONTENT },
+      data: { content: ANON_MESSAGE_CONTENT, proposedStartAt: null },
     });
     // Görüşme serbest metni + telefon (doğrudan PII). Görüşme iki-taraflı, tek yazar alanı yok →
     // A'nın katıldığı görüşmelerin serbest metni temizlenir.
@@ -251,7 +253,7 @@ export async function anonymizeUser(userId: string, tenantId: string): Promise<A
     'userResponses', 'sessions',
     'userProfile.schools', 'userProfile.companies', 'userProfile.communities',
     'userProfile.disc', 'userProfile.ocean', 'userProfile.archetype',
-    'message.content', 'meeting.notes', 'meeting.requestMessage', 'meeting.phoneNumber',
+    'message.content', 'message.proposedStartAt', 'meeting.notes', 'meeting.requestMessage', 'meeting.phoneNumber',
     'meeting.locationText', 'meeting.locationUrl', 'meetingCheckIn.openNote', 'meetingCheckIn.nextTopicNote',
     'feedback.keyLearnings', 'feedback.specificComments', 'feedback.periodicCareerGrowth',
     'matchRequest.requestMessage', 'visibilityOptIn.iceBreaker', 'visibilityOptIn.requestMessage',
