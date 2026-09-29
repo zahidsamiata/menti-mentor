@@ -84,6 +84,7 @@ export async function getTenantOverview(req: Request, res: Response) {
       name: true,
       slug: true,
       verificationStatus: true,
+      kind: true, // AN-29: kurum / topluluk
       plan: true,
       isActive: true,
       createdAt: true,

@@ -178,6 +178,14 @@ enum TenantVerificationStatus {
   CORRECTION_REQUESTED // Platform admin düzeltme istedi — kurum bilgileri revize edip tekrar gönderecek (#37)
 }
 
+// AN-29 / KARAR-34 SORU 1 (PO, 2026-09-23): kurum türü. Topluluk = yöneticisi (lideri) bir kişi olan
+// kurum; mevcut kurum akışıyla aynı iskelet. NULL = türü seçilmeden açılmış kayıt (bu alandan önceki
+// tüm kurumlar + tür göndermeyen istemciler) → kurum (ORGANIZATION) gibi davranır.
+enum TenantKind {
+  ORGANIZATION // Kurum (dernek, vakıf, şirket, üniversite birimi…)
+  COMMUNITY // Topluluk — başvurusu e-posta alan adından bağımsız HER ZAMAN platform onayına düşer
+}
+
 model Tenant {
   id                 String  @id @default(cuid())
   name               String
@@ -225,6 +233,10 @@ model Tenant {
   // #37: Platform admin'in kuruma ilettiği düzeltme notu (verificationNote'tan AYRI — kanıt korunur).
   // null = düzeltme istenmedi. verificationStatus=CORRECTION_REQUESTED iken doludur; kurum görür.
   correctionNote     String?
+
+  // AN-29 / KARAR-34: kurum türü (bkz. enum TenantKind). Yalnız self-serve kayıtta yazılır; kayıttan
+  // sonra değiştiren uç YOK (kurum/platform güncelleme şemaları .strict() → alan reddedilir).
+  kind TenantKind?
 
   // Faz 3 — Taslak kurtarma e-postası (KVKK: unsubscribe zorunlu)
   // Token: selfServeRegister'da üretilir, e-postada unsubscribe linki olarak gider.

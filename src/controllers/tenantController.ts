@@ -50,6 +50,7 @@ export const TENANT_ADMIN_RESPONSE_EXCLUDED: Record<string, string> = {
   unsubscribeToken: 'E-posta abonelikten çıkma belirteci (sır) — ASLA yanıta girmez.',
   reminderEmailSentAt: 'Hatırlatma e-postası iç izi (tekrar gönderim koruması).',
   unsubscribedAt: 'E-posta listesinden çıkma zamanı — iç iz.',
+  kind: 'AN-29 kurum türü (kurum/topluluk) — platform paneli /api/platform/tenants/* uçlarında görünür; bu CRUD uçlarının ön yüz tüketicisi yok.',
 };
 
 const CreateTenantSchema = z.object({

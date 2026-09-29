@@ -75,6 +75,7 @@ describe('maskPendingTenantRow — başvuran yönetici kimliği maskeli döner (
     slug: 'ornek',
     isActive: false,
     verificationStatus: 'PENDING_REVIEW',
+    kind: null,
     verificationNote: null,
     createdAt: new Date('2026-08-25T00:00:00Z'),
   };
