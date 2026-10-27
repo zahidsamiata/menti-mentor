@@ -13,6 +13,7 @@
 
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
+import { prisma } from '../db.js';
 import { TOKEN_TYPES } from '../middleware/jwtAuth.js';
 
 export interface InvitationTokenClaims {
@@ -22,6 +23,8 @@ export interface InvitationTokenClaims {
   typ?:            'invitation'; // AJ-87 — eski davetlerde yok
   invitedByName?:  string;
   invitedByTitle?: string;
+  /** U-12B: InvitationLink kaydının id'si — iptal kontrolü için. Eski bağlantılarda yok. */
+  lid?:            string;
   iat?:            number;
   exp?:            number;
 }
@@ -59,3 +62,44 @@ export function verifyInvitationToken(token: string): InvitationTokenClaims | nu
     return null;
   }
 }
+
+/** U-12B — iptal kararı için okunan kayıt alanları. */
+export interface InvitationLinkState {
+  tenantId:  string;
+  revokedAt: Date | null;
+}
+
+/**
+ * Saf karar (DB'siz birim testlenir): `lid` taşıyan token yalnız kaydı VARSA, aynı kuruma aitse ve
+ * İPTAL EDİLMEDİYSE geçerlidir. `lid` taşımayan (U-12B öncesi) token kayıtsız kabul edilir — en geç
+ * 7 günde (INVITATION_TTL_DAYS) kendiliğinden kapanır.
+ */
+export function isInvitationLinkUsable(
+  claims: Pick<InvitationTokenClaims, 'tenantId' | 'lid'>,
+  link: InvitationLinkState | null,
+): boolean {
+  if (!claims.lid) return true;
+  if (!link) return false;
+  return link.tenantId === claims.tenantId && link.revokedAt === null;
+}
+
+/**
+ * İmza + tür + yaş (verifyInvitationToken) VE iptal kontrolü. Davetle katılım/kayıt yapan HER yol
+ * (katılım önizleme, form kaydı, Google/LinkedIn kaydı) bunu kullanır — tek kural.
+ */
+export async function verifyActiveInvitationToken(token: string): Promise<InvitationTokenClaims | null> {
+  const claims = verifyInvitationToken(token);
+  if (!claims) return null;
+  return (await isInvitationLinkActive(claims)) ? claims : null;
+}
+
+/** İmzası doğrulanmış claim'lerin bağlantı kaydı hâlâ geçerli mi (iptal edilmemiş, aynı kurum)? */
+export async function isInvitationLinkActive(claims: Pick<InvitationTokenClaims, 'tenantId' | 'lid'>): Promise<boolean> {
+  if (!claims.lid) return true;
+  const link = await prisma.invitationLink.findUnique({
+    where:  { id: claims.lid },
+    select: { tenantId: true, revokedAt: true },
+  });
+  return isInvitationLinkUsable(claims, link);
+}
+

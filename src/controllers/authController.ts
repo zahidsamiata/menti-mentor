@@ -20,7 +20,7 @@ import { recordSignupConsent, hasCurrentSignupConsent } from '../services/consen
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { hashRefreshToken, refreshTokenLookupKeys, refreshTokenWhere } from '../services/refreshToken.js';
-import { verifyInvitationToken } from '../services/invitationToken.js';
+import { verifyActiveInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
@@ -147,7 +147,8 @@ export async function register(req: Request, res: Response) {
   // aynı kuralı uygular (`oauthService.handleNewUser`).
   let approvalStatus: 'PENDING' | 'APPROVED' = 'PENDING';
   if (inviteToken) {
-    const claims = verifyInvitationToken(inviteToken);
+    // U-12B: iptal edilmiş bağlantı otomatik onay vermez (kayıt yine PENDING olarak açılır).
+    const claims = await verifyActiveInvitationToken(inviteToken);
     if (claims && claims.tenantId === tenant.id && claims.role === role) {
       approvalStatus = 'APPROVED';
     }
