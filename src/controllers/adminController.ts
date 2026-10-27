@@ -903,7 +903,7 @@ export async function setAlgorithmWeightsHandler(req: RequestWithTenant, res: Re
     });
 
   return res.json({
-    message: 'Eşleştirme ağırlıkları güncellendi.',
+    message: 'Öneri ağırlıkları güncellendi.',
     weights: result.newWeights,
     pendingCleared: result.pendingCleared,
   });

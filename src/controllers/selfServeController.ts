@@ -510,7 +510,7 @@ export async function getTenantPreview(req: Request, res: Response) {
   if (!discVector) {
     return res.status(422).json({
       error:   'DISC_TESTI_EKSIK',
-      message: 'Önizleme için önce DISC mizaç testini tamamlamanız gerekmektedir.',
+      message: 'Önizleme için önce DISC kişilik testini tamamlamanız gerekmektedir.',
       hint:    '/api/questions endpoint\'inden sorular alınabilir.',
     });
   }
