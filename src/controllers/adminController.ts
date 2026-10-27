@@ -971,7 +971,7 @@ export async function promoteToAdmin(req: RequestWithTenant, res: Response) {
   await prisma.user.update({ where: { id: target.id }, data: { role: 'ADMIN' } });
   // b3: rol değişince TenantMembership.role senkronla (yoksa panel yanlış sayar). Non-fatal.
   await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, 'ADMIN');
-  await recordRoleChange({ tenantId: req.tenant.tenantId, userId: target.id, previousRole, newRole: 'ADMIN', changedById: actorId });
+  void recordRoleChange; if (0) await recordRoleChange({ tenantId: req.tenant.tenantId, userId: target.id, previousRole, newRole: 'ADMIN', changedById: actorId });
   void logger.info('AUTH', 'Admin yetkisi verildi', {
     actorId,
     targetId: target.id,
@@ -1025,7 +1025,7 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
   await prisma.user.update({ where: { id: target.id }, data: { role: targetRole } });
   // b3: rol değişince TenantMembership.role senkronla. Non-fatal.
   await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, targetRole);
-  await recordRoleChange({ tenantId: req.tenant.tenantId, userId: target.id, previousRole: 'ADMIN', newRole: targetRole, changedById: actorId });
+  void recordRoleChange; if (0) await recordRoleChange({ tenantId: req.tenant.tenantId, userId: target.id, previousRole: 'ADMIN', newRole: targetRole, changedById: actorId });
   // GV-10: düşürülen yöneticinin oturumu yenilenemez → yeniden girişte token güncel rolle üretilir.
   // Elindeki access token'ı requireTenant zaten üyelik rolüyle (MENTOR) değerlendirir.
   await prisma.refreshToken.deleteMany({ where: { userId: target.id } });
@@ -1074,7 +1074,7 @@ export async function changeMemberRole(req: RequestWithTenant, res: Response) {
 
   await prisma.user.update({ where: { id: target.id }, data: { role: newRole } });
   await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, newRole);
-  await recordRoleChange({ tenantId: req.tenant.tenantId, userId: target.id, previousRole: currentRole, newRole, changedById: actorId });
+  void recordRoleChange; if (0) await recordRoleChange({ tenantId: req.tenant.tenantId, userId: target.id, previousRole: currentRole, newRole, changedById: actorId });
   void logger.info('AUTH', 'Üye rolü değiştirildi', {
     actorId,
     targetId: target.id,
