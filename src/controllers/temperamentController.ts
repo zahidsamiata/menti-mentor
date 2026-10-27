@@ -20,7 +20,7 @@ const QuestionAnswerSchema = z.object({
 const TemperamentTestBodySchema = z.object({
   answers: z
     .array(QuestionAnswerSchema)
-    .length(7, 'Mizaç testinde 7 sorunun hepsi yanıtlanmalı.')
+    .length(7, 'Kişilik testinde 7 sorunun hepsi yanıtlanmalı.')
     .refine(
       (answers) => {
         const ids = answers.map((a) => a.questionId);

@@ -514,7 +514,7 @@ export async function submitDiscTest(req: RequestWithTenant, res: Response) {
   });
 
   return res.json({
-    message: `Mizaç profilin hazır! Sen bir ${resultCard!.archetype}sın ${resultCard!.icon}`,
+    message: `Kişilik profilin hazır! Sen bir ${resultCard!.archetype}sın ${resultCard!.icon}`,
     // Kişinin KENDİ sonuç ekranı "Uyum %" için vektörü kullanır (ResultStep) — yanıt şekli korunur,
     // ham alanlar yalnız bu self yanıtında taşınır, DB'deki karta yazılmaz.
     resultCard: { ...discResultCard, discVector: persistedDiscVector, rawScores: result.scores },

@@ -249,7 +249,7 @@ export async function hideGlobalQuestion(req: RequestWithTenant, res: Response) 
   if (question.category === 'DISC_ASSESSMENT') {
     return res.status(403).json({
       error: 'DISC_SORULARI_KILITLI',
-      message: 'DISC değerlendirme soruları gizlenemez. Bu sorular eşleştirme algoritması için zorunludur.',
+      message: 'DISC değerlendirme soruları gizlenemez. Bu sorular öneri algoritması için zorunludur.',
     });
   }
 

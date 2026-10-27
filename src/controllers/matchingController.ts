@@ -159,7 +159,7 @@ export async function setVisibilityOptIn(req: RequestWithTenant, res: Response) 
   if (mentor.id === parsed.data.mentiId) {
     return res.status(400).json({
       error: 'SELF_MATCH_YASAK',
-      message: 'Mentor kendi kendini eşleştirme listesine ekleyemez.',
+      message: 'Mentör kendini aday listesine ekleyemez.',
     });
   }
 
