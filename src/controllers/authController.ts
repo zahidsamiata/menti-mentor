@@ -8,6 +8,7 @@ import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAut
 import { revokeAccessToken } from '../services/accessTokenRevocation.js';
 import type { RequestWithTenant } from '../types.js';
 import { sendAdminNewUserNotification, sendPasswordResetEmail, sendAlreadyRegisteredEmail } from '../services/emailService.js';
+import { hashResetToken, issuePasswordResetToken } from '../services/passwordReset.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { GoogleOAuthProvider, OAuthProviderError } from '../services/oauth/googleProvider.js';
 import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
@@ -19,7 +20,7 @@ import { recordSignupConsent, hasCurrentSignupConsent } from '../services/consen
 import { recordUserActivity } from '../services/activityService.js';
 import { discLettersFromVector } from '../services/discLetters.js';
 import { hashRefreshToken, refreshTokenLookupKeys, refreshTokenWhere } from '../services/refreshToken.js';
-import { verifyInvitationToken } from '../services/invitationToken.js';
+import { verifyActiveInvitationToken } from '../services/invitationToken.js';
 import { config } from '../config.js';
 import { validateRequest } from '../middleware/validate.js';
 import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../middleware/tenantSuspension.js';
@@ -73,7 +74,6 @@ const ChangePasswordSchema = z.object({
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
-const RESET_TOKEN_EXPIRY_MINUTES = 60;
 const BCRYPT_ROUNDS = 12;
 
 /**
@@ -88,15 +88,7 @@ function generateRefreshToken(): string {
   return crypto.randomBytes(64).toString('hex');
 }
 
-function resetTokenExpiresAt(): Date {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() + RESET_TOKEN_EXPIRY_MINUTES);
-  return d;
-}
-
-function hashToken(raw: string): string {
-  return crypto.createHash('sha256').update(raw).digest('hex');
-}
+// resetToken üretimi/özeti: services/passwordReset.ts (U-15 — e-posta ve platform yöneticisi aynı tokenı kullanır).
 
 // ─── Kayıt akışı kullanıcı mesajları ─────────────────────────────────────────
 // Tek yerde tutulur (dedupe + tutarlılık + çeviri kolaylığı). Enumeration-safe:
@@ -155,7 +147,8 @@ export async function register(req: Request, res: Response) {
   // aynı kuralı uygular (`oauthService.handleNewUser`).
   let approvalStatus: 'PENDING' | 'APPROVED' = 'PENDING';
   if (inviteToken) {
-    const claims = verifyInvitationToken(inviteToken);
+    // U-12B: iptal edilmiş bağlantı otomatik onay vermez (kayıt yine PENDING olarak açılır).
+    const claims = await verifyActiveInvitationToken(inviteToken);
     if (claims && claims.tenantId === tenant.id && claims.role === role) {
       approvalStatus = 'APPROVED';
     }
@@ -249,6 +242,7 @@ interface SessionUserSource {
   discVector: unknown;
   needsOrientation: boolean;
   needsReconsent: boolean;
+  rejectionReason?: string | null;
 }
 
 /**
@@ -265,6 +259,14 @@ async function sessionRoleFor(
   return (await getActiveMembershipRole(user.id, user.tenantId)) ?? user.role;
 }
 
+/**
+ * IC-08 / Y1-B8: onay bekleyen kişiye yöneticinin "düzeltme iste" notu (`rejectionReason`).
+ * Onaylı kişide eski not kalmış olabilir → döndürülmez.
+ */
+function correctionNoteFor(user: { approvalStatus: string; rejectionReason?: string | null }): string | null {
+  return user.approvalStatus === 'PENDING' ? (user.rejectionReason ?? null) : null;
+}
+
 function toSessionUser(user: SessionUserSource) {
   return {
     id: user.id,
@@ -279,6 +281,8 @@ function toSessionUser(user: SessionUserSource) {
     // GV-18: rıza metni sürümü güncellenip kullanıcının aktif rızası eskide kalırsa true.
     // Bugün CONSENT_VERSION yer tutucu olduğundan hiçbir aktif kullanıcı için tetiklenmez.
     needsReconsent: user.needsReconsent,
+    // IC-08 / Y1-B8: onay bekleyenin bekleme ekranı yöneticinin notunu gösterir — e-posta kapalıysa tek kanal.
+    correctionNote: correctionNoteFor(user),
   };
 }
 
@@ -364,16 +368,9 @@ export async function login(req: Request, res: Response) {
     });
   }
 
-  // Onay bekleyen hesap — bekleme ekranına yönlendirilir (FE: /pending-approval).
-  // IC-08: yöneticinin "düzeltme iste" notu (rejectionReason) da döner — e-posta kapalıysa tek kanal bu.
-  // Yalnız doğru şifreden SONRA (REJECTED dalıyla aynı desen) → not, şifresi olmayana sızmaz.
-  if (user.approvalStatus === 'PENDING') {
-    return res.status(403).json({
-      error: 'HESAP_ONAY_BEKLENIYOR',
-      message: 'Hesabınız henüz yönetici tarafından onaylanmamıştır. Onay sonrası giriş yapabilirsiniz.',
-      correctionNote: user.rejectionReason ?? null,
-    });
-  }
+  // Onay bekleyen hesap GİRİŞ YAPAR (Y1-B8, KARAR-101 B genişletilmiş): kayıt sürecini tamamlar,
+  // soruları çözer, mentörleri yalnız isimsiz özet olarak görür. Kapalı uçlar `requireTenant` 4c'de
+  // (pendingApprovalGate.ts) — Google/LinkedIn girişiyle aynı davranış. Önceden burada 403 dönüyordu.
 
   const tenant = await loadSessionTenant(user.tenantId);
 
@@ -497,6 +494,7 @@ export async function refresh(req: Request, res: Response) {
           discType: true,
           discVector: true, // yalnız discLetters türetimi için; ham vektör yanıta KONMAZ
           needsOrientation: true,
+          rejectionReason: true, // yalnız onay bekleyenin correctionNote'u için (toSessionUser)
         },
       },
     },
@@ -603,16 +601,7 @@ export async function forgotPassword(req: Request, res: Response) {
   // Token DB'ye yazılmadan response gönderilmez — kullanıcı tespiti yine de engellenir
   // (aynı mesaj döner, ancak artık tüm DB işlemleri tamamlandıktan sonra).
   if (user && user.isActive && user.authProvider === 'LOCAL') {
-    await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
-
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    await prisma.passwordResetToken.create({
-      data: {
-        tokenHash: hashToken(rawToken),
-        userId: user.id,
-        expiresAt: resetTokenExpiresAt(),
-      },
-    });
+    const rawToken = await issuePasswordResetToken(user.id);
 
     void sendPasswordResetEmail({
       toEmail: user.email,
@@ -630,7 +619,7 @@ export async function resetPassword(req: Request, res: Response) {
   if (!parsed.success) return parsed.response;
 
   const { token, password } = parsed.data;
-  const tokenHash = hashToken(token);
+  const tokenHash = hashResetToken(token);
 
   const stored = await prisma.passwordResetToken.findUnique({
     where: { tokenHash },
@@ -875,12 +864,14 @@ export async function getMe(req: RequestWithTenant, res: Response) {
       discVector: true,
       approvalStatus: true,
       authProvider: true,
+      rejectionReason: true,
     },
   });
 
   if (!user) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
   }
+  const { rejectionReason, ...ownProfile } = user;
 
   // #37: kurum başvuru durumu — kurum yöneticisi "düzeltme istendi" bilgisini burada görür.
   // Tenant-scoped (req.tenant.tenantId) → IDOR yok. correctionNote YALNIZ ADMIN'e (kurumun
@@ -898,7 +889,9 @@ export async function getMe(req: RequestWithTenant, res: Response) {
 
   // #12: kendi profili — DISC çoklu-harf türetilir (vektör kendi verisi, zaten dönüyor).
   return res.json({
-    ...user,
+    ...ownProfile,
+    // Y1-B8: onay bekleyenin bekleme ekranı yöneticinin notunu buradan gösterir (OAuth girişi dahil).
+    correctionNote: correctionNoteFor({ approvalStatus: user.approvalStatus, rejectionReason }),
     // AJ-115: kurum-içi rol (üyelikten; requireTenant her istekte düzeltir) — User.role değil.
     // Ön yüz ekran seçimini bu alandan yapar; yetki kararıyla aynı kaynak olmalı.
     role: req.auth.role,

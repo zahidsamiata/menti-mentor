@@ -371,7 +371,7 @@ export async function rejectTenant(req: Request, res: Response) {
   invalidateTenant(tenant.id); // Y1-B9: askı kapısı önbellekten okur
   await auditPlatformAction('REJECT_TENANT', req, { targetType: 'TENANT', targetTenantId: tenant.id });
 
-  // FAZ 3 (#37): red bildirimi (destekleyici dil) — gönderim bayrak arkasında KAPALI.
+  // FAZ 3 (#37): red bildirimi — KARAR-23 gereği e-posta GİTMEZ (notifyTenantVerification yalnız log'lar).
   void notifyTenantVerification({ tenantId: tenant.id, kind: 'REJECTED', note: note ?? undefined });
 
   return res.json({ ok: true });

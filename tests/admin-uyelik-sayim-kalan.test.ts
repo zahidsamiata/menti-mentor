@@ -422,7 +422,7 @@ describe('AJ-56 negatif kilit (KARAR-133): başka kurumun yöneticisi misafirin 
     const adminBefore = await personState(guestAdmin.id);
 
     await http.post(`/api/admin/users/${guest.id}/promote-admin`).set(tenantHeaders(tenantB.id, tokenB)).expect(404);
-    await http.post(`/api/admin/users/${guestAdmin.id}/demote-admin`).set(tenantHeaders(tenantB.id, tokenB)).expect(404);
+    await http.post(`/api/admin/users/${guestAdmin.id}/demote-admin`).send({ targetRole: 'MENTOR' }).set(tenantHeaders(tenantB.id, tokenB)).expect(404);
 
     expect(await personState(guest.id)).toEqual(guestBefore);
     expect(await personState(guestAdmin.id)).toEqual(adminBefore);

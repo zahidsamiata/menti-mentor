@@ -25,7 +25,9 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { applyKAnonymity, maskDefaultProfileRate } from '../services/mask.js';
 import { maskEmail } from '../services/mask.js';
+import { getMatchingFallbackRate } from '../services/matchingFallbackStats.js';
 import { auditPlatformAction } from '../services/platformAudit.js';
+import { buildPasswordResetUrl, issuePasswordResetToken, RESET_TOKEN_EXPIRY_MINUTES } from '../services/passwordReset.js';
 import { ACTIVE_KVKK_CONSENT_SELECT, hasActiveKvkkConsent } from '../services/consentIndicator.js';
 
 const ROLES = ['ADMIN', 'MENTOR', 'MENTI'] as const;
@@ -345,6 +347,11 @@ export async function getTenantAnalytics(req: Request, res: Response) {
   });
   const defaultProfile = maskDefaultProfileRate(withoutVector, memberships.length);
 
+  // AJ-111 (md.111): son 30 günde eşleştirme isteklerinin yüzde kaçı gevşetilmiş kurallarla
+  // (fallbackLevel > 0) sonuçlandı. Kaynak kurum+gün+kademe toplu sayacıdır — kişi yok, k-anonimlik
+  // maskesi gerekmez; az istekte oran yanıltıcı olduğu için `insufficientData` ile gizlenir.
+  const matchingFallback = await getMatchingFallbackRate(tenantId);
+
   await audit('VIEW_TENANT_ANALYTICS', tenantId, req);
 
   return res.json({
@@ -352,5 +359,47 @@ export async function getTenantAnalytics(req: Request, res: Response) {
     discDistribution: visible,
     suppressedGroups,
     defaultProfile,
+    matchingFallback,
+  });
+}
+
+// POST /api/platform/tenants/:id/users/:userId/password-reset-link — U-15 (KARAR-84 B).
+// E-posta çalışmadığında şifresini unutan kişi geri giremiyordu. Bağlantıyı YALNIZ platform yöneticisi
+// üretir (router: requirePlatformAdmin) ve kişiye kendisi iletir; kurum yöneticisi ve kullanıcı üretemez.
+// Token, e-posta akışıyla AYNI (services/passwordReset.ts: 60 dk, tek kullanımlık, DB'de yalnız özeti).
+// Her üretim, bağlantı gönderilmeden ÖNCE iz kaydına yazılır (dosya başı AUDIT ilkesi); iz kaydında
+// token/e-posta yok, yalnız hedef kimlikler.
+export async function issueUserPasswordResetLink(req: Request, res: Response) {
+  const tenantId = req.params['id'] as string;
+  const userId = req.params['userId'] as string;
+  if (!(await requireTenant(tenantId, res))) return;
+
+  // getTenantUserDetail ile aynı kapsam: üyelik tenantId+userId ile → başka kurumun kişisi 404.
+  const membership = await prisma.tenantMembership.findFirst({
+    where: { tenantId, userId, isActive: true },
+    select: { user: { select: { id: true, isActive: true, authProvider: true } } },
+  });
+  if (!membership) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bu kurumda bulunamadı.' });
+  }
+  // forgotPassword ile aynı koşul: yalnız aktif, şifreyle giren hesap.
+  if (!membership.user.isActive) {
+    return res.status(409).json({ error: 'HESAP_PASIF', message: 'Hesap aktif değil; sıfırlama bağlantısı üretilemez.' });
+  }
+  if (membership.user.authProvider !== 'LOCAL') {
+    return res.status(409).json({
+      error: 'SOSYAL_GIRIS',
+      message: 'Bu kişi Google/LinkedIn ile giriş yapıyor; şifre sıfırlama gerekmez.',
+    });
+  }
+
+  await audit('ISSUE_PASSWORD_RESET_LINK', tenantId, req, { userId });
+  const rawToken = await issuePasswordResetToken(userId);
+
+  // Bağlantı geçici bir sırdır: ara katmanlarda saklanmasın.
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(201).json({
+    resetUrl: buildPasswordResetUrl(rawToken),
+    expiresInMinutes: RESET_TOKEN_EXPIRY_MINUTES,
   });
 }

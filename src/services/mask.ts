@@ -74,6 +74,38 @@ export function applyKAnonymity(rawCount: number): KAnonymousCount {
   return { count: rawCount, suppressed: false };
 }
 
+/** Y1-B8: isimsiz mentör özetinde gösterilecek en çok alan sayısı. */
+export const MENTOR_PREVIEW_MAX_SECTORS = 5;
+
+export interface SectorCount {
+  sector: string;
+  count: number;
+}
+
+/**
+ * Y1-B8 (KARAR-101 EK): onay bekleyen kişiye mentörlerin İSİMSİZ alan dağılımı
+ * ("4'ü yazılım, 3'ü pazarlama"). Her alan ayrı bir gruptur → her biri k-anonimlik eşiğine tabidir:
+ * eşiğin altındaki alan HİÇ listelenmez (adı da sayısı da). Toplam eşik altındaysa liste boş döner.
+ * Bir mentör birden çok alanda sayılabilir (etiketler çoklu). Saf fonksiyon.
+ */
+export function summarizeSectorsKAnonymous(
+  sectorTagsPerMentor: ReadonlyArray<ReadonlyArray<string>>,
+  totalSuppressed: boolean,
+): SectorCount[] {
+  if (totalSuppressed) return [];
+  const counts = new Map<string, number>();
+  for (const tags of sectorTagsPerMentor) {
+    for (const tag of new Set(tags.map((t) => t.trim().toLowerCase()).filter(Boolean))) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count >= K_ANONYMITY_THRESHOLD)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'tr'))
+    .slice(0, MENTOR_PREVIEW_MAX_SECTORS)
+    .map(([sector, count]) => ({ sector, count }));
+}
+
 /** Bir NPS örneği: ortalama + yanıt sayısı. `suppressed` yalnız zaten maskelenmiş kayıtta bulunur. */
 export interface NpsSample {
   avgNps: number | null;

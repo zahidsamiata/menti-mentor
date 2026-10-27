@@ -166,7 +166,7 @@ describe('AJ-01 (inceleme düzeltmesi): SON_ADMIN koruması — yalnız gerçek 
 
     const { accessToken } = await loginAs(http, adminA.email, adminA.rawPassword);
     const res = await http
-      .post(`/api/admin/users/${adminA.id}/demote-admin`)
+      .post(`/api/admin/users/${adminA.id}/demote-admin`).send({ targetRole: 'MENTOR' })
       .set(tenantHeaders(tenantA.id, accessToken));
 
     expect(res.status).toBe(400);
@@ -184,7 +184,7 @@ describe('AJ-01 (inceleme düzeltmesi): SON_ADMIN koruması — yalnız gerçek 
 
     const { accessToken } = await loginAs(http, adminA.email, adminA.rawPassword);
     const res = await http
-      .post(`/api/admin/users/${adminA.id}/demote-admin`)
+      .post(`/api/admin/users/${adminA.id}/demote-admin`).send({ targetRole: 'MENTOR' })
       .set(tenantHeaders(tenantA.id, accessToken));
 
     expect(res.status).toBe(400);
@@ -202,7 +202,7 @@ describe('AJ-01 (inceleme düzeltmesi): SON_ADMIN koruması — yalnız gerçek 
 
     const { accessToken } = await loginAs(http, adminA.email, adminA.rawPassword);
     const res = await http
-      .post(`/api/admin/users/${adminA.id}/demote-admin`)
+      .post(`/api/admin/users/${adminA.id}/demote-admin`).send({ targetRole: 'MENTOR' })
       .set(tenantHeaders(tenantA.id, accessToken));
 
     expect(res.status).toBe(400);

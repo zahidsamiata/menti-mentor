@@ -5,6 +5,53 @@ import { logoUrlSchema } from '../services/logoUrl.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { validateRequest } from '../middleware/validate.js';
 
+/**
+ * AJ-127 — platform kurum uçlarının (POST /api/tenants · GET/PATCH /api/tenants/:id) yanıtında
+ * dönen Tenant alanları. Açık `select`: şemaya eklenen her yeni kolon (ör. AN-36 yasal kimlik
+ * alanları) kendiliğinden yanıta GİRMEZ; buraya ya da `TENANT_ADMIN_RESPONSE_EXCLUDED`'a bilinçli
+ * yazılmalıdır (bekçi: tests/aj127-tenant-yanit-sema.unit.test.ts).
+ *
+ * Neden bu küme: ön yüzde bu üç ucun tüketicisi yok (platform paneli `/api/platform/tenants/*`
+ * uçlarını kullanır). Küme = kardeş `listTenants` alanları + bu ailenin yazdığı alanlar
+ * (`tenantVocabulary`) + platform genel bakış çekirdeği (`/api/platform/tenants/:id/overview`:
+ * verificationStatus · plan · isActive) + `updatedAt` (yazma yanıtında değişikliğin izi).
+ */
+export const TENANT_ADMIN_RESPONSE_SELECT = {
+  id: true,
+  name: true,
+  displayName: true,
+  slug: true,
+  isSharedPoolActive: true,
+  logoUrl: true,
+  primaryColor: true,
+  tenantVocabulary: true,
+  verificationStatus: true,
+  plan: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+/** Yanıttan bilinçli hariç tutulan Tenant alanları ve gerekçeleri (veri en azlığı). */
+export const TENANT_ADMIN_RESPONSE_EXCLUDED: Record<string, string> = {
+  limits: 'Plan limit ayrıntısı — bu uçların işi değil; plan adı (plan) yeterli.',
+  onboardingStep: 'Kurum yöneticisinin kurulum sihirbazı adımı — kurumun kendi akışının iç durumu.',
+  programTemplate: 'Kurulum sihirbazı şablon seçimi — kurumun kendi ayarı, platform CRUD yanıtında gereksiz.',
+  maxMeetingsPerWeek: 'Kurum program kuralı — kurum ayar uçlarında (/api/tenants/:id/settings) yönetilir.',
+  minMatchScoreThreshold: 'Kurum eşleşme ayarı — kurum ayar uçlarında yönetilir.',
+  blockedPairs: 'Engellenen çiftler — başka kullanıcıların kimlikleri (kişisel veri); ayrı uçta yönetilir.',
+  disabledCertTopics: 'Kurumun sertifika konu ayarı — kurum ayar uçlarında yönetilir.',
+  reportingFrequency: 'Kurum bildirim tercihi — kurum ayar uçlarında yönetilir.',
+  kvkkConsentAt: 'KVKK rıza ispat kaydı — iç denetim verisi, CRUD yanıtında gerekmez.',
+  verificationNote: 'Başvuru kanıtı (görev + ispat adresi) — kişisel veri içerebilir; doğrulama uçlarında görülür.',
+  verifiedAt: 'Doğrulama iç izi — doğrulama uçlarında görülür.',
+  verifiedBy: 'Son işlemi yapan yöneticinin kullanıcı kimliği — iç iz.',
+  correctionNote: 'Kuruma iletilen düzeltme notu — doğrulama akışında görülür.',
+  unsubscribeToken: 'E-posta abonelikten çıkma belirteci (sır) — ASLA yanıta girmez.',
+  reminderEmailSentAt: 'Hatırlatma e-postası iç izi (tekrar gönderim koruması).',
+  unsubscribedAt: 'E-posta listesinden çıkma zamanı — iç iz.',
+};
+
 const CreateTenantSchema = z.object({
   name: z.string().min(2),
   slug: z.string().min(2).regex(/^[a-z0-9-]+$/, 'Slug yalnızca küçük harf, rakam ve tire içerebilir'),
@@ -31,6 +78,7 @@ export async function createTenant(req: Request, res: Response) {
       primaryColor: parsed.data.primaryColor ?? '#6366f1',
       tenantVocabulary: parsed.data.tenantVocabulary,
     },
+    select: TENANT_ADMIN_RESPONSE_SELECT,
   });
 
   return res.status(201).json(tenant);
@@ -57,6 +105,7 @@ export async function listTenants(_req: Request, res: Response) {
 export async function getTenant(req: Request, res: Response) {
   const tenant = await prisma.tenant.findUnique({
     where: { id: req.params['id'] as string },
+    select: TENANT_ADMIN_RESPONSE_SELECT,
   });
 
   if (!tenant) {
@@ -101,6 +150,7 @@ export async function updateTenant(req: Request, res: Response) {
   const updated = await prisma.tenant.update({
     where: { id: existing.id },
     data: parsed.data,
+    select: TENANT_ADMIN_RESPONSE_SELECT,
   });
 
   invalidateTenant(existing.id);

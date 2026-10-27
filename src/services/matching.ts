@@ -286,7 +286,7 @@ export async function rankMentisForMentor(args: {
     items: looseFilter(fallback3).slice(0, limit).map((m) => ({
       ...m,
       fallbackLevel: 3 as const,
-      warnings: ['Mizaç uyumu düşük — ilerlemeden önce beklentileri konuşmanız önerilir.'],
+      warnings: ['Kişilik uyumu düşük — ilerlemeden önce beklentileri konuşmanız önerilir.'],
     })),
     fallbackLevel: 3,
   };

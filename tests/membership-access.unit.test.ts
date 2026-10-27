@@ -17,8 +17,8 @@ function row(overrides: RowOverrides = {}): MembershipAccessRow {
 
 describe('decideMembershipAccess (GV-10)', () => {
   it('aktif üyelik + açık hesap → erişim, rol üyelikten', () => {
-    expect(decideMembershipAccess(row({ role: 'ADMIN' }))).toEqual({ ok: true, role: 'ADMIN' });
-    expect(decideMembershipAccess(row({ role: 'MENTOR' }))).toEqual({ ok: true, role: 'MENTOR' });
+    expect(decideMembershipAccess(row({ role: 'ADMIN' }))).toEqual({ ok: true, role: 'ADMIN', approvalStatus: 'APPROVED' });
+    expect(decideMembershipAccess(row({ role: 'MENTOR' }))).toEqual({ ok: true, role: 'MENTOR', approvalStatus: 'APPROVED' });
   });
 
   it('üyelik yok → NO_ACTIVE_MEMBERSHIP', () => {
@@ -38,7 +38,8 @@ describe('decideMembershipAccess (GV-10)', () => {
   });
 
   it('onay bekleyen (PENDING) hesap engellenmez — bekleme ekranı uçları çalışmaya devam eder', () => {
-    expect(decideMembershipAccess(row({ role: 'MENTI', user: { approvalStatus: 'PENDING' } }))).toEqual({ ok: true, role: 'MENTI' });
+    // Y1-B8: PENDING burada kesilmez; durum karara eklenir, kapı requireTenant 4c'de (pendingApprovalGate.ts).
+    expect(decideMembershipAccess(row({ role: 'MENTI', user: { approvalStatus: 'PENDING' } }))).toEqual({ ok: true, role: 'MENTI', approvalStatus: 'PENDING' });
   });
 
   // AJ-31 — anahtarın oturumu (sid → RefreshToken.id). Çıkış kaydı siler → yeniden başlatmadan
@@ -56,11 +57,11 @@ describe('decideMembershipAccess (GV-10)', () => {
 
   it('AJ-31: oturum kaydı duruyorsa erişim (rol üyelikten)', () => {
     expect(decideMembershipAccess(row({ role: 'MENTI', user: { refreshTokens: [{ id: 'sess-1' }] } }), 'sess-1'))
-      .toEqual({ ok: true, role: 'MENTI' });
+      .toEqual({ ok: true, role: 'MENTI', approvalStatus: 'APPROVED' });
   });
 
   it('AJ-31: sid taşımayan (eski) anahtar oturum kontrolüne girmez — geçiş penceresi', () => {
-    expect(decideMembershipAccess(row({ user: { refreshTokens: [] } }))).toEqual({ ok: true, role: 'MENTOR' });
+    expect(decideMembershipAccess(row({ user: { refreshTokens: [] } }))).toEqual({ ok: true, role: 'MENTOR', approvalStatus: 'APPROVED' });
   });
 
   it('AJ-31: hesap pasifse oturum kaydından önce ACCOUNT_INACTIVE döner (mevcut 401 gövdesi korunur)', () => {

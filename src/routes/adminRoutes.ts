@@ -23,6 +23,8 @@ import {
   listAdmins,
   promoteToAdmin,
   demoteFromAdmin,
+  changeMemberRole,
+  getRoleHistory,
   getHealthMetrics,
   nudgeUser,
 } from '../controllers/adminController.js';
@@ -91,5 +93,9 @@ router.patch('/reports/:id', reviewTenantReport as unknown as RequestHandler);
 router.get('/managers', listAdmins as unknown as RequestHandler);
 router.post('/users/:id/promote-admin', promoteToAdmin as unknown as RequestHandler);
 router.post('/users/:id/demote-admin', demoteFromAdmin as unknown as RequestHandler);
+// U-13 (KARAR-83 A): MENTOR↔MENTI rol değiştirme — yönetici (router.use requireRole('ADMIN')).
+router.post('/users/:id/role', changeMemberRole as unknown as RequestHandler);
+// U-13C (KARAR-83 C): üyenin rol tarihçesi — yönetici.
+router.get('/users/:id/role-history', getRoleHistory as unknown as RequestHandler);
 
 export default router;

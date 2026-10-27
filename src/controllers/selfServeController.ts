@@ -14,6 +14,7 @@ import { ensureMembership } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
 import { hashRefreshToken } from '../services/refreshToken.js';
 import { config } from '../config.js';
+import { INVITATION_EXPIRES_IN, INVITATION_TTL_SECONDS, isInvitationLinkActive, isInvitationTooOld } from '../services/invitationToken.js';
 import { validateRequest } from '../middleware/validate.js';
 import { parseDiscVector, type DiscVector } from '../services/scoring.js';
 import { sendAlreadyRegisteredEmail } from '../services/emailService.js';
@@ -509,7 +510,7 @@ export async function getTenantPreview(req: Request, res: Response) {
   if (!discVector) {
     return res.status(422).json({
       error:   'DISC_TESTI_EKSIK',
-      message: 'Önizleme için önce DISC mizaç testini tamamlamanız gerekmektedir.',
+      message: 'Önizleme için önce DISC kişilik testini tamamlamanız gerekmektedir.',
       hint:    '/api/questions endpoint\'inden sorular alınabilir.',
     });
   }
@@ -548,6 +549,7 @@ interface InvitationTokenClaims {
   typ?:            'invitation'; // AJ-87 — eski davetlerde yok
   invitedByName?:  string;
   invitedByTitle?: string;
+  lid?:            string; // U-12B — InvitationLink.id
   iat?:            number;
   exp?:            number;
 }
@@ -555,24 +557,27 @@ interface InvitationTokenClaims {
 function signInvitationToken(
   tenantId: string,
   role: 'MENTOR' | 'MENTI',
+  linkId: string,
   invitedByName?: string,
   invitedByTitle?: string,
 ): string {
   // AJ-87: `typ` ortak tür alanı (erişim/state anahtarlarıyla aynı desen); `type` eski davetlerle uyum için kalır.
-  const payload: Omit<InvitationTokenClaims, 'iat' | 'exp'> = { tenantId, role, type: 'invitation', typ: TOKEN_TYPES.INVITATION };
+  const payload: Omit<InvitationTokenClaims, 'iat' | 'exp'> = { tenantId, role, type: 'invitation', typ: TOKEN_TYPES.INVITATION, lid: linkId };
   if (invitedByName) payload.invitedByName = invitedByName;
   if (invitedByTitle) payload.invitedByTitle = invitedByTitle;
-  return jwt.sign(payload, config.jwt.secret, { expiresIn: '30d' } as jwt.SignOptions);
+  return jwt.sign(payload, config.jwt.secret, { expiresIn: INVITATION_EXPIRES_IN } as jwt.SignOptions);
 }
 
 function verifyInvitationToken(token: string): InvitationTokenClaims | null {
   try {
     const decoded = jwt.verify(token, config.jwt.secret) as InvitationTokenClaims;
     // type guard: normal auth token'larının bu endpoint'e geçmesini engelle.
-    // AJ-87: `typ` varsa davet olmalı; yoksa (≤30 gün önce üretilmiş eski davet) `type` yeter —
+    // AJ-87: `typ` varsa davet olmalı; yoksa (eski davet) `type` yeter —
     // erişim/state anahtarları `type:'invitation'` taşımadığı için tür-siz eski davet ayrışır.
     const typOk = decoded.typ === undefined || decoded.typ === TOKEN_TYPES.INVITATION;
-    return decoded.type === 'invitation' && typOk ? decoded : null;
+    if (decoded.type !== 'invitation' || !typOk) return null;
+    // U-12: 30 günlük `exp` taşıyan eski bağlantılar da 7. günde kapanır (services/invitationToken.ts).
+    return isInvitationTooOld(decoded.iat) ? null : decoded;
   } catch {
     return null;
   }
@@ -610,13 +615,23 @@ export async function createInvitation(req: Request, res: Response) {
   }
 
   const { role, invitedByName, invitedByTitle } = parsed.data;
-  const invitationToken = signInvitationToken(tenantId, role, invitedByName, invitedByTitle);
+  // U-12B: önce kayıt (iptal edilebilsin), sonra kaydın id'sini taşıyan token.
+  const link = await prisma.invitationLink.create({
+    data: {
+      tenantId,
+      role,
+      createdById: ctx.payload.sub,
+      expiresAt:   new Date(Date.now() + INVITATION_TTL_SECONDS * 1000),
+    },
+    select: { id: true },
+  });
+  const invitationToken = signInvitationToken(tenantId, role, link.id, invitedByName, invitedByTitle);
   const invitationLink  = `${config.frontendBaseUrl}/join?token=${invitationToken}`;
 
   return res.status(201).json({
     invitationLink,
     token:     invitationToken,
-    expiresIn: '30d',
+    expiresIn: INVITATION_EXPIRES_IN,
     role,
     invitedByName:  invitedByName ?? null,
     invitedByTitle: invitedByTitle ?? null,
@@ -628,12 +643,58 @@ export async function createInvitation(req: Request, res: Response) {
   });
 }
 
+// ─── U-12B (KARAR-82 B): toplu davet bağlantıları — listele / iptal et ──────────
+
+/** Listede gösterilen geçmiş: süresi dolmuş ve iptal edilmiş bağlantılar da 30 gün görünür (iz). */
+const INVITATION_LINK_LIST_DAYS = 30;
+const INVITATION_LINK_LIST_LIMIT = 50;
+
+// GET /api/tenants/:id/invitations — kurumun bağlantıları (tokenın kendisi DÖNMEZ; yalnız kayıt bilgisi).
+export async function listInvitationLinks(req: Request, res: Response) {
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun davet linklerini göremezsiniz.');
+  if (!ctx) return;
+
+  const since = new Date(Date.now() - INVITATION_LINK_LIST_DAYS * 24 * 60 * 60 * 1000);
+  const links = await prisma.invitationLink.findMany({
+    where:   { tenantId: ctx.tenantId, createdAt: { gte: since } },
+    select:  { id: true, role: true, createdAt: true, expiresAt: true, revokedAt: true },
+    orderBy: { createdAt: 'desc' },
+    take:    INVITATION_LINK_LIST_LIMIT,
+  });
+  const now = Date.now();
+  return res.json({
+    items: links.map((l) => ({
+      ...l,
+      status: l.revokedAt ? 'REVOKED' : l.expiresAt.getTime() <= now ? 'EXPIRED' : 'ACTIVE',
+    })),
+  });
+}
+
+// POST /api/tenants/:id/invitations/:linkId/revoke — bağlantıyı iptal et (geri alınmaz; yeni link üretilir).
+export async function revokeInvitationLink(req: Request, res: Response) {
+  const ctx = await authenticateTenantAdminForParam(req, res, 'Başka bir kurumun davet linkini iptal edemezsiniz.');
+  if (!ctx) return;
+
+  const linkId = req.params['linkId'] as string;
+  // Kurum filtresi sorguda: başka kurumun bağlantısı 0 satır günceller → 404 (var/yok ayrımı verilmez).
+  const result = await prisma.invitationLink.updateMany({
+    where: { id: linkId, tenantId: ctx.tenantId, revokedAt: null },
+    data:  { revokedAt: new Date(), revokedById: ctx.payload.sub },
+  });
+  if (result.count === 0) {
+    return res.status(404).json({ error: 'DAVET_BULUNAMADI', message: 'Davet linki bulunamadı ya da zaten iptal edilmiş.' });
+  }
+  return res.json({ ok: true });
+}
+
 // ─── GET /api/invitations/:token/join ────────────────────────────────────────
 
 export async function joinViaInvitation(req: Request, res: Response) {
   const rawToken = req.params['token'] as string;
 
-  const claims = verifyInvitationToken(rawToken);
+  // U-12B: iptal edilmiş bağlantı da "geçersiz" sayılır (aynı yanıt — iptal mi süre mi ayrımı verilmez).
+  const verified = verifyInvitationToken(rawToken);
+  const claims = verified && (await isInvitationLinkActive(verified)) ? verified : null;
   if (!claims) {
     return res.status(401).json({
       error:   'TOKEN_GECERSIZ',

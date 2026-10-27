@@ -31,6 +31,35 @@ import { prisma } from '../db.js';
 import { logger } from './logger.js';
 import { deleteLocalAvatar } from './avatarStorage.js';
 import { revokeConsent } from './consentService.js';
+import {
+  MEMBERSHIP_EXPORT_SELECT,
+  type MembershipExport,
+  type MembershipExportScope,
+} from './gdprMembershipExport.js';
+import {
+  EXPORT_PROFILE_SELECT,
+  EXPORT_FEEDBACK_LOG_SELECT,
+  EXPORT_FEEDBACK_LOG_AS_AUTHOR_SELECT,
+  EXPORT_MATCH_REQUEST_SELECT,
+  EXPORT_USER_PROFILE_SELECT,
+  EXPORT_MENTOR_FILTER_SELECT,
+  EXPORT_AVAILABILITY_BLOCK_SELECT,
+  EXPORT_CLUB_MEMBERSHIP_SELECT,
+  EXPORT_PENDING_TAG_SELECT,
+  EXPORT_VISIBILITY_OPT_IN_SELECT,
+  EXPORT_MEETING_AS_MENTOR_SELECT,
+  EXPORT_MEETING_AS_MENTI_SELECT,
+  EXPORT_FEEDBACK_AS_MENTOR_SELECT,
+  EXPORT_FEEDBACK_AS_MENTI_SELECT,
+  EXPORT_MEETING_CHECK_IN_SELECT,
+  EXPORT_MATCH_FEEDBACK_SELECT,
+  EXPORT_USER_REPORT_SELECT,
+  EXPORT_AGREEMENT_AS_MENTOR_SELECT,
+  EXPORT_AGREEMENT_AS_MENTI_SELECT,
+  EXPORT_CONVERSATION_AS_MENTOR_SELECT,
+  EXPORT_CONVERSATION_AS_MENTI_SELECT,
+  EXPORT_MESSAGE_SELECT,
+} from './gdprOwnDataExport.js';
 
 const JsonNull = Prisma.JsonNull;
 
@@ -301,41 +330,218 @@ export async function isSoleActiveTenantAdmin(userId: string, tenantId: string):
 
 // ─── 3. Veri Dışa Aktarma (KVKK Md.11 / GDPR Md.20) ─────────────────────────
 
+/** Kişinin tarafı — iki taraflı kayıtlarda (görüşme, değerlendirme, anlaşma, konuşma) hangi rolde olduğu. */
+export type ExportSide = 'MENTOR' | 'MENTI';
+type ExportRow = Record<string, unknown>;
+
 export type UserDataExport = {
   userId: string;
   exportedAt: string;
+  /** AJ-126: kişinin kendi profil alanları (izin/hariç listesi: gdprOwnDataExport.ts). */
   profile: Record<string, unknown>;
   responses: Array<{ questionId: string; value: number; createdAt: Date }>;
-  feedbackLogs: Array<Record<string, unknown>>;
-  matchRequests: Array<Record<string, unknown>>;
+  /** Kişinin MENTÖR olduğu (kendi yazdığı) satırlarda AJ-126 ile `goalAchieved` de var. */
+  feedbackLogs: ExportRow[];
+  /** Kişinin GÖNDERDİĞİ istekler; AJ-126 ile `requestMessage` de var. */
+  matchRequests: ExportRow[];
   /** KVKK Md.11: verdiği/geri çektiği rızaların denetim izi (tip, sürüm, tarih). */
-  consents: Array<Record<string, unknown>>;
-  /** Yalnız SAYI — mesaj içeriği KARŞI TARAFI da içerir, dışa aktarılmaz (PII sızıntısı önlemi). */
+  consents: ExportRow[];
+  /** Kişinin gönderdiği mesaj SAYISI (geriye uyum — içerikler `messagesSent`'te). */
   messageCount: number;
+  /**
+   * AJ-124: kurum üyelikleri (rol, sertifika, öğrenme yolculuğu, katılım tarihi). Kapsam
+   * `membershipScope`'a göre: kendi isteğinde TÜM kurumlar, yönetici isteğinde yalnız o kurum.
+   * Alan listesi + hariç tutma gerekçeleri: gdprMembershipExport.ts.
+   */
+  memberships: MembershipExport[];
+  // ── AJ-126 (a): kişinin KENDİ ürettiği/kendisine ait kayıtlar (alanlar: gdprOwnDataExport.ts) ──
+  userProfile: ExportRow | null;
+  mentorFilter: ExportRow | null;
+  availabilityBlocks: ExportRow[];
+  clubMemberships: ExportRow[];
+  /** Kişinin önerdiği etiketler (PendingTag). */
+  suggestedTags: ExportRow[];
+  /** Kişinin BAŞLATTIĞI görünürlük istekleri. */
+  visibilityRequests: ExportRow[];
+  meetings: ExportRow[];
+  meetingCheckIns: ExportRow[];
+  /** Kişinin görüşme sonrası KENDİ yazdığı değerlendirme alanları (karşı tarafınki yok). */
+  meetingFeedbacks: ExportRow[];
+  matchFeedbacks: ExportRow[];
+  reportsMade: ExportRow[];
+  agreements: ExportRow[];
+  conversations: ExportRow[];
+  /** Kişinin GÖNDERDİĞİ mesajların içeriği. Aldığı mesajlar KARAR-138 bekliyor. */
+  messagesSent: ExportRow[];
 };
 
-export async function exportUserData(userId: string, tenantId: string): Promise<UserDataExport> {
-  const [user, responses, feedbackLogs, matchRequests, consents, messageCount] = await Promise.all([
-    prisma.user.findFirst({
-      where: { id: userId, tenantId },
-      select: {
-        id: true, role: true, email: true, fullName: true,
-        discType: true, discVector: true, sectorTags: true,
-        skills: true, bioSummary: true, expertiseDetails: true,
-        selfProfile: true, createdAt: true, updatedAt: true,
-      },
+/** Kurum-filtreli (src/db.ts TENANT_SCOPED) kendi kayıtlarının kişi-ilişkisi seçimleri. */
+const OWN_SCOPED_RELATIONS_SELECT = {
+  memberships: { select: MEMBERSHIP_EXPORT_SELECT, orderBy: { createdAt: 'asc' } },
+  feedbackLogs_as_mentor: { select: EXPORT_FEEDBACK_LOG_AS_AUTHOR_SELECT },
+  feedbackLogs_as_menti: { select: EXPORT_FEEDBACK_LOG_SELECT },
+  requestsSent: { select: EXPORT_MATCH_REQUEST_SELECT },
+  availabilityBlocks: { select: EXPORT_AVAILABILITY_BLOCK_SELECT },
+  clubMemberships: { select: EXPORT_CLUB_MEMBERSHIP_SELECT },
+  pendingTags: { select: EXPORT_PENDING_TAG_SELECT },
+  mentorOptIns: { where: { initiatedBy: 'MENTOR' }, select: EXPORT_VISIBILITY_OPT_IN_SELECT },
+  mentiOptIns: { where: { initiatedBy: 'MENTI' }, select: EXPORT_VISIBILITY_OPT_IN_SELECT },
+  meetingsAsMentor: { select: EXPORT_MEETING_AS_MENTOR_SELECT },
+  meetingsAsMenti: { select: EXPORT_MEETING_AS_MENTI_SELECT },
+  // Şema adı yanıltıcı: "FeedbacksGiven" = mentorId, "FeedbacksReceived" = mentiId. Her iki tarafta
+  // da yalnız o tarafın YAZDIĞI alanlar seçilir (feedbackController KARAR 1).
+  feedbacksGiven: { select: EXPORT_FEEDBACK_AS_MENTOR_SELECT },
+  feedbacksReceived: { select: EXPORT_FEEDBACK_AS_MENTI_SELECT },
+} as const satisfies Prisma.UserSelect;
+
+type OwnScopedRelations = Prisma.UserGetPayload<{ select: typeof OWN_SCOPED_RELATIONS_SELECT }>;
+type ExportProfile = Prisma.UserGetPayload<{ select: typeof EXPORT_PROFILE_SELECT }>;
+type ExportSubject = ExportProfile & OwnScopedRelations;
+
+/**
+ * Dışa aktarılan kişinin profili + kurum-filtreli modellerdeki kendi kayıtları.
+ *
+ * 'all' (YALNIZ kişinin KENDİ isteği — controller userId'yi oturumdan/kendi-kontrolünden verir):
+ *   Kurum filtresi (src/db.ts RLS eklentisi) BİLİNÇLİ olarak aşılır — `findUnique` eklentinin
+ *   READ_OPS'u dışındadır ve iç içe seçimler ayrı bir üst düzey sorgu olmadığı için filtrelenmez.
+ *   NEDEN: KVKK Md.11 erişim hakkı kişinin TÜM kurumlardaki kaydını kapsar (misafir üyelik —
+ *   AJ-124/AJ-125/AJ-126). Sorgu yalnız `where: { id: userId }` ile tek kişiye bağlı; ilişkiler
+ *   yalnız o kişinin taraf olduğu satırları getirir, başka kişinin satırı dönemez. Seçilen alanlar
+ *   yönetici yoluyla AYNI.
+ * 'requestTenant' (yönetici başkasını dışa aktarıyor): kişi istek kurumunun kaydı olmalı
+ *   (`findFirst { id, tenantId }`), kayıtlar yalnız o kurumdaki (üst düzey findMany + açık tenantId;
+ *   eklenti de aynı filtreyi ekler).
+ */
+async function findExportSubject(
+  userId: string,
+  tenantId: string,
+  scope: MembershipExportScope,
+): Promise<ExportSubject | null> {
+  if (scope === 'all') {
+    // eslint-disable-next-line no-restricted-syntax -- AJ-124/125/126: kişinin KENDİ KVKK dışa aktarımı; tüm kurumlardaki kendi kayıtları bilinçli olarak okunur, sorgu yalnız kendi id'sine bağlı (bkz. üstteki yorum).
+    return prisma.user.findUnique({
+      where: { id: userId },
+      select: { ...EXPORT_PROFILE_SELECT, ...OWN_SCOPED_RELATIONS_SELECT },
+    });
+  }
+  const inTenant = { tenantId };
+  const [
+    user, memberships, feedbackLogsAsMentor, feedbackLogsAsMenti, requestsSent, availabilityBlocks,
+    clubMemberships, pendingTags, mentorOptIns, mentiOptIns, meetingsAsMentor, meetingsAsMenti,
+    feedbacksGiven, feedbacksReceived,
+  ] = await Promise.all([
+    prisma.user.findFirst({ where: { id: userId, tenantId }, select: EXPORT_PROFILE_SELECT }),
+    prisma.tenantMembership.findMany({
+      where: { userId, ...inTenant },
+      select: MEMBERSHIP_EXPORT_SELECT,
+      orderBy: { createdAt: 'asc' },
     }),
+    prisma.feedbackLog.findMany({ where: { mentorId: userId, ...inTenant }, select: EXPORT_FEEDBACK_LOG_AS_AUTHOR_SELECT }),
+    prisma.feedbackLog.findMany({ where: { mentiId: userId, ...inTenant }, select: EXPORT_FEEDBACK_LOG_SELECT }),
+    prisma.matchRequest.findMany({ where: { requesterUserId: userId, ...inTenant }, select: EXPORT_MATCH_REQUEST_SELECT }),
+    prisma.availabilityBlock.findMany({ where: { userId, ...inTenant }, select: EXPORT_AVAILABILITY_BLOCK_SELECT }),
+    prisma.clubMembership.findMany({ where: { userId, ...inTenant }, select: EXPORT_CLUB_MEMBERSHIP_SELECT }),
+    prisma.pendingTag.findMany({ where: { submittedBy: userId, ...inTenant }, select: EXPORT_PENDING_TAG_SELECT }),
+    prisma.visibilityOptIn.findMany({
+      where: { mentorId: userId, initiatedBy: 'MENTOR', ...inTenant },
+      select: EXPORT_VISIBILITY_OPT_IN_SELECT,
+    }),
+    prisma.visibilityOptIn.findMany({
+      where: { mentiId: userId, initiatedBy: 'MENTI', ...inTenant },
+      select: EXPORT_VISIBILITY_OPT_IN_SELECT,
+    }),
+    prisma.meeting.findMany({ where: { mentorUserId: userId, ...inTenant }, select: EXPORT_MEETING_AS_MENTOR_SELECT }),
+    prisma.meeting.findMany({ where: { mentiUserId: userId, ...inTenant }, select: EXPORT_MEETING_AS_MENTI_SELECT }),
+    prisma.feedback.findMany({ where: { mentorId: userId, ...inTenant }, select: EXPORT_FEEDBACK_AS_MENTOR_SELECT }),
+    prisma.feedback.findMany({ where: { mentiId: userId, ...inTenant }, select: EXPORT_FEEDBACK_AS_MENTI_SELECT }),
+  ]);
+  if (!user) return null;
+  return {
+    ...user,
+    memberships,
+    feedbackLogs_as_mentor: feedbackLogsAsMentor,
+    feedbackLogs_as_menti: feedbackLogsAsMenti,
+    requestsSent,
+    availabilityBlocks,
+    clubMemberships,
+    pendingTags,
+    mentorOptIns,
+    mentiOptIns,
+    meetingsAsMentor,
+    meetingsAsMenti,
+    feedbacksGiven,
+    feedbacksReceived,
+  };
+}
+
+/**
+ * Kurum filtresi DIŞINDAKİ modellerde (UserProfile, MentorFilter, MeetingCheckIn, MatchFeedback,
+ * UserReport, MentorshipAgreement, Conversation, Message — src/db.ts TENANT_SCOPED'da yok) kişinin
+ * kendi kayıtları. Eklenti bunlara filtre eklemez → 'requestTenant' kapsamında kurum filtresi
+ * burada AÇIKÇA konur (yönetici, kişinin başka kurumdaki kaydını göremez). UserProfile/MentorFilter
+ * kişi-genel tek satırdır (kurum kolonu yok); yönetici yolunda kişi zaten o kurumun kaydıdır.
+ */
+async function findOwnUnscopedRecords(userId: string, tenantId: string, scope: MembershipExportScope) {
+  const inTenant = scope === 'all' ? {} : { tenantId };
+  const [
+    userProfile, mentorFilter, meetingCheckIns, matchFeedbacks, reportsMade,
+    agreementsAsMentor, agreementsAsMenti, conversationsAsMentor, conversationsAsMenti, messagesSent,
+  ] = await Promise.all([
+    prisma.userProfile.findUnique({ where: { userId }, select: EXPORT_USER_PROFILE_SELECT }),
+    prisma.mentorFilter.findUnique({ where: { mentorId: userId }, select: EXPORT_MENTOR_FILTER_SELECT }),
+    prisma.meetingCheckIn.findMany({ where: { userId, ...inTenant }, select: EXPORT_MEETING_CHECK_IN_SELECT }),
+    prisma.matchFeedback.findMany({
+      where: { fromUserId: userId, ...(scope === 'all' ? {} : { match: { tenantId } }) },
+      select: EXPORT_MATCH_FEEDBACK_SELECT,
+    }),
+    prisma.userReport.findMany({ where: { reporterUserId: userId, ...inTenant }, select: EXPORT_USER_REPORT_SELECT }),
+    prisma.mentorshipAgreement.findMany({ where: { mentorId: userId, ...inTenant }, select: EXPORT_AGREEMENT_AS_MENTOR_SELECT }),
+    prisma.mentorshipAgreement.findMany({ where: { mentiId: userId, ...inTenant }, select: EXPORT_AGREEMENT_AS_MENTI_SELECT }),
+    prisma.conversation.findMany({ where: { mentorUserId: userId, ...inTenant }, select: EXPORT_CONVERSATION_AS_MENTOR_SELECT }),
+    prisma.conversation.findMany({ where: { mentiUserId: userId, ...inTenant }, select: EXPORT_CONVERSATION_AS_MENTI_SELECT }),
+    prisma.message.findMany({
+      where: { senderUserId: userId, ...(scope === 'all' ? {} : { conversation: { tenantId } }) },
+      select: EXPORT_MESSAGE_SELECT,
+      orderBy: { createdAt: 'asc' },
+    }),
+  ]);
+  return {
+    userProfile, mentorFilter, meetingCheckIns, matchFeedbacks, reportsMade,
+    agreementsAsMentor, agreementsAsMenti, conversationsAsMentor, conversationsAsMenti, messagesSent,
+  };
+}
+
+/** İki taraflı kayıtlara kişinin tarafını ekler (karşı tarafın kimliği yerine). */
+function withSide<T extends object>(side: ExportSide, rows: T[]): Array<T & { side: ExportSide }> {
+  return rows.map((row) => ({ ...row, side }));
+}
+
+/** Konuşmada yalnız KENDİ okuma anı `lastReadAt` olarak verilir (karşı tarafınki seçilmez). */
+function normalizeConversations(
+  asMentor: Array<{ mentorLastReadAt: Date | null } & ExportRow>,
+  asMenti: Array<{ mentiLastReadAt: Date | null } & ExportRow>,
+): ExportRow[] {
+  return [
+    ...asMentor.map(({ mentorLastReadAt, ...c }) => ({ ...c, lastReadAt: mentorLastReadAt, side: 'MENTOR' as const })),
+    ...asMenti.map(({ mentiLastReadAt, ...c }) => ({ ...c, lastReadAt: mentiLastReadAt, side: 'MENTI' as const })),
+  ];
+}
+
+/**
+ * @param membershipScope 'all' yalnız kişinin KENDİ isteğinde verilir (self-servis). Varsayılan
+ *   'requestTenant' — güvenli taraf: başka biri dışa aktarırken kişinin diğer kurum kayıtları sızmaz.
+ */
+export async function exportUserData(
+  userId: string,
+  tenantId: string,
+  membershipScope: MembershipExportScope = 'requestTenant',
+): Promise<UserDataExport> {
+  const [subject, unscoped, responses, consents, messageCount] = await Promise.all([
+    findExportSubject(userId, tenantId, membershipScope),
+    findOwnUnscopedRecords(userId, tenantId, membershipScope),
     prisma.userResponse.findMany({
       where: { userId },
       select: { questionId: true, value: true, createdAt: true },
-    }),
-    prisma.feedbackLog.findMany({
-      where: { OR: [{ mentorId: userId }, { mentiId: userId }] },
-      select: { phase: true, starRating: true, npsScore: true, difficulty: true, createdAt: true },
-    }),
-    prisma.matchRequest.findMany({
-      where: { requesterUserId: userId },
-      select: { targetType: true, targetId: true, createdAt: true },
     }),
     // Rıza denetim izi (kendi verisi) — Consent tenant-scope DIŞI, userId ile global.
     prisma.consent.findMany({
@@ -343,13 +549,18 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
       select: { type: true, version: true, source: true, grantedAt: true, revokedAt: true },
       orderBy: { grantedAt: 'desc' },
     }),
-    // Yalnız kendi gönderdiği mesajların SAYISI — içerik dışa aktarılmaz (karşı taraf PII'si).
+    // Geriye uyum: gönderilen mesaj sayısı (frontend özet kartı okur).
     prisma.message.count({ where: { senderUserId: userId } }),
   ]);
 
-  if (!user) {
+  if (!subject) {
     throw new GdprUserNotFoundError();
   }
+  const {
+    memberships, feedbackLogs_as_mentor, feedbackLogs_as_menti, requestsSent, availabilityBlocks,
+    clubMemberships, pendingTags, mentorOptIns, mentiOptIns, meetingsAsMentor, meetingsAsMenti,
+    feedbacksGiven, feedbacksReceived, ...user
+  } = subject;
 
   void logger.info('SYSTEM', 'KVKK: Kullanıcı veri dışa aktarımı yapıldı', { userId, tenantId });
 
@@ -358,10 +569,28 @@ export async function exportUserData(userId: string, tenantId: string): Promise<
     exportedAt: new Date().toISOString(),
     profile: user as Record<string, unknown>,
     responses,
-    feedbackLogs: feedbackLogs as Array<Record<string, unknown>>,
-    matchRequests: matchRequests as Array<Record<string, unknown>>,
-    consents: consents as Array<Record<string, unknown>>,
+    feedbackLogs: [...feedbackLogs_as_mentor, ...feedbackLogs_as_menti],
+    matchRequests: requestsSent,
+    consents,
     messageCount,
+    memberships,
+    userProfile: unscoped.userProfile,
+    mentorFilter: unscoped.mentorFilter,
+    availabilityBlocks,
+    clubMemberships,
+    suggestedTags: pendingTags,
+    visibilityRequests: [...mentorOptIns, ...mentiOptIns],
+    meetings: [...withSide('MENTOR', meetingsAsMentor), ...withSide('MENTI', meetingsAsMenti)],
+    meetingCheckIns: unscoped.meetingCheckIns,
+    meetingFeedbacks: [...withSide('MENTOR', feedbacksGiven), ...withSide('MENTI', feedbacksReceived)],
+    matchFeedbacks: unscoped.matchFeedbacks,
+    reportsMade: unscoped.reportsMade,
+    agreements: [
+      ...withSide('MENTOR', unscoped.agreementsAsMentor),
+      ...withSide('MENTI', unscoped.agreementsAsMenti),
+    ],
+    conversations: normalizeConversations(unscoped.conversationsAsMentor, unscoped.conversationsAsMenti),
+    messagesSent: unscoped.messagesSent,
   };
 }
 

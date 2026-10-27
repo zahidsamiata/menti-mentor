@@ -7,6 +7,7 @@ import { getCachedTenant } from '../services/tenantCache.js';
 import { runWithTenant } from '../db.js';
 import { ACCOUNT_INACTIVE_BODY, SESSION_REVOKED_BODY, resolveMembershipAccess } from './membershipAccess.js';
 import { isSuspensionExemptRequest, isTenantSuspended, TENANT_SUSPENDED_BODY } from './tenantSuspension.js';
+import { isPendingAllowedRequest, PENDING_APPROVAL_BODY } from './pendingApprovalGate.js';
 
 /**
  * Çok-tenant izolasyon middleware'i — Sıfır Sızıntı Güvenlik Duvarı.
@@ -21,6 +22,8 @@ import { isSuspensionExemptRequest, isTenantSuspended, TENANT_SUSPENDED_BODY } f
  *     (Y1-B9; kural `tenantSuspension.ts`). Üyelik kontrolünden SONRA: kurumun üyesi olmayana
  *     kurum durumu sızmaz. Anonim istek etkilenmez (kurum uçları zaten oturum ister).
  *     Muaf uçlar (oturum durumu + KVKK md.11 veri hakları): `tenantSuspension.ts` izin listesi.
+ *  4c. Onay bekleyen (PENDING) yönetici-olmayan kullanıcı yalnız izin listesindeki uçları kullanır;
+ *     gerisi 403 ONAY_BEKLENIYOR (Y1-B8, KARAR-101; liste `pendingApprovalGate.ts`).
  *  5. Tüm downstream async zincirini runWithTenant ile RLS bağlamına al.
  *     Bu sayede Prisma extension tüm okuma sorgularına tenantId filtresi enjekte eder.
  */
@@ -121,6 +124,18 @@ export async function requireTenant(
   // Muaf uçlar (oturum durumu + KVKK md.11 veri hakları) TEK listede: tenantSuspension.ts.
   if (isTenantSuspended(tenant) && !isSuspensionExemptRequest(req.method, req.originalUrl)) {
     res.status(403).json(TENANT_SUSPENDED_BODY);
+    return;
+  }
+
+  // ── 4c. Onay bekleyen kullanıcı kapısı (Y1-B8) ─────────────────────────────
+  // Varsayılan KAPALI: yeni eklenen uç izin listesine yazılmadıkça onay bekleyene açılmaz.
+  // Loglanmaz: bekleme ekranının olağan gezinmesi (ör. mesaj zili) her istekte SystemLog yazardı.
+  if (
+    access.approvalStatus === 'PENDING' &&
+    access.role !== 'ADMIN' &&
+    !isPendingAllowedRequest(req.method, req.originalUrl)
+  ) {
+    res.status(403).json(PENDING_APPROVAL_BODY);
     return;
   }
 

@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { logger } from './logger.js';
 import { escapeHtml, sanitizeHeaderText } from './htmlEscape.js';
 import { formatNpsSample, type NpsSample } from './mask.js';
+import { buildPasswordResetUrl } from './passwordReset.js';
 
 // Generic SMTP relay (Resend/Brevo vb.). service:'gmail' KALDIRILDI: Gmail App
 // Password kırılgan (Google periyodik iptal ediyor) ve gmail.com'dan sunucu gönderimi
@@ -213,7 +214,7 @@ export async function sendPasswordResetEmail(args: {
   userName: string;
   rawToken: string;
 }): Promise<void> {
-  const resetUrl = `${process.env.FRONTEND_URL ?? 'http://localhost:3001'}/reset-password?token=${encodeURIComponent(args.rawToken)}`;
+  const resetUrl = buildPasswordResetUrl(args.rawToken);
   await send(
     args.toEmail,
     'Şifre Sıfırlama Talebi',
@@ -236,7 +237,7 @@ export async function sendAdminTestCompletedNotification(args: {
     args.toEmail,
     `[${args.tenantName}] Kullanıcı DISC Testini Tamamladı — Onay Bekliyor`,
     `<p>Merhaba ${escapeHtml(args.adminName)},</p>
-     <p><strong>${escapeHtml(args.userName)}</strong> (${escapeHtml(roleLabel(args.userRole))}) DISC karakter analizini tamamladı.</p>
+     <p><strong>${escapeHtml(args.userName)}</strong> (${escapeHtml(roleLabel(args.userRole))}) DISC kişilik analizini tamamladı.</p>
      <p>Kullanıcı eşleşme havuzuna dahil edilebilmesi için onayınızı bekliyor.</p>
      <p>Lütfen admin panelinizden inceleyip onaylayın veya reddedin.</p>`,
   );
@@ -262,11 +263,11 @@ export async function sendAlgorithmAdjustmentProposal(args: {
     args.toEmail,
     `[${args.tenantName}] Algoritma Kalibrasyon Önerisi — Onayınız Bekleniyor`,
     `<p>Merhaba ${escapeHtml(args.adminName)},</p>
-     <p>Bu hafta eşleştirme algoritmanız analiz edildi. Aşağıdaki kalibrasyon önerilmektedir:</p>
+     <p>Bu hafta öneri algoritmanız analiz edildi. Aşağıdaki kalibrasyon önerilmektedir:</p>
      <table style="border-collapse:collapse;width:100%">
        <tr><th style="text-align:left;padding:8px;background:#f3f4f6">Kriter</th><th style="padding:8px;background:#f3f4f6">Önceki</th><th style="padding:8px;background:#f3f4f6">Önerilen</th></tr>
        <tr><td style="padding:8px">Sektör Ağırlığı</td><td style="padding:8px">%${escapeHtml(args.prevSector)}</td><td style="padding:8px"><strong>%${escapeHtml(args.newSector)}</strong></td></tr>
-       <tr><td style="padding:8px">Karakter/DISC Ağırlığı</td><td style="padding:8px">%${escapeHtml(args.prevDisc)}</td><td style="padding:8px"><strong>%${escapeHtml(args.newDisc)}</strong></td></tr>
+       <tr><td style="padding:8px">Kişilik/DISC Ağırlığı</td><td style="padding:8px">%${escapeHtml(args.prevDisc)}</td><td style="padding:8px"><strong>%${escapeHtml(args.newDisc)}</strong></td></tr>
      </table>
      <p><strong>Neden bu öneri?</strong><br>${escapeHtml(args.reason)}</p>
      <p>NPS Verileri: 1. ay = ${escapeHtml(formatNpsSample(args.phase1Nps))} | 3. ay = ${escapeHtml(formatNpsSample(args.phase3Nps))}</p>

@@ -31,7 +31,7 @@ describe('P-16: mentor-count üyelik rolünden', () => {
     (await http.get('/api/users/mentor-count').set(tenantHeaders(tenantId, tokenFor(viewer))).expect(200)).body;
 
   it('bu kurumda aktif MENTOR üyeliği olan onaylı kişiler sayılır', async () => {
-    expect(await count()).toEqual({ count: 3, suppressed: false });
+    expect(await count()).toMatchObject({ count: 3, suppressed: false });
   });
 
   it('negatif: genel rolü MENTOR ama bu kurumdaki üyeliği MENTI olan kişi sayılmaz', async () => {
@@ -40,7 +40,7 @@ describe('P-16: mentor-count üyelik rolünden', () => {
       where: { userId_tenantId: { userId: extra.id, tenantId } },
       data: { role: 'MENTI' },
     });
-    expect(await count()).toEqual({ count: 3, suppressed: false });
+    expect(await count()).toMatchObject({ count: 3, suppressed: false });
   });
 
   it('negatif: bu kurumdaki üyeliği pasif mentör sayılmaz', async () => {
@@ -49,6 +49,6 @@ describe('P-16: mentor-count üyelik rolünden', () => {
       where: { userId_tenantId: { userId: extra.id, tenantId } },
       data: { isActive: false },
     });
-    expect(await count()).toEqual({ count: 3, suppressed: false });
+    expect(await count()).toMatchObject({ count: 3, suppressed: false });
   });
 });
