@@ -8,6 +8,7 @@ import { signToken, verifyToken, extractBearerToken } from '../middleware/jwtAut
 import { revokeAccessToken } from '../services/accessTokenRevocation.js';
 import type { RequestWithTenant } from '../types.js';
 import { sendAdminNewUserNotification, sendPasswordResetEmail, sendAlreadyRegisteredEmail } from '../services/emailService.js';
+import { hashResetToken, issuePasswordResetToken } from '../services/passwordReset.js';
 import { notifyAdminsPendingUser } from '../services/notificationService.js';
 import { GoogleOAuthProvider, OAuthProviderError } from '../services/oauth/googleProvider.js';
 import { LinkedInOAuthProvider } from '../services/oauth/linkedinProvider.js';
@@ -73,7 +74,6 @@ const ChangePasswordSchema = z.object({
 
 // ─── Yardımcılar ─────────────────────────────────────────────────────────────
 
-const RESET_TOKEN_EXPIRY_MINUTES = 60;
 const BCRYPT_ROUNDS = 12;
 
 /**
@@ -88,15 +88,7 @@ function generateRefreshToken(): string {
   return crypto.randomBytes(64).toString('hex');
 }
 
-function resetTokenExpiresAt(): Date {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() + RESET_TOKEN_EXPIRY_MINUTES);
-  return d;
-}
-
-function hashToken(raw: string): string {
-  return crypto.createHash('sha256').update(raw).digest('hex');
-}
+// resetToken üretimi/özeti: services/passwordReset.ts (U-15 — e-posta ve platform yöneticisi aynı tokenı kullanır).
 
 // ─── Kayıt akışı kullanıcı mesajları ─────────────────────────────────────────
 // Tek yerde tutulur (dedupe + tutarlılık + çeviri kolaylığı). Enumeration-safe:
@@ -603,16 +595,7 @@ export async function forgotPassword(req: Request, res: Response) {
   // Token DB'ye yazılmadan response gönderilmez — kullanıcı tespiti yine de engellenir
   // (aynı mesaj döner, ancak artık tüm DB işlemleri tamamlandıktan sonra).
   if (user && user.isActive && user.authProvider === 'LOCAL') {
-    await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
-
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    await prisma.passwordResetToken.create({
-      data: {
-        tokenHash: hashToken(rawToken),
-        userId: user.id,
-        expiresAt: resetTokenExpiresAt(),
-      },
-    });
+    const rawToken = await issuePasswordResetToken(user.id);
 
     void sendPasswordResetEmail({
       toEmail: user.email,
@@ -630,7 +613,7 @@ export async function resetPassword(req: Request, res: Response) {
   if (!parsed.success) return parsed.response;
 
   const { token, password } = parsed.data;
-  const tokenHash = hashToken(token);
+  const tokenHash = hashResetToken(token);
 
   const stored = await prisma.passwordResetToken.findUnique({
     where: { tokenHash },
