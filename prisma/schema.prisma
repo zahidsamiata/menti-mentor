@@ -238,6 +238,7 @@ model Tenant {
   updatedAt DateTime @updatedAt
 
   users               User[]
+  invitationLinks     InvitationLink[]
   visibilityOptIns    VisibilityOptIn[]
   matchRequests       MatchRequest[]
   jobListings         JobListing[]
@@ -1325,3 +1326,24 @@ enum ConsentSource {
   SELF_SERVE // STK kurum kaydı
   BACKFILL // eski kayıt taşıma (backfill script)
 }
+
+/// U-12B (KARAR-82 B): toplu davet bağlantısının kaydı — kurum yöneticisi bağlantıyı İPTAL edebilsin diye.
+/// Davet tokenı imzalı JWT olarak kalır; `lid` claim'i bu satırın id'sidir. İptal edilmiş (revokedAt dolu)
+/// ya da kaydı bulunmayan `lid` taşıyan token reddedilir. `lid` taşımayan eski bağlantılar (bu değişiklikten
+/// önce üretilmiş) en geç 7 günde (U-12) kendiliğinden kapanır.
+/// Kişisel veri: yalnız üreten/iptal eden yöneticinin kimliği (ad/e-posta yok).
+model InvitationLink {
+  id          String    @id @default(cuid())
+  tenantId    String
+  role        UserRole
+  createdById String?
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  revokedById String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+}
+

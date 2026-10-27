@@ -17,7 +17,7 @@
 
 import crypto from 'node:crypto';
 import { prisma } from '../../db.js';
-import { verifyInvitationToken } from '../invitationToken.js';
+import { verifyActiveInvitationToken } from '../invitationToken.js';
 import { signToken } from '../../middleware/jwtAuth.js';
 import { isTenantSuspended, TENANT_CLOSED_FOR_SIGNUP_BODY } from '../../middleware/tenantSuspension.js';
 import { sendAdminNewUserNotification } from '../emailService.js';
@@ -113,7 +113,8 @@ async function handleNewUser(
 
   // U-06: geçerli davet token'ı (doğru kurum + doğru rol) → davetli APPROVED; form kaydıyla
   // (authController.register) BİREBİR aynı kural. Token yok / geçersiz / uyuşmuyor → PENDING.
-  const claims = state.inviteToken ? verifyInvitationToken(state.inviteToken) : null;
+  // U-12B: iptal edilmiş bağlantı otomatik onay vermez (form kaydıyla aynı kural).
+  const claims = state.inviteToken ? await verifyActiveInvitationToken(state.inviteToken) : null;
   const approvalStatus: 'PENDING' | 'APPROVED' =
     claims && claims.tenantId === tenant.id && claims.role === state.role ? 'APPROVED' : 'PENDING';
 
