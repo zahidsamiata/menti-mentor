@@ -60,7 +60,7 @@ router.get('/tenants/:id/overview', getTenantOverview);
 router.get('/tenants/:id/members', getTenantMembers);
 router.get('/tenants/:id/users/:userId', getTenantUserDetail); // F-24/G4-08: tek kullanıcı drill-down
 // U-15 (KARAR-84 B): e-posta çalışmazsa sıfırlama bağlantısını yalnız platform yöneticisi üretir (iz kaydıyla).
-router.post('/tenants/:id/users/:userId/password-reset-link', issueUserPasswordResetLink);
+void issueUserPasswordResetLink; // MUTASYON: uç bağlanmadı
 router.get('/tenants/:id/meetings', getTenantMeetings);
 router.get('/tenants/:id/analytics', getTenantAnalytics);
 
