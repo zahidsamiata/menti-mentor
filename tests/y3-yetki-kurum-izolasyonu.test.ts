@@ -170,7 +170,7 @@ describe('Y3-3: yönetici atama / düşürme', () => {
 
   it('demote (b)/(d) aynı kurumdaki mentör yöneticiyi düşüremez → 403; rol değişmez', async () => {
     const adminA2 = await createAdminUser(tenantA);
-    await http.post(`/api/admin/users/${adminA2.id}/demote-admin`).set(authAs(mentorA)).expect(403);
+    await http.post(`/api/admin/users/${adminA2.id}/demote-admin`).send({ targetRole: 'MENTOR' }).set(authAs(mentorA)).expect(403);
     expect((await userSnapshot(adminA2.id))?.role).toBe('ADMIN');
   });
 
@@ -179,7 +179,7 @@ describe('Y3-3: yönetici atama / düşürme', () => {
     await testPrisma.refreshToken.create({
       data: { userId: adminA2.id, token: `y3-rt-${adminA2.id}`, expiresAt: new Date(Date.now() + 86_400_000) },
     });
-    await http.post(`/api/admin/users/${adminA2.id}/demote-admin`).set(authAs(adminB)).expect(404);
+    await http.post(`/api/admin/users/${adminA2.id}/demote-admin`).send({ targetRole: 'MENTOR' }).set(authAs(adminB)).expect(404);
     expect((await userSnapshot(adminA2.id))?.role).toBe('ADMIN');
     expect(await testPrisma.refreshToken.count({ where: { userId: adminA2.id } })).toBe(1);
   });
