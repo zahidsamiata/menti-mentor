@@ -375,6 +375,10 @@ export async function login(req: Request, res: Response) {
     });
   }
 
+  // MUTASYON: eski PENDING 403 geri konuldu
+  if (user.approvalStatus === 'PENDING') {
+    return res.status(403).json({ error: 'HESAP_ONAY_BEKLENIYOR', message: 'mutasyon', correctionNote: user.rejectionReason ?? null });
+  }
   // Onay bekleyen hesap GİRİŞ YAPAR (Y1-B8, KARAR-101 B genişletilmiş): kayıt sürecini tamamlar,
   // soruları çözer, mentörleri yalnız isimsiz özet olarak görür. Kapalı uçlar `requireTenant` 4c'de
   // (pendingApprovalGate.ts) — Google/LinkedIn girişiyle aynı davranış. Önceden burada 403 dönüyordu.

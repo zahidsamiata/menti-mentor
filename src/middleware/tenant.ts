@@ -127,17 +127,8 @@ export async function requireTenant(
     return;
   }
 
-  // ── 4c. Onay bekleyen kullanıcı kapısı (Y1-B8) ─────────────────────────────
-  // Varsayılan KAPALI: yeni eklenen uç izin listesine yazılmadıkça onay bekleyene açılmaz.
-  // Loglanmaz: bekleme ekranının olağan gezinmesi (ör. mesaj zili) her istekte SystemLog yazardı.
-  if (
-    access.approvalStatus === 'PENDING' &&
-    access.role !== 'ADMIN' &&
-    !isPendingAllowedRequest(req.method, req.originalUrl)
-  ) {
-    res.status(403).json(PENDING_APPROVAL_BODY);
-    return;
-  }
+  // MUTASYON: 4c kapısı geri alındı
+  void isPendingAllowedRequest; void PENDING_APPROVAL_BODY;
 
   // ── 5. Auth context + RLS bağlamı ──────────────────────────────────────────
   // Rol üyelikten gelir: token alındıktan sonra rolü değişen (ör. yöneticilikten düşürülen)
