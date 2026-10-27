@@ -14,6 +14,7 @@ import { ensureMembership } from '../services/membership.js';
 import { recordSignupConsent } from '../services/consentService.js';
 import { hashRefreshToken } from '../services/refreshToken.js';
 import { config } from '../config.js';
+import { INVITATION_EXPIRES_IN, isInvitationTooOld } from '../services/invitationToken.js';
 import { validateRequest } from '../middleware/validate.js';
 import { parseDiscVector, type DiscVector } from '../services/scoring.js';
 import { sendAlreadyRegisteredEmail } from '../services/emailService.js';
@@ -562,17 +563,19 @@ function signInvitationToken(
   const payload: Omit<InvitationTokenClaims, 'iat' | 'exp'> = { tenantId, role, type: 'invitation', typ: TOKEN_TYPES.INVITATION };
   if (invitedByName) payload.invitedByName = invitedByName;
   if (invitedByTitle) payload.invitedByTitle = invitedByTitle;
-  return jwt.sign(payload, config.jwt.secret, { expiresIn: '30d' } as jwt.SignOptions);
+  return jwt.sign(payload, config.jwt.secret, { expiresIn: INVITATION_EXPIRES_IN } as jwt.SignOptions);
 }
 
 function verifyInvitationToken(token: string): InvitationTokenClaims | null {
   try {
     const decoded = jwt.verify(token, config.jwt.secret) as InvitationTokenClaims;
     // type guard: normal auth token'larının bu endpoint'e geçmesini engelle.
-    // AJ-87: `typ` varsa davet olmalı; yoksa (≤30 gün önce üretilmiş eski davet) `type` yeter —
+    // AJ-87: `typ` varsa davet olmalı; yoksa (eski davet) `type` yeter —
     // erişim/state anahtarları `type:'invitation'` taşımadığı için tür-siz eski davet ayrışır.
     const typOk = decoded.typ === undefined || decoded.typ === TOKEN_TYPES.INVITATION;
-    return decoded.type === 'invitation' && typOk ? decoded : null;
+    if (decoded.type !== 'invitation' || !typOk) return null;
+    // U-12: 30 günlük `exp` taşıyan eski bağlantılar da 7. günde kapanır (services/invitationToken.ts).
+    return isInvitationTooOld(decoded.iat) ? null : decoded;
   } catch {
     return null;
   }
@@ -616,7 +619,7 @@ export async function createInvitation(req: Request, res: Response) {
   return res.status(201).json({
     invitationLink,
     token:     invitationToken,
-    expiresIn: '30d',
+    expiresIn: INVITATION_EXPIRES_IN,
     role,
     invitedByName:  invitedByName ?? null,
     invitedByTitle: invitedByTitle ?? null,
