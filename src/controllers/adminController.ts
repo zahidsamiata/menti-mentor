@@ -15,7 +15,7 @@ import { computeMentiNeedsDistribution } from '../services/mentiNeedsDistributio
 import { toCsv } from '../services/csv.js';
 import { runWeeklyTuning, runWeeklyPurge } from '../services/cronScheduler.js';
 import { logger } from '../services/logger.js';
-import { ensureMembershipSafe } from '../services/membership.js';
+import { ensureMembershipSafe, getActiveMembershipRole } from '../services/membership.js';
 import { notifyRematchRequested } from '../services/notificationService.js';
 import { sendUserApprovalNotification } from '../services/emailService.js';
 import { generateSuggestions } from '../services/coachingSuggestions.js';
@@ -977,8 +977,28 @@ export async function promoteToAdmin(req: RequestWithTenant, res: Response) {
   return res.json({ ok: true });
 }
 
-/** POST /api/admin/users/:id/demote-admin — kullanıcıyı ADMIN'den düşür */
+/**
+ * U-13 (KARAR-83 A): yöneticinin değiştirebileceği kurum-içi roller. ADMIN'e geçiş/çıkış ayrı uçlarda
+ * (promote-admin / demote-admin) — yönetici sayısı kuralları orada.
+ */
+const MEMBER_ROLES = ['MENTOR', 'MENTI'] as const;
+
+const DemoteFromAdminSchema = z.object({
+  // U-13: düşürülen yöneticinin yeni rolü AÇIKÇA seçilir. Eskiden her zaman MENTOR yazılıyordu →
+  // menti olan yönetici sessizce mentöre dönüşüyordu.
+  targetRole: z.enum(MEMBER_ROLES),
+}).strict();
+
+const ChangeMemberRoleSchema = z.object({
+  role: z.enum(MEMBER_ROLES),
+}).strict();
+
+/** POST /api/admin/users/:id/demote-admin — kullanıcıyı ADMIN'den düşür (body: { targetRole }) */
 export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
+  const parsed = validateRequest(DemoteFromAdminSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
+  const { targetRole } = parsed.data;
+
   const actorId = req.auth?.userId;
   const target = await prisma.user.findFirst({
     where: { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
@@ -999,9 +1019,9 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
     });
   }
 
-  await prisma.user.update({ where: { id: target.id }, data: { role: 'MENTOR' } });
+  await prisma.user.update({ where: { id: target.id }, data: { role: targetRole } });
   // b3: rol değişince TenantMembership.role senkronla. Non-fatal.
-  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, 'MENTOR');
+  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, targetRole);
   // GV-10: düşürülen yöneticinin oturumu yenilenemez → yeniden girişte token güncel rolle üretilir.
   // Elindeki access token'ı requireTenant zaten üyelik rolüyle (MENTOR) değerlendirir.
   await prisma.refreshToken.deleteMany({ where: { userId: target.id } });
@@ -1009,6 +1029,53 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
     actorId,
     targetId: target.id,
     tenantId: req.tenant.tenantId,
+    newRole: targetRole,
   });
-  return res.json({ ok: true });
+  return res.json({ ok: true, role: targetRole });
+}
+
+/**
+ * POST /api/admin/users/:id/role — U-13 (KARAR-83 A): kurum yöneticisi üyenin rolünü MENTOR↔MENTI değiştirir.
+ *
+ * - Hedef ev-sahibi kurum sorgusuyla bulunur (misafir üye → 404): rol kişi-genel alandır, misafirin rolünü
+ *   başka kurumun yöneticisinin değiştirip değiştiremeyeceği KARAR-133'te açık (bkz. services/tenantMember.ts).
+ * - `User.role` + `TenantMembership.role` birlikte (CLAUDE.md "Veri Modeli"); yetki kararı her istekte
+ *   üyelikten okunduğu için (requireTenant) hedefin elindeki oturum bir sonraki istekte yeni rolle değerlendirilir.
+ * - Aktif eşleşmeler, görüşmeler, mesajlar OLDUĞU GİBİ sürer (PO kararı) — bu uç onlara dokunmaz.
+ * - Yöneticinin rolü burada değişmez: yönetici sayısı kuralı demote-admin'de.
+ */
+export async function changeMemberRole(req: RequestWithTenant, res: Response) {
+  const parsed = validateRequest(ChangeMemberRoleSchema, req.body, res);
+  if (!parsed.success) return parsed.response;
+  const { role: newRole } = parsed.data;
+
+  const actorId = req.auth?.userId;
+  const target = await prisma.user.findFirst({
+    where:  { id: req.params['id'] as string, tenantId: req.tenant.tenantId },
+    select: { id: true },
+  });
+  if (!target) return res.status(404).json({ error: 'KULLANICI_BULUNAMADI' });
+
+  const currentRole = await getActiveMembershipRole(target.id, req.tenant.tenantId);
+  if (!currentRole) return res.status(404).json({ error: 'KULLANICI_BULUNAMADI' });
+  if (currentRole === 'ADMIN') {
+    return res.status(400).json({
+      error:   'YONETICI_ROLU',
+      message: 'Yöneticinin rolü buradan değiştirilemez. Önce yöneticilikten çıkarın.',
+    });
+  }
+  if (currentRole === newRole) {
+    return res.status(400).json({ error: 'ROL_AYNI', message: 'Kullanıcı zaten bu rolde.' });
+  }
+
+  await prisma.user.update({ where: { id: target.id }, data: { role: newRole } });
+  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, newRole);
+  void logger.info('AUTH', 'Üye rolü değiştirildi', {
+    actorId,
+    targetId: target.id,
+    tenantId: req.tenant.tenantId,
+    previousRole: currentRole,
+    newRole,
+  });
+  return res.json({ ok: true, role: newRole });
 }

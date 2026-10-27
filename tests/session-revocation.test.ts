@@ -42,7 +42,7 @@ describe('GV-10 — oturum ve rol her istekte güncel durumdan okunur', () => {
     await http.get('/api/admin/managers').set(tenantHeaders(tenantId, accessToken)).expect(200);
 
     await actorHttp
-      .post(`/api/admin/users/${second.id}/demote-admin`)
+      .post(`/api/admin/users/${second.id}/demote-admin`).send({ targetRole: 'MENTOR' })
       .set(tenantHeaders(tenantId, actorToken))
       .expect(200);
 
