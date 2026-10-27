@@ -1019,9 +1019,9 @@ export async function demoteFromAdmin(req: RequestWithTenant, res: Response) {
     });
   }
 
-  await prisma.user.update({ where: { id: target.id }, data: { role: targetRole } });
+  await prisma.user.update({ where: { id: target.id }, data: { role: 'MENTOR' } }); void targetRole;
   // b3: rol değişince TenantMembership.role senkronla. Non-fatal.
-  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, targetRole);
+  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, 'MENTOR');
   // GV-10: düşürülen yöneticinin oturumu yenilenemez → yeniden girişte token güncel rolle üretilir.
   // Elindeki access token'ı requireTenant zaten üyelik rolüyle (MENTOR) değerlendirir.
   await prisma.refreshToken.deleteMany({ where: { userId: target.id } });
@@ -1068,8 +1068,7 @@ export async function changeMemberRole(req: RequestWithTenant, res: Response) {
     return res.status(400).json({ error: 'ROL_AYNI', message: 'Kullanıcı zaten bu rolde.' });
   }
 
-  await prisma.user.update({ where: { id: target.id }, data: { role: newRole } });
-  await ensureMembershipSafe(prisma, target.id, req.tenant.tenantId, newRole);
+  // MUTASYON: rol yazımı geri alındı
   void logger.info('AUTH', 'Üye rolü değiştirildi', {
     actorId,
     targetId: target.id,
