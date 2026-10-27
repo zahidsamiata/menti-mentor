@@ -59,6 +59,9 @@ describe('Y1-B8 izin listesi — NEGATİF: kapalı uçlar', () => {
     // izinli bir yolun alt yolu kapalı
     ['GET', '/api/users/u1/clubs'],
     ['GET', '/api/users/mentor-count/extra'],
+    // 7b notu: parça (#) ile izin desenine uydurma denemesi
+    ['GET', '/api/users/#x'],
+    ['GET', '/api/users#/x'],
   ])('%s %s kapalı', (method, url) => {
     expect(isPendingAllowedRequest(method, url)).toBe(false);
   });

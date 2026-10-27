@@ -68,7 +68,9 @@ const PENDING_ALLOWED_ROUTES: ReadonlyArray<AllowedRoute> = [
  * sorgu dizesi atılır, sondaki "/" ve büyük/küçük harf normalize edilir (tenantSuspension.ts ile aynı).
  */
 export function isPendingAllowedRequest(method: string, originalUrl: string): boolean {
-  const rawPath = originalUrl.split('?')[0] ?? '';
+  // 7b notu: '#' sonrası da atılır — Express '/api/users/#x' isteğini '/api/users'e yönlendirir; atılmazsa
+  // yol '/api/users/:id' izin desenine uyup listeye ulaşırdı.
+  const rawPath = originalUrl.split(/[?#]/)[0] ?? '';
   const path = (rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath).toLowerCase();
   const upperMethod = method.toUpperCase();
   return PENDING_ALLOWED_ROUTES.some((r) => r.method === upperMethod && r.pattern.test(path));
