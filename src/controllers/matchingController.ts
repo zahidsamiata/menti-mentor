@@ -7,6 +7,7 @@ import { resolveCrossTenantTarget } from '../services/tenantSharing.js';
 import { validateRequest } from '../middleware/validate.js';
 import { rejectIfCallerNotApproved } from '../middleware/approvalGate.js';
 import { activeMemberRoleWhere, ACTIVE_MEMBERSHIP_ROLES_SELECT, roleInTenant } from '../services/membership.js';
+import { trackMatchingFallback } from '../services/matchingFallbackStats.js';
 
 // KARAR 3: qualityMultiplier kullanıcıya gösterilmez (gizli yorumları dolaylı sızdırır).
 // DISC tipi açıklanmaz; bunun yerine nitel uyum gerekçesi üretilir.
@@ -68,6 +69,11 @@ export async function getRankedMentisForMentor(req: RequestWithTenant, res: Resp
     minMatchScore: parsed.data.minMatchScore,
     excludeDiscTypes: parsed.data.excludeDiscTypes,
   });
+
+  // AJ-111: kurum + gün + kademe sayacı (kişi kaydı yok). Boş sonuç sayılmaz — mentör bulunamadı,
+  // havuz boş ya da açık eşik herkesi eledi: bu "gevşetme" değil aday yokluğudur.
+  // Yangın-ve-unut: yanıtı bekletmez, yazım hatası yanıtı değiştirmez.
+  if (result.items.length > 0) trackMatchingFallback(req.tenant.tenantId, result.fallbackLevel);
 
   return res.json({
     items: result.items.map(buildPublicItem),

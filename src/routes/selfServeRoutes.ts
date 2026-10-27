@@ -7,6 +7,8 @@ import {
   resubmitTenantApplication,
   getTenantPreview,
   createInvitation,
+  listInvitationLinks,
+  revokeInvitationLink,
   unsubscribeTenant,
   getInvitationTemplates,
   saveInvitationTemplate,
@@ -30,6 +32,9 @@ router.post('/self-serve/resubmit',  resubmitTenantApplication as RequestHandler
 router.patch('/:id/onboarding',      updateOnboarding      as RequestHandler);
 router.get('/:slug/preview',         getTenantPreview      as RequestHandler);
 router.post('/:id/invitations',      createInvitation      as RequestHandler);
+// U-12B (KARAR-82 B): kurum yöneticisi toplu davet bağlantılarını görür ve iptal eder — admin JWT (controller içinde).
+router.get('/:id/invitations',       listInvitationLinks   as RequestHandler);
+router.post('/:id/invitations/:linkId/revoke', revokeInvitationLink as RequestHandler);
 
 // Davet şablonu — admin JWT ile korunan
 router.get('/:id/invitation-templates', getInvitationTemplates as RequestHandler);

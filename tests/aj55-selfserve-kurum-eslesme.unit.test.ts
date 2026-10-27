@@ -28,6 +28,10 @@ vi.mock('../src/db.js', () => ({
       findMany: (...a: unknown[]) => templateFindMany(...a),
       upsert:   (...a: unknown[]) => templateUpsert(...a),
     },
+    // U-12B: davet bağlantısı artık kayıtla üretilir (iptal edilebilsin).
+    invitationLink: {
+      create: () => Promise.resolve({ id: 'link-1' }),
+    },
   },
 }));
 

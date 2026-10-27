@@ -238,6 +238,7 @@ model Tenant {
   updatedAt DateTime @updatedAt
 
   users               User[]
+  invitationLinks     InvitationLink[]
   visibilityOptIns    VisibilityOptIn[]
   matchRequests       MatchRequest[]
   jobListings         JobListing[]
@@ -254,11 +255,13 @@ model Tenant {
   meetingCheckIns     MeetingCheckIn[]
   pendingTags         PendingTag[]
   memberships         TenantMembership[]
+  roleChanges         RoleChange[]
   availabilityBlocks  AvailabilityBlock[]
   invitationTemplates InvitationTemplate[]
   agreements          MentorshipAgreement[]
   conversations       Conversation[]
   consents            Consent[]
+  matchingFallbackDailyStats MatchingFallbackDailyStat[]
 }
 
 model User {
@@ -347,6 +350,7 @@ model User {
 
   tenant              Tenant               @relation(fields: [tenantId], references: [id])
   refreshTokens       RefreshToken[]
+  roleChanges         RoleChange[]
   passwordResetTokens PasswordResetToken[]
   pendingTags         PendingTag[]
 
@@ -542,6 +546,22 @@ model MatchCombinationScore {
 
   @@unique([tenantId, discCombination])
   @@index([tenantId])
+}
+
+// AJ-111 (md.111 / G2-06): eşleştirme gevşetme oranı — kurum + gün + fallback kademesi başına
+// TOPLU SAYAÇ. Kişi düzeyinde hiçbir alan YOK (userId/mentorId tutulmaz) → kişisel veri değildir,
+// KVKK saklama/silme kapsamına girmez. day = İstanbul takvim günü (00:00 UTC olarak saklanır).
+// level = matching.ts fallbackLevel (0 tüm filtreler · 1 zaman · 2 anti-match · 3 yalnız sektör).
+// Yazım: services/matchingFallbackStats.ts (upsert + increment); okuma: platform kurum analizi.
+model MatchingFallbackDailyStat {
+  tenantId String
+  day      DateTime @db.Date
+  level    Int
+  count    Int      @default(0)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, day, level])
 }
 
 model Meeting {
@@ -1324,4 +1344,43 @@ enum ConsentSource {
   OAUTH // Google / LinkedIn
   SELF_SERVE // STK kurum kaydı
   BACKFILL // eski kayıt taşıma (backfill script)
+}
+
+/// U-12B (KARAR-82 B): toplu davet bağlantısının kaydı — kurum yöneticisi bağlantıyı İPTAL edebilsin diye.
+/// Davet tokenı imzalı JWT olarak kalır; `lid` claim'i bu satırın id'sidir. İptal edilmiş (revokedAt dolu)
+/// ya da kaydı bulunmayan `lid` taşıyan token reddedilir. `lid` taşımayan eski bağlantılar (bu değişiklikten
+/// önce üretilmiş) en geç 7 günde (U-12) kendiliğinden kapanır.
+/// Kişisel veri: yalnız üreten/iptal eden yöneticinin kimliği (ad/e-posta yok).
+model InvitationLink {
+  id          String    @id @default(cuid())
+  tenantId    String
+  role        UserRole
+  createdById String?
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  revokedById String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+}
+
+/// U-13C (KARAR-83 C): üyenin kurum-içi rol tarihçesi — kim, ne zaman, hangi rolden hangisine.
+/// Yazanlar: yönetici rol değiştirme (/api/admin/users/:id/role), yönetici yap / yöneticilikten çıkar.
+/// SystemLog yerine ayrı tablo: SystemLog 90 günde silinir; tarihçe kalıcı olmalı (kişi silinince birlikte silinir).
+/// Kişisel veri: yalnız kimlikler + roller; değiştiren yöneticinin kimliği (ad/e-posta tabloda yok).
+model RoleChange {
+  id           String   @id @default(cuid())
+  tenantId     String
+  userId       String
+  previousRole UserRole
+  newRole      UserRole
+  changedById  String?
+  createdAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId, createdAt])
 }
