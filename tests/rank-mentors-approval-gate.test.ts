@@ -4,6 +4,7 @@
  * yanıtta sıralama verisi (results/totalEligible) YOKTUR. Reddedilmiş hesap requireTenant'ta (GV-10)
  * 401 HESAP_PASIF ile kesilir — yine veri dönmez. Onaylı hesap ve kurum yöneticisi 200 alır.
  */
+import { PENDING_APPROVAL_BODY } from '../src/middleware/pendingApprovalGate.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { cleanDb } from './helpers/db.js';
 import { createTenant, createMenti, createMentor, createAdminUser, createUserProfile } from './helpers/factories.js';
@@ -52,7 +53,9 @@ describe('AJ-20: rank-mentors onay kapısı', () => {
       .send({ mentiId: profileId });
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('ONAY_BEKLENIYOR');
-    expect(res.body.message).toBe('Eşleşme önerilerini görmek için yönetici onayı gerekli.');
+    // Y1-B8: onay bekleyen artık requireTenant 4c kapısında (pendingApprovalGate) durur — aynı hata kodu,
+    // kapının genel mesajı. İç kapı (approvalGate.ts) savunma derinliği olarak yerinde.
+    expect(res.body.message).toBe(PENDING_APPROVAL_BODY.message);
     expect(res.body).not.toHaveProperty('results');
     expect(res.body).not.toHaveProperty('totalEligible');
   });
