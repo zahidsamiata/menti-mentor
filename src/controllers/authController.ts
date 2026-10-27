@@ -249,6 +249,7 @@ interface SessionUserSource {
   discVector: unknown;
   needsOrientation: boolean;
   needsReconsent: boolean;
+  rejectionReason?: string | null;
 }
 
 /**
@@ -265,6 +266,14 @@ async function sessionRoleFor(
   return (await getActiveMembershipRole(user.id, user.tenantId)) ?? user.role;
 }
 
+/**
+ * IC-08 / Y1-B8: onay bekleyen kişiye yöneticinin "düzeltme iste" notu (`rejectionReason`).
+ * Onaylı kişide eski not kalmış olabilir → döndürülmez.
+ */
+function correctionNoteFor(user: { approvalStatus: string; rejectionReason?: string | null }): string | null {
+  return user.approvalStatus === 'PENDING' ? (user.rejectionReason ?? null) : null;
+}
+
 function toSessionUser(user: SessionUserSource) {
   return {
     id: user.id,
@@ -279,6 +288,8 @@ function toSessionUser(user: SessionUserSource) {
     // GV-18: rıza metni sürümü güncellenip kullanıcının aktif rızası eskide kalırsa true.
     // Bugün CONSENT_VERSION yer tutucu olduğundan hiçbir aktif kullanıcı için tetiklenmez.
     needsReconsent: user.needsReconsent,
+    // IC-08 / Y1-B8: onay bekleyenin bekleme ekranı yöneticinin notunu gösterir — e-posta kapalıysa tek kanal.
+    correctionNote: correctionNoteFor(user),
   };
 }
 
@@ -364,16 +375,9 @@ export async function login(req: Request, res: Response) {
     });
   }
 
-  // Onay bekleyen hesap — bekleme ekranına yönlendirilir (FE: /pending-approval).
-  // IC-08: yöneticinin "düzeltme iste" notu (rejectionReason) da döner — e-posta kapalıysa tek kanal bu.
-  // Yalnız doğru şifreden SONRA (REJECTED dalıyla aynı desen) → not, şifresi olmayana sızmaz.
-  if (user.approvalStatus === 'PENDING') {
-    return res.status(403).json({
-      error: 'HESAP_ONAY_BEKLENIYOR',
-      message: 'Hesabınız henüz yönetici tarafından onaylanmamıştır. Onay sonrası giriş yapabilirsiniz.',
-      correctionNote: user.rejectionReason ?? null,
-    });
-  }
+  // Onay bekleyen hesap GİRİŞ YAPAR (Y1-B8, KARAR-101 B genişletilmiş): kayıt sürecini tamamlar,
+  // soruları çözer, mentörleri yalnız isimsiz özet olarak görür. Kapalı uçlar `requireTenant` 4c'de
+  // (pendingApprovalGate.ts) — Google/LinkedIn girişiyle aynı davranış. Önceden burada 403 dönüyordu.
 
   const tenant = await loadSessionTenant(user.tenantId);
 
@@ -497,6 +501,7 @@ export async function refresh(req: Request, res: Response) {
           discType: true,
           discVector: true, // yalnız discLetters türetimi için; ham vektör yanıta KONMAZ
           needsOrientation: true,
+          rejectionReason: true, // yalnız onay bekleyenin correctionNote'u için (toSessionUser)
         },
       },
     },
@@ -875,12 +880,14 @@ export async function getMe(req: RequestWithTenant, res: Response) {
       discVector: true,
       approvalStatus: true,
       authProvider: true,
+      rejectionReason: true,
     },
   });
 
   if (!user) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
   }
+  const { rejectionReason, ...ownProfile } = user;
 
   // #37: kurum başvuru durumu — kurum yöneticisi "düzeltme istendi" bilgisini burada görür.
   // Tenant-scoped (req.tenant.tenantId) → IDOR yok. correctionNote YALNIZ ADMIN'e (kurumun
@@ -898,7 +905,9 @@ export async function getMe(req: RequestWithTenant, res: Response) {
 
   // #12: kendi profili — DISC çoklu-harf türetilir (vektör kendi verisi, zaten dönüyor).
   return res.json({
-    ...user,
+    ...ownProfile,
+    // Y1-B8: onay bekleyenin bekleme ekranı yöneticinin notunu buradan gösterir (OAuth girişi dahil).
+    correctionNote: correctionNoteFor({ approvalStatus: user.approvalStatus, rejectionReason }),
     // AJ-115: kurum-içi rol (üyelikten; requireTenant her istekte düzeltir) — User.role değil.
     // Ön yüz ekran seçimini bu alandan yapar; yetki kararıyla aynı kaynak olmalı.
     role: req.auth.role,

@@ -11,15 +11,16 @@ import { prisma } from '../db.js';
  *  - üyelik pasifse erişim yok;
  *  - hesap pasifse (`User.isActive=false`) ya da reddedildiyse (`approvalStatus=REJECTED`) erişim yok.
  *
- * PENDING bilerek engellenmez: OAuth ile gelen onay bekleyen kullanıcı token alır ve bekleme
- * ekranını besleyen uçları (ör. /api/auth/me) kullanır — bu davranış değişmedi.
+ * PENDING burada engellenmez: onay bekleyen kişi giriş yapıp kayıt sürecini tamamlar (KARAR-101).
+ * Hangi uçları kullanabileceği `requireTenant` adım 4c'de, izin listesiyle karar verilir
+ * (`pendingApprovalGate.ts`); bunun için onay durumu kararla birlikte döner.
  *
  * Tek sorgu: üyelik + kullanıcının iki alanı aynı `findUnique` içinde okunur (istek başına
  * zaten yapılan üyelik sorgusuna ek sorgu eklenmedi).
  */
 
 export type MembershipAccess =
-  | { ok: true; role: UserRole }
+  | { ok: true; role: UserRole; approvalStatus: UserApprovalStatus }
   | { ok: false; reason: 'NO_ACTIVE_MEMBERSHIP' | 'ACCOUNT_INACTIVE' | 'SESSION_REVOKED' };
 
 export interface MembershipAccessRow {
@@ -53,7 +54,7 @@ export function decideMembershipAccess(
   if (sessionId !== undefined && !row.user.refreshTokens?.some((t) => t.id === sessionId)) {
     return { ok: false, reason: 'SESSION_REVOKED' };
   }
-  return { ok: true, role: row.role };
+  return { ok: true, role: row.role, approvalStatus: row.user.approvalStatus };
 }
 
 export async function resolveMembershipAccess(

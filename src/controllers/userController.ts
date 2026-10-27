@@ -15,7 +15,7 @@ import {
 } from '../services/membership.js';
 import { canViewerSeeDiscType, toPublicDiscResultCard } from '../services/discVisibility.js';
 import { discLettersFromVector } from '../services/discLetters.js';
-import { applyKAnonymity } from '../services/mask.js';
+import { applyKAnonymity, summarizeSectorsKAnonymous } from '../services/mask.js';
 import { validateRequest, sendValidationError } from '../middleware/validate.js';
 import { TemperamentResultWriteSchema } from '../services/jsonFieldSchemas.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
@@ -134,7 +134,7 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
 
 /**
  * GET /api/users/mentor-count — PENDING dahil tüm kimliği doğrulanmış kullanıcılara açık.
- * Yalnızca toplam onaylı mentor sayısını döner — PII yok.
+ * Toplam onaylı mentor sayısı + isimsiz alan dağılımı (Y1-B8, KARAR-101 EK) döner — PII yok.
  * Menti bekleme odası "N mentor profili tespit edildi" için kullanılır.
  * KVKK: mentor isimleri/e-postaları hiç gönderilmez.
  *
@@ -146,15 +146,22 @@ export async function listUsers(req: RequestWithTenant, res: Response) {
 export async function countApprovedMentors(req: RequestWithTenant, res: Response) {
   // P-16: kurum-içi rol/sayım kaynağı TenantMembership.role (CLAUDE.md "Veri Modeli") —
   // User.role değil. Bu kurumda aktif MENTOR üyeliği olan, aktif ve onaylı kullanıcılar sayılır.
-  const rawCount = await prisma.tenantMembership.count({
+  // Y1-B8: alan dağılımı için yalnız `sectorTags` okunur (analitik alan, PII değil — backend CLAUDE.md);
+  // ad/fotoğraf/profil hiç seçilmez.
+  const mentors = await prisma.tenantMembership.findMany({
     where: {
       tenantId: req.tenant.tenantId,
       role:     'MENTOR',
       isActive: true,
       user:     { isActive: true, approvalStatus: 'APPROVED' },
     },
+    select: { user: { select: { sectorTags: true } } },
   });
-  return res.json(applyKAnonymity(rawCount));
+  const total = applyKAnonymity(mentors.length);
+  return res.json({
+    ...total,
+    sectors: summarizeSectorsKAnonymous(mentors.map((m) => m.user.sectorTags), total.suppressed),
+  });
 }
 
 // GET /api/users/:id — profil detayı.

@@ -427,7 +427,9 @@ describe('Auth: Onay Durumu Güvenlik Koruması', () => {
     tenant = await createTenant();
   });
 
-  it('PENDING kullanıcı login olmaya çalışırken 403 Forbidden döner', async () => {
+  // Y1-B8 (KARAR-101 B genişletilmiş): onay bekleyen kişi giriş yapar; kapalı uçlar requireTenant 4c'de
+  // (tests/y1b8-onay-kapisi.test.ts). Önceki davranış: 403 HESAP_ONAY_BEKLENIYOR, token yok.
+  it('PENDING kullanıcı doğru şifreyle giriş yapar (200, approvalStatus PENDING)', async () => {
     const pendingUser = await createUser({
       tenantId: tenant.id,
       role: 'MENTI',
@@ -437,10 +439,10 @@ describe('Auth: Onay Durumu Güvenlik Koruması', () => {
     const res = await http
       .post('/api/auth/login')
       .send({ email: pendingUser.email, password: pendingUser.rawPassword })
-      .expect(403);
+      .expect(200);
 
-    expect(res.body.error).toBe('HESAP_ONAY_BEKLENIYOR');
-    expect(res.body).not.toHaveProperty('accessToken');
+    expect(typeof res.body.accessToken).toBe('string');
+    expect(res.body.user.approvalStatus).toBe('PENDING');
     expect(res.body).not.toHaveProperty('refreshToken');
   });
 
@@ -454,11 +456,9 @@ describe('Auth: Onay Durumu Güvenlik Koruması', () => {
     const res = await http
       .post('/api/auth/login')
       .send({ email: pendingUser.email, password: pendingUser.rawPassword })
-      .expect(403);
+      .expect(200);
 
-    expect(res.body.error).toBe('HESAP_ONAY_BEKLENIYOR');
-    expect(res.body.correctionNote).toBe('Profil fotoğrafını ve kısa tanıtımını ekleyin.');
-    expect(res.body).not.toHaveProperty('accessToken');
+    expect(res.body.user.correctionNote).toBe('Profil fotoğrafını ve kısa tanıtımını ekleyin.');
   });
 
   it('IC-08: notu olmayan PENDING kullanıcıda correctionNote null', async () => {
@@ -466,8 +466,8 @@ describe('Auth: Onay Durumu Güvenlik Koruması', () => {
     const res = await http
       .post('/api/auth/login')
       .send({ email: pendingUser.email, password: pendingUser.rawPassword })
-      .expect(403);
-    expect(res.body.correctionNote).toBeNull();
+      .expect(200);
+    expect(res.body.user.correctionNote).toBeNull();
   });
 
   it('IC-08 NEGATİF: yanlış şifreyle düzeltme notu SIZMAZ (generic 401)', async () => {
