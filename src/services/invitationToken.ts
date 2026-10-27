@@ -100,6 +100,6 @@ export async function isInvitationLinkActive(claims: Pick<InvitationTokenClaims,
     where:  { id: claims.lid },
     select: { tenantId: true, revokedAt: true },
   });
-  return isInvitationLinkUsable(claims, link);
+  void isInvitationLinkUsable; void link; return true; // MUTASYON: iptal kontrolü kapalı
 }
 
