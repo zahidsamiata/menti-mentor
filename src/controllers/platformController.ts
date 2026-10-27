@@ -15,6 +15,7 @@ import { verifyTransporter, getSmtpStatus } from '../services/emailService.js';
 import { validateRequest } from '../middleware/validate.js';
 import { invalidateTenant } from '../services/tenantCache.js';
 import { USER_CONTACT_SELECT } from '../utils/userSelect.js';
+import { buildErrorTraceView } from '../services/errorTrace.js';
 
 export const PLATFORM_COOKIE = 'platform_token';
 export const PLATFORM_COOKIE_OPTS = {
@@ -240,6 +241,30 @@ export async function getPlatformLogs(req: Request, res: Response) {
   // Y-02 (KVKK Md.12): platform okuma uçları da iz bırakır — kim, ne zaman, hangi filtreyle (PII yok).
   await auditPlatformAction('VIEW_PLATFORM_LOGS', req, { count: logs.length, level, category });
   return res.json({ items: logs, total });
+}
+
+const LogTraceParamsSchema = z.object({ id: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/) });
+const TRACE_NOT_FOUND = { error: 'NOT_FOUND', message: 'İz kaydı bulunamadı.' } as const;
+
+// GET /api/platform/logs/:id/trace
+// DK-03 (KARAR-24 → B): tek bir HATA kaydının kişisel veri temizlenmiş iz kaydı (stack).
+// `/logs` listesi meta döndürmemeye DEVAM eder (AJ-102); iz yalnız bu tek-kayıtlık, denetim izli
+// uçtan ve yalnız izin listesindeki alanlarla verilir — ham meta response'a hiç girmez
+// (bkz. services/errorTrace.ts). ERROR dışı kayıt / geçersiz no → 404 (ayrım sızdırılmaz).
+export async function getPlatformLogTrace(req: Request, res: Response) {
+  const parsed = LogTraceParamsSchema.safeParse(req.params);
+  if (!parsed.success) return res.status(404).json(TRACE_NOT_FOUND);
+
+  const row = await prisma.systemLog.findUnique({
+    where: { id: parsed.data.id },
+    select: { id: true, level: true, category: true, message: true, createdAt: true, meta: true },
+  });
+  const view = row ? buildErrorTraceView(row) : null;
+  if (!view) return res.status(404).json(TRACE_NOT_FOUND);
+
+  // Y-02 (KVKK Md.12): iz kaydını açmak da denetim izi bırakır — yalnız kayıt no (PII yok).
+  await auditPlatformAction('VIEW_PLATFORM_LOG_TRACE', req, { targetType: 'SystemLog', targetId: view.id });
+  return res.json(view);
 }
 
 /** listPendingTenants satırının maskelenmiş görünüm biçimi (birim testi için saf fonksiyona ayrıldı). */
