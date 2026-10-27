@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import { requireTenant } from '../middleware/tenant.js';
 import { requireAuth } from '../middleware/authorize.js';
+import { quarantined } from '../middleware/quarantine.js';
 import {
   completeProfile,
   submitDiscTest,
@@ -46,9 +47,12 @@ router.post(
   submitDiscTest as unknown as RequestHandler,
 );
 
+// E-4 KARANTİNA (KARAR-11 A): ikame `PATCH /api/users/me/profile` (aynı linkedinUrl/instagramUrl
+// doğrulaması; ön yüz profil sayfası bunu kullanıyor). Arşiv: çatı `docs/arsiv/silinenler-2026-09-10.md`.
 router.patch(
   '/users/me/social',
   requireAuth(),
+  quarantined('users-me-social'),
   updateSocialProfile as unknown as RequestHandler,
 );
 

@@ -13,6 +13,11 @@ import { createTenant } from './helpers/factories.js';
 import { signToken, PLATFORM_AUDIENCE } from '../src/middleware/jwtAuth.js';
 import type { Tenant } from '@prisma/client';
 
+// E-4 karantina: GET /api/tenants karantinada (410). Bu dosya o ucun handler davranışını korumaya
+// devam eder — kapı ortam değişkeniyle yeniden açılır (vitest pool=forks: her dosya ayrı süreç,
+// değişken başka dosyaya sızmaz). Kapının kendisi `e4-karantina.test.ts`'te test edilir.
+process.env['QUARANTINE_REOPEN'] = 'tenants-list';
+
 // requirePlatformAdmin cookie okur (Bearer değil) — bu yardımcı doğru header kurar.
 function platformCookieHeader(token: string): Record<string, string> {
   return { Cookie: `platform_token=${encodeURIComponent(token)}` };
