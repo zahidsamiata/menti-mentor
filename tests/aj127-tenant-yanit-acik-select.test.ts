@@ -14,6 +14,7 @@ import {
   TENANT_ADMIN_RESPONSE_SELECT,
   TENANT_ADMIN_RESPONSE_EXCLUDED,
 } from '../src/controllers/tenantController.js';
+import { QUARANTINE_REOPEN_ENV } from '../src/middleware/quarantine.js';
 
 // aj05-logo-url-kisiti.test.ts ile aynı desen: platform çerezi elle eklenir.
 function makePlatformCookie(): string {
@@ -53,11 +54,24 @@ describe('AJ-127: platform kurum uçları yalnız izinli alanları döndürür',
     });
   });
 
-  it('GET /api/tenants/:id → anahtarlar tam olarak izin listesi, gizli alan yok', async () => {
-    const res = await http.get(`/api/tenants/${tenantId}`).set('Cookie', makePlatformCookie()).expect(200);
-    expectOnlyAllowedKeys(res.body);
-    expect(res.body.id).toBe(tenantId);
+  // E-4 (KARAR-134): GET /api/tenants/:id karantinada (410) — ikamesi GET /api/platform/tenants/:id/overview.
+  // Acil geri açma (QUARANTINE_REOPEN) yolunda yanıt yine yalnız izin listesindeki alanları döndürmeli.
+  it('GET /api/tenants/:id → karantinada 410, gövdede kurum alanı yok', async () => {
+    const res = await http.get(`/api/tenants/${tenantId}`).set('Cookie', makePlatformCookie()).expect(410);
     expect(JSON.stringify(res.body)).not.toContain('aj127-gizli-belirtec');
+    expect(res.body.id).toBeUndefined();
+  });
+
+  it('GET /api/tenants/:id (QUARANTINE_REOPEN ile geri açılmış) → anahtarlar tam olarak izin listesi, gizli alan yok', async () => {
+    process.env[QUARANTINE_REOPEN_ENV] = 'tenants-get';
+    try {
+      const res = await http.get(`/api/tenants/${tenantId}`).set('Cookie', makePlatformCookie()).expect(200);
+      expectOnlyAllowedKeys(res.body);
+      expect(res.body.id).toBe(tenantId);
+      expect(JSON.stringify(res.body)).not.toContain('aj127-gizli-belirtec');
+    } finally {
+      delete process.env[QUARANTINE_REOPEN_ENV];
+    }
   });
 
   it('PATCH /api/tenants/:id → anahtarlar tam olarak izin listesi, gizli alan yok', async () => {
